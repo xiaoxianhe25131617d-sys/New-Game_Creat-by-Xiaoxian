@@ -59,8 +59,6 @@ func _update_audio_region() -> void:
 		region = "park"
 	else:                              # 天文台
 		region = "observatory"
-	else:
-		region = "observatory"
 	AudioManager.set_region(region)
 	AudioManager.set_view(str(state.get("current_view", "normal")))
 
@@ -416,13 +414,7 @@ func _get_objective() -> String:
 		return "→ 收集剩余%d把钥匙后，去地下迷宫岔路B开启宝箱！" % missing
 	
 	return "→ 四把钥匙集齐！去地下迷宫深处的宝箱..."
-		return "→ 返回中央广场，向左去旧车站寻找聋人视角的振动感知"
-	if unlocked.has("blind") and not completed.has("lighthouse"):
-		return "→ 找到记忆长椅切换为盲人视角，用F键回声修复灯塔管道"
-	if not unlocked.has("blind"):
-		return "→ 沿地面金色光点向右，触摸发光的✨回声共鸣石"
-	return "→ 探索心灵花园，在记忆长椅旁坐下来切换视角"
-	
+
 func _describe_interactable(node: Node) -> String:
 	match node.get_meta("kind", ""):
 		"npc":
