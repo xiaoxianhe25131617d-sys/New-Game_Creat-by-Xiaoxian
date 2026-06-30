@@ -8,3 +8,7 @@ res://scripts/puzzle_find_diff.gd
 res://scripts/puzzle_banquet.gd
 res://scripts/puzzle_amusement_lights.gd
 res://scripts/puzzle_dark_maze.gd
+res://scripts/puzzle_nine_grid.gd
+res://scripts/dialogue_box.gd
+res://scripts/monster.gd
+res://scripts/player.gd

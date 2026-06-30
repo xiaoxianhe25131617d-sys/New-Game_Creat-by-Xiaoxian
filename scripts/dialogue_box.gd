@@ -125,13 +125,13 @@ func show_line() -> void:
 	# Name
 	name_label.text = current_npc.get("name", "???")
 	
-	# Text — handle sign_only NPC with deaf view
+	# Text — handle sign_only NPC with autism view (pattern recognition)
 	var text: String = str(line.get("text", "..."))
 	if current_npc.get("sign_only", false):
-		if current_view == "deaf":
-			text = str(line.get("text_deaf", text))
+		if current_view == "autism":
+			text = str(line.get("text_autism", text)) if line.has("text_autism") else text
 		else:
-			text = "她用手语比划着……你看见动作，却读不懂。"
+			text = "她用手语比划着……你看不懂那些手势。"
 	
 	# Blind NPC special: text hint
 	if current_npc.get("blind_npc", false) and current_view != "blind":

@@ -47,6 +47,12 @@ var cipher_book_visible: bool = false
 func _ready() -> void:
 	body_entered.connect(_on_body_entered)
 	body_exited.connect(_on_body_exited)
+	var shape := CollisionShape2D.new()
+	var rect := RectangleShape2D.new()
+	rect.size = Vector2(200, 200)
+	shape.shape = rect
+	shape.position = Vector2(0, -40)
+	add_child(shape)
 	_make_npc_console()
 	_make_ui_panel()
 
@@ -196,13 +202,13 @@ func _talk_to_next_npc() -> void:
 				read_subtexts[next_idx] = true
 				highlight_marker(next_idx, Color("#a0a0ff"))
 				hint_updated.emit("发现%s的潜台词：%s" % [data["name"], data["subtext"]])
-			"adhd":
-				# ADHD模式：显示可见文本+密码本提示（高对比细节）
+			"autism":
+				# 自闭症模式：细节识别 — 看到密码本映射
 				var first_char: String = data["subtext"].left(1)
 				var code_num: String = CIPHER_BOOK.get(first_char, "?")
-				dialogue.text = "[color=#e0e0e0]%s[/color]\n[color=#ffff00]密码本: '%s' → %s[/color]" % [data["visible_text"], first_char, code_num]
+				dialogue.text = "[color=#c0d0ff]%s[/color]\n[color=#ffff88]密码本: '%s' → %s[/color]" % [data["visible_text"], first_char, code_num]
 				read_subtexts[next_idx] = true
-				highlight_marker(next_idx, Color("#ffff00"))
+				highlight_marker(next_idx, Color("#c0d0ff"))
 				hint_updated.emit("密码本翻译：%s = %s" % [first_char, code_num])
 			_:
 				dialogue.text = "[color=#c0c0c0]%s[/color]\n[color=gray](切换视角查看更多信息)[/color]" % [data["visible_text"]]

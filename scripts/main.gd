@@ -225,7 +225,7 @@ func show_profile_menu() -> void:
 func show_settings() -> void:
 	var box := AcceptDialog.new()
 	box.title = "设置"
-	box.dialog_text = "键鼠操作：A/D 移动，Space 跳跃，E 互动，F 能力，TAB 视角轮盘，ESC 暂停。\n音乐和美术当前为可运行占位资源。"
+	box.dialog_text = "A/D移动 Space跳跃 E互动 F能力 TAB视角轮盘 ESC暂停\n四种视角：盲人/ADHD/自闭症/抑郁症"
 	add_child(box)
 	box.popup_centered()
 
@@ -298,30 +298,32 @@ func show_intro() -> void:
 五个人曾经是最好的朋友。
 
 阿明——看不见光，但听得见风从湖面来的颜色。
-小宁——听不见声音，但感觉得到地面传来的话语。
 阿冲——总是停不下来，跑得最快的人不用解释自己。
 小静——安静地注视，只有她能看见被忽略的痕迹。
+小远——从细节中发现规律，把混乱变成秩序。
 而你——你学会了理解每个人眼中的风景。
 
 后来，时间胶囊被封印了。
 怪物侵入了每个区域，把真正的感知
-变成了噪音、沉默、干扰和阴影。
+变成了噪音、干扰和阴影。
 
 要打开胶囊，你需要重新走入四种视角——
-在记忆长椅旁坐下来，切换感知方式，
-修复被破坏的一切。
+在记忆长椅旁坐下来，切换感知方式。
 
 ━━━━━━━━━━━━━━━━━━
 【操作】
-A/D 左右移动    空格 跳跃（可控制高度）
+A/D 左右移动    Space 跳跃
 E   互动（对话/解谜/收集）
-F   特殊能力（盲人回声/ADHD冲刺）
+F   特殊能力（盲人回声探测/ADHD冲刺）
 TAB 视角轮盘    ESC 暂停
 
-【现在】
-沿地面的金色光点向右走 →
-触摸路边的【✨ 回声共鸣石】
-按E，理解第一种视角。
+【四种视角】
+盲人模式：画面全黑，靠F键回声定位
+ADHD模式：按方向键自动持续行走，跳跃更高
+自闭症模式：细节放大，能发现隐藏模式
+抑郁模式：画面灰暗，地面尖刺显露，能看到潜台词
+
+━━━━━━━━━━━━━━━━━━
 ━━━━━━━━━━━━━━━━━━
 
 风铃、手套、风筝、照片和纪念徽章，
@@ -469,11 +471,10 @@ func interact() -> void:
 			player.global_position = target
 			show_toast("回到了地面。")
 		"maze_stairs":
-			# 走入地下迷宫
 			var tx: float = current_near.get_meta("target_x", 5200.0)
 			var ty: float = current_near.get_meta("target_y", 4300.0)
 			player.global_position = Vector2(tx, ty)
-			show_toast("走下台阶...周围一片漆黑。按F声波探测，按W爬梯子返回。", 4.0)
+			show_toast("走下台阶...进入地下迷宫。用E/W爬梯子返回。", 3.0)
 		"ladder":
 			# 从地下爬回地面（也用E交互）
 			var tx: float = current_near.get_meta("target_x", 5150.0)
@@ -484,6 +485,11 @@ func interact() -> void:
 			try_open_treasure_chest(current_near)
 		"zone_indicator":
 			show_toast("关卡区域：%s" % _describe_interactable(current_near))
+		"maze_fork_a":
+			show_toast("岔路A：通往迷宫钥匙。往左走到底。", 2.0)
+		"maze_fork_b":
+			var keys := get_collected_keys()
+			show_toast("岔路B：宝箱（%d/4钥匙）。往右走到底。" % keys.size(), 2.0)
 		_:
 			# 新式谜题实例（PuzzleTextureWall等）自带交互处理
 			if current_near.has_method("_input"):
@@ -495,9 +501,17 @@ func talk_to_npc(npc_node: MindscapeNPC) -> void:
 		if npc.get("id", "") == npc_node.npc_id:
 			data = npc
 			break
-	var lines: Array = GameData.DIALOGUES.get(npc_node.npc_id, [{"expr": "normal", "text": "你好。"}])
+	var view: String = str(state.get("current_view", "normal"))
+	var raw_lines: Array = GameData.DIALOGUES.get(npc_node.npc_id, [{"expr": "normal", "text": "你好。"}])
+	# 根据视角过滤：抑郁模式才能看到 subtext
+	var lines: Array = []
+	for line in raw_lines:
+		var filtered: Dictionary = line.duplicate()
+		if view == "depression" and line.has("subtext"):
+			filtered["text"] = str(line["text"]) + "\n[潜台词] " + str(line["subtext"])
+		lines.append(filtered)
 	player.controls_enabled = false
-	dialogue.open(data, lines, state.get("current_view", "normal"))
+	dialogue.open(data, lines, view)
 	if npc_node.npc_id == "braille_scholar" and not state.get("album", []).has("盲文 A-D"):
 		state["album"].append("盲文 A-D")
 		show_toast("纪念相册加入：盲文 A-D")
@@ -633,13 +647,7 @@ func complete_puzzle(puzzle: Dictionary, node: Node) -> void:
 		show_toast("获得信物：%s （%d/7 件）" % [puzzle["fragment"], state["fragments"].size()], 3.5)
 	
 	# Unlock views
-	if id == "lighthouse_pipe":
-		unlock_view("deaf")
-	elif id == "station_cargo":
-		unlock_view("adhd")
-	elif id == "park_wheel":
-		unlock_view("depression")
-	elif puzzle.has("reward_view"):
+	if puzzle.has("reward_view"):
 		unlock_view(puzzle["reward_view"])
 	
 	if not state.get("completed_regions", []).has(puzzle.get("region", "")) and puzzle.has("fragment"):
@@ -652,28 +660,8 @@ func complete_puzzle(puzzle: Dictionary, node: Node) -> void:
 	
 	# Guide player to next objective
 	match id:
-		"lighthouse_echo":
-			show_toast("盲人视角已解锁！在右边灯塔记忆长椅坐下，切换到盲人视角，然后用F键回声修复灯塔管道的声波管道。", 5.0)
-		"lighthouse_pipe":
-			show_toast("聋人视角已解锁！回到中央广场，向左去旧车站。在车站记忆长椅坐下切换聋人视角。", 4.0)
-		"station_lift":
-			show_toast("平台振动规律已掌握。继续向上，观察货运箱轨道的真假振动。", 4.0)
-		"station_cargo":
-			show_toast("ADHD视角已解锁！继续向右去游乐园，在游乐园记忆长椅坐下切换ADHD视角。", 4.0)
-		"park_gate":
-			show_toast("门已穿过。找到真正的摩天轮按钮，恢复供电。", 4.0)
-		"park_wheel":
-			show_toast("抑郁视角已解锁！回到最左边的森林，在森林记忆长椅坐下切换抑郁视角。", 4.0)
-		"forest_trace":
-			show_toast("脚印已追踪。用抑郁视角收集附近的遗失纪念物。", 4.0)
-		"forest_memorial":
-			show_toast("四个区域已恢复！去水坝——那里需要盲人和聋人两种视角配合。", 4.0)
-		"dam_turbine":
-			show_toast("水坝恢复！前往天文台——需要三种视角合作启动望远镜。", 4.0)
-		"observatory_scope":
-			show_toast("星图已获得！深入地下管网——四种视角将合力完成最后挑战。", 4.0)
-		"underground_pump":
-			show_toast("全部信物集齐！回到中央广场，开启时间胶囊。", 5.0)
+		"texture_wall":
+			show_toast("石门已开启！继续向右探索广阔区域。", 4.0)
 
 func try_finish_game(node: Node) -> void:
 	var needed: Array = ["碎片1：回声的理解", "碎片2：沉默的节奏", "碎片3：奔跑的自由", "碎片4：安静的注视", "信物：水坝恢复", "信物：星图", "最后信物：心灵完整"]
@@ -719,7 +707,7 @@ func show_ending() -> void:
 	add_child(ending)
 	ending.confirmed.connect(func():
 		player.controls_enabled = true
-		show_toast("感谢你的旅程。时间胶囊中保存的是理解。")
+		show_toast("感谢你的旅程。")
 	)
 	ending.popup_centered(Vector2(640, 500))
 
@@ -735,9 +723,9 @@ func unlocked_all(views: Array) -> bool:
 	return true
 
 func open_view_wheel() -> void:
-	if current_near == null or current_near.get_meta("kind", "") != "anchor":
-		show_toast("只有坐在记忆长椅旁，才能切换视角。")
-		return
+	# 视角轮盘随时可用（按 Tab）
+	if wheel_root != null and is_instance_valid(wheel_root):
+		wheel_root.queue_free()
 	if wheel_root != null and is_instance_valid(wheel_root):
 		wheel_root.queue_free()
 	wheel_root = Panel.new()
@@ -788,14 +776,18 @@ func try_switch_view(view: String) -> void:
 	if not state.get("unlocked_views", []).has(view):
 		show_toast("这个视角还没有被理解。")
 		return
-	if current_near == null or current_near.get_meta("kind", "") != "anchor":
-		show_toast("只有在记忆长椅旁才能切换视角。")
-		return
 	state["current_view"] = view
 	player.set_view(view)
 	world.set_view_palette(view)
 	AudioManager.set_view(view)
+	_notify_puzzles_view_changed(view)
 	autosave()
+
+# 通知所有谜题实例视角已切换
+func _notify_puzzles_view_changed(view: String) -> void:
+	for node in get_tree().get_nodes_in_group("interactable"):
+		if is_instance_valid(node) and node.has_method("update_on_view_change"):
+			node.update_on_view_change(view)
 
 func toggle_pause() -> void:
 	if pause_root != null and is_instance_valid(pause_root):
@@ -841,17 +833,16 @@ func autosave() -> void:
 func _on_player_special(view: String) -> void:
 	match view:
 		"blind":
-			# Trigger echo pulse centered on screen
 			world.trigger_echo_pulse(Vector2(0.5, 0.5))
 			show_toast("回声扩散——真实物体轮廓浮现。", 1.6)
 			AudioManager.play_sfx("echo")
-		"deaf":
-			show_toast("地面波纹显现——振动揭示了运动轨迹。", 1.6)
 		"adhd":
-			show_toast("专注爆发！", 0.8)
+			show_toast("冲刺！——按住方向键持续奔跑。", 0.8)
 			AudioManager.play_sfx("dash")
+		"autism":
+			show_toast("细节放大——模式变得清晰。", 1.6)
 		"depression":
-			show_toast("被忽略的痕迹变得清晰可见。", 1.6)
+			show_toast("潜台词浮现，地面尖刺显露。", 1.6)
 
 # ── Monster Damage Visual Effects ──
 func _on_monster_damage(monster_type: String) -> void:

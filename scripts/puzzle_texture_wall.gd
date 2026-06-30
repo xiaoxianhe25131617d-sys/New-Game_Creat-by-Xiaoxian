@@ -1,155 +1,176 @@
 extends Area2D
 class_name PuzzleTextureWall
 # ════════════════════════════════════════════════════════════
-#  关卡1：纹理墙 (Texture Wall)
-#  位置：出生点往左第一个场景
-#  规则：键盘按键模拟触觉反馈，引导玩家按出正确序列
-#  产出：打开石门 → 解锁左侧其他关卡
+#  关卡1：纹理墙（石门）
+#  盲人模式下按方向键触摸纹理解锁
+#  正确序列：↑ ↑ ↓ ↓ ← → (上下上下左右)
+#  非盲人模式：只能摸到"凹凸不平"，无法辨别方向
 # ════════════════════════════════════════════════════════════
 
 signal puzzle_completed
 signal hint_updated(text: String)
 
-# 正确按键序列（可自定义）
-@export var correct_sequence: Array[String] = ["ui_up", "ui_up", "ui_down", "ui_down", "ui_left", "ui_right"]
+@export var correct_sequence: Array[String] = ["up", "up", "down", "down", "left", "right"]
 
-var current_step: int = -1          # -1 = 未开始, >=0 = 当前步骤索引
+var current_step: int = -1
 var player_in_range: bool = false
 var is_completed: bool = false
-var wall_visual: Polygon2D           # 墙面视觉效果
-var hint_label: Label                # 提示文字
+var wall_visual: Polygon2D
+var hint_label: Label
 
-# 每步的引导提示（按错了会提示方向）
-const HINT_MAP: Dictionary = {
-	"ui_up":    "再往下一点...",
-	"ui_down":  "再往上一点...",
-	"ui_left":  "再往右一点...",
-	"ui_right": "再往左一点...",
+# 每个方向对应的纹理感受描述
+const DIRECTION_DESC: Dictionary = {
+	"up":    "向上凸起",
+	"down":  "向下凹陷",
+	"left":  "向左倾斜",
+	"right": "向右倾斜",
+}
+
+# 玩家按错时引导到正确方向
+const HINT_GUIDE: Dictionary = {
+	"up":    "纹理是向上的...按 ↑",
+	"down":  "纹理是向下的...按 ↓",
+	"left":  "纹理是向左的...按 ←",
+	"right": "纹理是向右的...按 →",
 }
 
 func _ready() -> void:
 	body_entered.connect(_on_body_entered)
 	body_exited.connect(_on_body_exited)
+	var shape := CollisionShape2D.new()
+	var rect := RectangleShape2D.new()
+	rect.size = Vector2(180, 260)
+	shape.shape = rect
+	shape.position = Vector2(0, -10)
+	add_child(shape)
 	_make_wall_visual()
 	_make_hint_label()
 
 func _make_wall_visual() -> void:
-	# 纹理墙外观 — 粗糙石墙
 	var wall := Polygon2D.new()
-	var size := Vector2(120, 200)
+	var size := Vector2(140, 240)
 	wall.polygon = PackedVector2Array([
-		Vector2(0, 0), Vector2(size.x, 0),
-		Vector2(size.x, size.y), Vector2(0, size.y)
+		Vector2(-size.x/2, -size.y/2), Vector2(size.x/2, -size.y/2),
+		Vector2(size.x/2, size.y/2), Vector2(-size.x/2, size.y/2)
 	])
 	wall.color = Color("#6b5b4a")
-	wall.offset = -size / 2.0
 	add_child(wall)
 	wall_visual = wall
-	
-	# 凹凸纹理线条（视觉暗示）
-	for i in range(8):
+
+	# 纹理线条
+	for i in range(10):
 		var line := Line2D.new()
 		line.width = 2
 		line.default_color = Color("#5a4a3a")
-		var y := float(i) * 25.0 + 12.0
-		line.add_point(Vector2(-50, y + sin(i * 2.0) * 8))
-		line.add_point(Vector2(50, y + cos(i * 1.7) * 6))
+		var y: float = -110.0 + i * 24.0
+		line.add_point(Vector2(-55, y + sin(i * 2.0) * 8))
+		line.add_point(Vector2(55, y + cos(i * 1.7) * 6))
 		add_child(line)
-	
-	# 标题标签
+
 	var title := Label.new()
-	title.text = "[ 纹理墙 ]"
-	title.position = Vector2(-45, -115)
+	title.text = "[ 纹理墙 — 石门 ]"
+	title.position = Vector2(-55, -135)
 	title.add_theme_font_size_override("font_size", 16)
 	title.add_theme_color_override("font_color", Color("#d4c4a4"))
 	add_child(title)
 
 func _make_hint_label() -> void:
 	hint_label = Label.new()
-	hint_label.position = Vector2(-110, 60)
+	hint_label.position = Vector2(-110, 65)
 	hint_label.add_theme_font_size_override("font_size", 14)
 	hint_label.add_theme_color_override("font_color", Color("#ffe8a0"))
-	hint_label.text = "靠近后按 E 触摸墙面"
+	hint_label.text = "靠近后按 [E] 触摸墙面"
 	add_child(hint_label)
 
 func _on_body_entered(body: Node2D) -> void:
 	if body.is_in_group("player"):
 		player_in_range = true
 		if not is_completed:
-			hint_label.text = "按 [E] 开始触摸墙面"
+			var view := _get_view()
+			if view == "blind":
+				hint_label.text = "按 [E] 用触觉感受纹理"
+			else:
+				hint_label.text = "上面有凹凸不平的纹理...但感觉不出来方向"
 
 func _on_body_exited(body: Node2D) -> void:
 	if body.is_in_group("player"):
 		player_in_range = false
-		if current_step == -1:
-			hint_label.text = "靠近后按 E 触摸墙面"
 
 func _input(event: InputEvent) -> void:
 	if not player_in_range or is_completed:
 		return
 	if current_step == -1:
 		if event.is_action_pressed("interact"):
-			_start_puzzle()
+			_try_start_puzzle()
 	elif event is InputEventKey and event.pressed:
 		_handle_key_press(event)
 
+func _try_start_puzzle() -> void:
+	var view := _get_view()
+	if view != "blind":
+		hint_label.text = "凹凸不平...但什么都感觉不出来。试试盲人模式。"
+		hint_updated.emit("这墙上有纹理，但不用触觉（盲人模式）根本分不清方向。")
+		return
+	_start_puzzle()
+
 func _start_puzzle() -> void:
 	current_step = 0
-	hint_label.text = "表面凹凸不平...用方向键感受纹理"
-	hint_updated.emit("表面凹凸不平...用方向键摸索")
-	# 墙面脉动效果提示开始
+	hint_label.text = "用手触摸墙面...方向键感受凹凸纹理"
+	hint_updated.emit("用方向键'触摸'墙面。感受每个纹理的方向。")
+	_disable_player(true)
 	_tween_wall_pulse()
 
 func _handle_key_press(event: InputEventKey) -> void:
-	var key_name: String = event.as_text_key_label()
-	
-	# 映射键盘输入到动作名
 	var action: String = ""
-	match key_name:
-		"↑", "W", "w":
-			action = "ui_up"
-		"↓", "S", "s":
-			action = "ui_down"
-		"←", "A", "a":
-			action = "ui_left"
-		"→", "D", "d":
-			action = "ui_right"
-		_: return  # 忽略非方向键
-	
+	match event.keycode:
+		KEY_UP, KEY_W:    action = "up"
+		KEY_DOWN, KEY_S:  action = "down"
+		KEY_LEFT, KEY_A:  action = "left"
+		KEY_RIGHT, KEY_D: action = "right"
+		_: return
 	_check_input(action)
 
 func _check_input(action: String) -> void:
 	var expected: String = correct_sequence[current_step]
-	
+
 	if action == expected:
-		# 正确！
-		hint_label.text = "对！就是这个感觉...再按一下"
-		hint_updated.emit("✓ 正确！继续...")
+		# 正确！纹理匹配
+		var desc: String = DIRECTION_DESC.get(action, action)
+		hint_label.text = "✓ 摸到了%s的纹理！" % desc
+		hint_updated.emit("✓ 感觉到了%s的纹理...(进度%d/%d)" % [desc, current_step + 1, correct_sequence.size()])
 		current_step += 1
-		
-		# 正确反馈动画
 		_tween_wall_flash(Color("#a0e080"))
-		
+
 		if current_step >= correct_sequence.size():
 			_complete_puzzle()
 	else:
-		# 错误 — 引导向正确方向
-		var hint: String = HINT_MAP.get(expected, "再试试别的方向")
-		hint_label.text = hint
-		hint_updated.emit("✗ " + hint)
+		# 错误 — 给方向提示
+		var guide: String = HINT_GUIDE.get(expected, "再试试")
+		hint_label.text = "不是这个方向...%s" % guide
+		hint_updated.emit("不是这个方向的纹理...%s" % guide)
 		_tween_wall_flash(Color("#e08080"))
 
 func _complete_puzzle() -> void:
 	is_completed = true
 	current_step = correct_sequence.size()
+	_disable_player(false)
 	hint_label.text = "✨ 石门打开了！"
-	hint_updated.emit("✨ 石门已解锁！左侧区域可通过。")
+	hint_updated.emit("✨ 石门已解锁！前方区域开放。")
 	puzzle_completed.emit()
-	
-	# 成功特效
 	_tween_celebration()
 
-# ── 动画效果 ──
+func _disable_player(v: bool) -> void:
+	for node in get_tree().get_nodes_in_group("player"):
+		if "controls_enabled" in node:
+			node.controls_enabled = not v
+
+func _get_view() -> String:
+	for node in get_tree().get_nodes_in_group("world"):
+		if node.has_method("get_current_view"):
+			return node.get_current_view()
+	return "normal"
+
+# ── 动画 ──
 func _tween_wall_pulse() -> void:
 	var tween := create_tween()
 	tween.set_loops(3)
@@ -165,7 +186,6 @@ func _tween_celebration() -> void:
 	var tween := create_tween()
 	tween.set_parallel(true)
 	tween.tween_property(wall_visual, "color", Color("#ffd700"), 0.5)
-	# 发光粒子效果
 	for i in range(12):
 		var spark := CPUParticles2D.new()
 		spark.amount = 8
@@ -181,7 +201,6 @@ func _tween_celebration() -> void:
 		await get_tree().create_timer(1.5).timeout
 		spark.queue_free()
 
-# 外部查询状态
 func get_progress() -> int:
 	return current_step
 

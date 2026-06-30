@@ -29,7 +29,7 @@ func setup(id: String, kind: String, pos: Vector2) -> void:
 	# Define which view this monster belongs to
 	match kind:
 		"noise": view_key = "blind"
-		"silent_mouth": view_key = "deaf"
+		"silent_mouth": view_key = "autism"
 		"distractor": view_key = "adhd"
 		"shadow": view_key = "depression"
 	

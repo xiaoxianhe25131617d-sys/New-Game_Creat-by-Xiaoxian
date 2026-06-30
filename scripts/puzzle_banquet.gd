@@ -50,6 +50,12 @@ var pit_area: Area2D
 func _ready() -> void:
 	body_entered.connect(_on_body_entered)
 	body_exited.connect(_on_body_exited)
+	var shape := CollisionShape2D.new()
+	var rect := RectangleShape2D.new()
+	rect.size = Vector2(220, 180)
+	shape.shape = rect
+	shape.position = Vector2(0, -20)
+	add_child(shape)
 	_make_painting_room()
 	_make_floor_buttons()
 	_make_pit()

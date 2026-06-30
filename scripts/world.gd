@@ -2,8 +2,8 @@ extends Node2D
 class_name MindscapeWorld
 
 signal interactable_changed(node: Node)
-signal hint_updated(text: String)  # 全局提示消息（显示在HUD）
-signal puzzle_completed(level_id: String, reward: String)  # 转发自各关卡实例
+signal hint_updated(text: String)
+signal puzzle_completed(level_id: String, reward: String)
 
 var interactables: Array[Node2D] = []
 var puzzle_nodes: Dictionary = {}
@@ -12,245 +12,49 @@ var collectible_nodes: Dictionary = {}
 var parallax_layers: Array = []
 var world_shift: Vector2 = Vector2.ZERO
 
-# ── CanvasLayers (Z-ordering: -100 < 0 < 500 < 1000 < 1001) ──
-var bg_canvas: CanvasLayer          # layer -100: sky gradient
-var view_tint_canvas: CanvasLayer   # layer  500: view tint ColorRect (no shaders!)
-var palette_overlay: ColorRect      # the tint itself, on view_tint_canvas
-var view_overlay_canvas: CanvasLayer # layer 1000: blind cursor + echo ring
-var monster_canvas: CanvasLayer     # layer 1001: monsters ALWAYS on top
+var bg_canvas: CanvasLayer
+var view_tint_canvas: CanvasLayer
+var palette_overlay: ColorRect
+var blind_black: ColorRect
+var blind_label: Label
+var view_overlay_canvas: CanvasLayer
+var monster_canvas: CanvasLayer
 
-# ── Blind mode state ──
-var blind_cursor: Panel             # white dot tracking player
+var blind_cursor: Panel
 var cursor_pulse_time: float = 0.0
 var current_palette_view: String = "normal"
-var view_pulse_time: float = 0.0    # for breathing tint animations
+var view_pulse_time: float = 0.0
+var _spike_canvas: CanvasLayer
 
-func build(state: Dictionary) -> void:
-	_make_background_canvas()
-	_make_parallax_backgrounds()
-	_make_tilemap_world()   # ← TileMapLayer 地形 + 装饰
-	_make_regions_on_tilemap()
-	_make_npcs()
-	_make_puzzles(state)
-	_make_collectibles(state)
-	_make_monsters(state)
-	_make_memory_anchors()
-
-# ─── BACKGROUND CANVAS (fixes Control node jitter in Node2D) ───
-# CanvasLayer hierarchy (render order = low → high):
-#   -100  bg_canvas              sky gradient
-#      0  Node2D children        world terrain, NPCs, interactables
-#    500  view_tint_canvas       view tint ColorRect (no shaders, pure ColorRect)
-#   1000  view_overlay_canvas   blind cursor + echo ring
-#   1001  monster_canvas        monsters always visible on top
-func _make_background_canvas() -> void:
-	# ── Layer -100: Sky + Gradient ──
-	bg_canvas = CanvasLayer.new()
-	bg_canvas.name = "BackgroundCanvas"
-	bg_canvas.layer = -100
-	bg_canvas.follow_viewport_enabled = true
-	add_child(bg_canvas)
-	
-	var sky := ColorRect.new()
-	sky.name = "Sky"
-	sky.set_anchors_preset(Control.PRESET_FULL_RECT)
-	sky.color = Color("#e8f0f8")
-	sky.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bg_canvas.add_child(sky)
-	
-	var grad := ColorRect.new()
-	grad.name = "SkyGradient"
-	grad.set_anchors_preset(Control.PRESET_FULL_RECT)
-	grad.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var shader_mat := ShaderMaterial.new()
-	var shader := Shader.new()
-	shader.code = """
-shader_type canvas_item;
-uniform vec4 top_color : source_color = vec4(0.65, 0.78, 0.95, 1.0);
-uniform vec4 bot_color : source_color = vec4(0.98, 0.94, 0.82, 1.0);
-
-void fragment() {
-	float t = UV.y;
-	COLOR = mix(bot_color, top_color, smoothstep(0.0, 1.0, t));
-}
-"""
-	shader_mat.shader = shader
-	shader_mat.set_shader_parameter("top_color", Color("#7baed4"))
-	shader_mat.set_shader_parameter("bot_color", Color("#fef5e7"))
-	grad.material = shader_mat
-	bg_canvas.add_child(grad)
-	
-	# ── Layer 500: View Tint (replaces ALL shaders — GL Compat safe!) ──
-	view_tint_canvas = CanvasLayer.new()
-	view_tint_canvas.name = "ViewTintCanvas"
-	view_tint_canvas.layer = 500
-	view_tint_canvas.follow_viewport_enabled = true
-	add_child(view_tint_canvas)
-	
-	palette_overlay = ColorRect.new()
-	palette_overlay.name = "ViewTint"
-	palette_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
-	palette_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	palette_overlay.color = Color(1.0, 0.9, 0.75, 0.08)  # normal warm tint
-	view_tint_canvas.add_child(palette_overlay)
-	
-	# ── Layer 1000: Blind cursor + Echo ring ──
-	view_overlay_canvas = CanvasLayer.new()
-	view_overlay_canvas.name = "ViewOverlayCanvas"
-	view_overlay_canvas.layer = 1000
-	view_overlay_canvas.follow_viewport_enabled = true
-	add_child(view_overlay_canvas)
-	
-	# Blind cursor — white dot on view_overlay_canvas (visible only in blind mode)
-	blind_cursor = Panel.new()
-	blind_cursor.name = "BlindCursor"
-	blind_cursor.size = Vector2(12, 12)
-	blind_cursor.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	blind_cursor.visible = false
-	var cs := StyleBoxFlat.new()
-	cs.bg_color = Color.WHITE
-	cs.set_corner_radius_all(6)
-	blind_cursor.add_theme_stylebox_override("panel", cs)
-	view_overlay_canvas.add_child(blind_cursor)
-	
-	# ── Layer 1001: Monsters (always on top of tints) ──
-	monster_canvas = CanvasLayer.new()
-	monster_canvas.name = "MonsterCanvas"
-	monster_canvas.layer = 1001
-	monster_canvas.follow_viewport_enabled = true
-	add_child(monster_canvas)
-
-# ─── PARALLAX LAYERS ────────────────────────────────
-func _make_parallax_backgrounds() -> void:
-	# Layer 0: Distant mountains (slowest parallax)
-	_add_parallax_layer(0.05, _draw_distant_mountains)
-	# Layer 1: Mid-ground hills
-	_add_parallax_layer(0.15, _draw_mid_hills)
-	# Layer 2: Clouds
-	_add_parallax_layer(0.08, _draw_clouds)
-	# Layer 3: Trees / foliage silhouettes
-	_add_parallax_layer(0.3, _draw_trees)
-
-func _add_parallax_layer(parallax_factor: float, draw_func: Callable) -> void:
-	var container := Node2D.new()
-	container.name = "Parallax_%.2f" % parallax_factor
-	container.z_index = int(-80 + parallax_factor * 30)
-	add_child(container)
-	draw_func.call(container)
-	parallax_layers.append({"node": container, "factor": parallax_factor})
-
-func _draw_distant_mountains(container: Node2D) -> void:
-	var colors: Array = [Color("#c8dae8"), Color("#b0c8da"), Color("#a0bcd0"), Color("#8eaec4")]
-	for i in range(6):
-		var mountain := Polygon2D.new()
-		var x: float = i * 2100.0 - 400.0
-		var h: float = 450.0 + (i % 3) * 180.0
-		var w: float = 1600.0 + (i % 2) * 400.0
-		mountain.polygon = PackedVector2Array([
-			Vector2(x, 3400.0),
-			Vector2(x + w * 0.3, 3400.0 - h * 0.7),
-			Vector2(x + w * 0.5, 3400.0 - h),
-			Vector2(x + w * 0.7, 3400.0 - h * 0.65),
-			Vector2(x + w, 3400.0),
-		])
-		mountain.color = colors[i % colors.size()]
-		mountain.modulate.a = 0.55
-		container.add_child(mountain)
-
-func _draw_mid_hills(container: Node2D) -> void:
-	for i in range(8):
-		var hill := Polygon2D.new()
-		var x: float = i * 1500.0 - 300.0
-		hill.polygon = PackedVector2Array([
-			Vector2(x, 3400.0),
-			Vector2(x + 400.0, 3300.0 - (i % 3) * 100.0),
-			Vector2(x + 800.0, 3280.0 - (i % 4) * 80.0),
-			Vector2(x + 1200.0, 3400.0),
-		])
-		hill.color = Color("#c4d8a4") if i % 2 == 0 else Color("#b8cc98")
-		hill.modulate.a = 0.45
-		container.add_child(hill)
-
-func _draw_clouds(container: Node2D) -> void:
-	for i in range(12):
-		var cloud := Polygon2D.new()
-		var cx: float = i * 1050.0 + sin(i * 1.7) * 300.0
-		var cy: float = 400.0 + cos(i * 2.1) * 200.0
-		var pts := PackedVector2Array()
-		for j in range(20):
-			var a: float = TAU * j / 20.0
-			var rx: float = 80.0 + sin(j * 3.0) * 30.0
-			var ry: float = 28.0 + cos(j * 5.0) * 12.0
-			pts.append(Vector2(cx + cos(a) * rx, cy + sin(a) * ry))
-		cloud.polygon = pts
-		cloud.color = Color.WHITE
-		cloud.modulate.a = 0.35 + (i % 3) * 0.1
-		container.add_child(cloud)
-
-func _draw_trees(container: Node2D) -> void:
-	for i in range(20):
-		var tree := Polygon2D.new()
-		var tx: float = i * 620.0 + (i % 5) * 80.0
-		var ty: float = 3250.0 - (i % 3) * 40.0
-		var th: float = 180.0 + (i % 4) * 60.0
-		# Tree trunk
-		tree.polygon = PackedVector2Array([
-			Vector2(tx - 8, ty),
-			Vector2(tx + 8, ty),
-			Vector2(tx + 6, ty - th * 0.6),
-			Vector2(tx - 6, ty - th * 0.6),
-		])
-		tree.color = Color("#6b4c3b")
-		container.add_child(tree)
-		# Tree canopy
-		var canopy := Polygon2D.new()
-		var cp := PackedVector2Array()
-		for j in range(16):
-			var a: float = TAU * j / 16.0
-			cp.append(Vector2(tx + cos(a) * 45.0, ty - th * 0.55 + sin(a) * 55.0))
-		canopy.polygon = cp
-		canopy.color = Color("#5a8f4a") if i % 3 == 0 else Color("#6d9f58")
-		canopy.modulate.a = 0.7
-		container.add_child(canopy)
+# 地下迷宫相关
+var _maze_wall_rects: Array[ColorRect] = []
+var _maze_fork_a_zone: Area2D
+var _maze_fork_b_zone: Area2D
 
 # ════════════════════════════════════════════════════════════
-#  MAP SOURCE — 代码生成完整瓦片世界（覆盖整个 11200×4500 地图）
-#  7 层 TileMapLayer: New_layer_0, Water_1, Bridge_2,
-#    Ground_3, Pickups_4, Blocks_5, Background_6
-#  瓦片尺寸 16x16，碰撞层 1，玩家 mask 匹配。
-#  地面行 = 200（像素 3200），地下行 = 269（像素 4304）
+#  TILEMAP CONSTANTS
 # ════════════════════════════════════════════════════════════
 const TILE_SIZE := 16
-const GROUND_ROW := 200          # 地面顶面行（Y=3200px）
-const UG_GROUND_ROW := 269       # 地下顶面行（Y=4304px）
-# 出生点/传送门/区域标签等世界坐标仍按像素单位组织（瓦片×16）
-const GROUND_Y_PX := GROUND_ROW * TILE_SIZE  # 3200
-const UG_GROUND_Y_PX := UG_GROUND_ROW * TILE_SIZE  # 4304
+const GROUND_ROW := 200
+const UG_GROUND_ROW := 269
+const GROUND_Y_PX := GROUND_ROW * TILE_SIZE
+const UG_GROUND_Y_PX := UG_GROUND_ROW * TILE_SIZE
+const WORLD_TILE_W := 700
+const WORLD_TILE_H := 281
 
-# World extent (tiles)
-const WORLD_TILE_W := 700  # 11200 / 16
-const WORLD_TILE_H := 281  # 4500 / 16
-
-# 瓦片坐标（atlas 内坐标）—— 与现有 tileset.tres 兼容
-# 地面：第 0 行：4,5 是带碰撞的左右顶角；2 是中间带碰撞；3 是中带碰撞
-# 装饰层：第 0 行 0,1 是填充；6,7 是不同种草
-const T_GRASS_TL := Vector2i(4, 0)   # 平台左上角（含物理）
-const T_GRASS_TR := Vector2i(5, 0)   # 平台右上角（含物理）
-const T_GRASS_TM := Vector2i(6, 0)   # 平台顶面中间（含物理）—— 原数据用 6,0 和 3,0
-const T_GRASS_MID_L := Vector2i(3, 0)  # 平台左边垂直面（含物理）
-const T_GRASS_MID_R := Vector2i(2, 0)  # 平台右边垂直面（含物理）
-const T_GRASS_MID := Vector2i(2, 0)    # 平台中间填充
-const T_GRASS_FILL := Vector2i(0, 0)   # 内部无碰撞填充
-const T_GRASS_FILL_ALT := Vector2i(1, 0)  # 内部填充变种
-# 装饰
-const T_DEC_TREE := Vector2i(6, 2)  # 树
-const T_DEC_BUSH := Vector2i(7, 2)  # 灌木
-# 水
-const T_WATER_TOP := Vector2i(0, 1)  # 水面顶
-const T_WATER_BODY := Vector2i(1, 1)  # 水体
-# 桥
-const T_BRIDGE_H := Vector2i(4, 0)   # 桥面（复用 4,0 草）
-# 背景
+const T_GRASS_TL := Vector2i(4, 0)
+const T_GRASS_TR := Vector2i(5, 0)
+const T_GRASS_TM := Vector2i(6, 0)
+const T_GRASS_MID_L := Vector2i(3, 0)
+const T_GRASS_MID_R := Vector2i(2, 0)
+const T_GRASS_MID := Vector2i(2, 0)
+const T_GRASS_FILL := Vector2i(0, 0)
+const T_GRASS_FILL_ALT := Vector2i(1, 0)
+const T_DEC_TREE := Vector2i(6, 2)
+const T_DEC_BUSH := Vector2i(7, 2)
+const T_WATER_TOP := Vector2i(0, 1)
+const T_WATER_BODY := Vector2i(1, 1)
+const T_BRIDGE_H := Vector2i(4, 0)
 const T_BG_MOUNTAIN := Vector2i(2, 3)
 const T_BG_CLOUD := Vector2i(3, 2)
 
@@ -262,73 +66,347 @@ var _block_layer: TileMapLayer
 var _pickup_layer: TileMapLayer
 var _deco_layer: TileMapLayer
 
-# 平台定义（X 轴起止瓦片列，行号）—— 平台之间留出可跳跃的缺口
-# 格式: [start_col, end_col, row, kind]
-# kind: "ground" / "underground" / "plaza" / "elevated"
+# 平台
 const PLATFORMS: Array = [
-	# ── 左侧森林 (x: 0-2000) ──
-	{"x0": 0,   "x1": 21,  "row": GROUND_ROW,     "tag": "forest_start"},
-	{"x0": 29,  "x1": 42,  "row": GROUND_ROW,     "tag": "forest_wall"},      # 纹理墙区 (x=464), 左侧有深坑
-	{"x0": 49,  "x1": 78,  "row": GROUND_ROW,     "tag": "forest_house"},     # 找不同密室 (x=1200=tile75)
-	{"x0": 84,  "x1": 102, "row": GROUND_ROW,     "tag": "forest_painting"},  # 宴会厅油画 (x=2000=tile125在forest_end)
-	{"x0": 101, "x1": 130, "row": GROUND_ROW,     "tag": "forest_end"},
-	# ── 中央广场 (x: 2000-4400) ──
-	{"x0": 137, "x1": 165, "row": GROUND_ROW,     "tag": "plaza_l"},
-	{"x0": 175, "x1": 206, "row": GROUND_ROW,     "tag": "plaza_r"},          # 包含 3300 锚点
-	{"x0": 210, "x1": 245, "row": GROUND_ROW,     "tag": "plaza_bridge"},     # 包含 3400 玩家出生点
-	# ── 湖泊灯塔 (x: 4400-5700) ──
-	{"x0": 252, "x1": 280, "row": GROUND_ROW,     "tag": "lighthouse"},
-	{"x0": 288, "x1": 322, "row": GROUND_ROW,     "tag": "lighthouse_e"},     # 包含 4900 标记
-	# ── 水坝 (x: 5700-6800) ──
-	{"x0": 328, "x1": 360, "row": GROUND_ROW,     "tag": "dam"},
-	{"x0": 368, "x1": 402, "row": GROUND_ROW,     "tag": "dam_e"},            # 包含 5950 锚点
-	# ── 旧车站 (x: 6800-8500) ──
-	{"x0": 408, "x1": 440, "row": GROUND_ROW,     "tag": "station"},
-	{"x0": 448, "x1": 480, "row": GROUND_ROW,     "tag": "station_e"},        # 包含 6950 锚点
-	# ── 游乐园 (x: 8500-9800) ──
-	{"x0": 486, "x1": 518, "row": GROUND_ROW,     "tag": "park"},
-	{"x0": 526, "x1": 560, "row": GROUND_ROW,     "tag": "park_e"},           # 包含 8600 锚点 + 8800 谜题
-	# ── 天文台 (x: 9800-11200) ──
-	{"x0": 566, "x1": 600, "row": GROUND_ROW,     "tag": "observatory"},      # 包含 9850 锚点
-	{"x0": 608, "x1": 645, "row": GROUND_ROW,     "tag": "observatory_e"},    # 包含 10500 NPC
-	{"x0": 653, "x1": 685, "row": GROUND_ROW,     "tag": "observatory_ext"},
-	# ── 地下迷宫 (x: 4400-6500) ──
-	{"x0": 252, "x1": 280, "row": UG_GROUND_ROW, "tag": "ug_a"},
-	{"x0": 288, "x1": 320, "row": UG_GROUND_ROW, "tag": "ug_b"},
-	{"x0": 328, "x1": 365, "row": UG_GROUND_ROW, "tag": "ug_c"},             # 包含 5350 锚点
-	{"x0": 370, "x1": 405, "row": UG_GROUND_ROW, "tag": "ug_treasure"},
+	{"x0": 0,   "x1": 262, "row": GROUND_ROW, "tag": "floor_left"},
+	{"x0": 264, "x1": 300, "row": GROUND_ROW, "tag": "floor_mid1"},
+	{"x0": 302, "x1": 340, "row": GROUND_ROW, "tag": "floor_lighthouse"},
+	{"x0": 342, "x1": 395, "row": GROUND_ROW, "tag": "floor_dam"},
+	{"x0": 397, "x1": 450, "row": GROUND_ROW, "tag": "floor_station"},
+	{"x0": 452, "x1": 520, "row": GROUND_ROW, "tag": "floor_park"},
+	{"x0": 522, "x1": 700, "row": GROUND_ROW, "tag": "floor_obs"},
+	{"x0": 260, "x1": 440, "row": UG_GROUND_ROW, "tag": "ug_floor"},
 ]
 
+var _texture_wall_blocks: Array[Vector2i] = []
+
+func build(state: Dictionary) -> void:
+	add_to_group("world")
+	_make_background_canvas()
+	_make_depression_spikes()
+	_make_parallax_backgrounds()
+	_make_tilemap_world()
+	_make_beautiful_decor()
+	_make_regions_on_tilemap()
+	_make_npcs()
+	_make_puzzles(state)
+	_make_collectibles(state)
+	_make_monsters(state)
+	_make_memory_anchors()
+	_make_underground_maze_entrance()
+
+# ══════════════════════════════════════════════════════════════
+#  BACKGROUND CANVAS + VIEW TINT
+# ══════════════════════════════════════════════════════════════
+func _make_background_canvas() -> void:
+	# 天空背景渐变
+	bg_canvas = CanvasLayer.new()
+	bg_canvas.name = "BackgroundCanvas"
+	bg_canvas.layer = -100
+	bg_canvas.follow_viewport_enabled = true
+	add_child(bg_canvas)
+
+	var sky_grad := GradientTexture2D.new()
+	sky_grad.gradient = Gradient.new()
+	sky_grad.gradient.set_color(0, Color("#87ceeb"))
+	sky_grad.gradient.set_color(1, Color("#e8f4f8"))
+	sky_grad.width = 2
+	sky_grad.height = 1080
+
+	var sky_rect := TextureRect.new()
+	sky_rect.name = "Sky"
+	sky_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	sky_rect.texture = sky_grad
+	sky_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bg_canvas.add_child(sky_rect)
+
+	# View tint (layer 500)
+	view_tint_canvas = CanvasLayer.new()
+	view_tint_canvas.name = "ViewTintCanvas"
+	view_tint_canvas.layer = 500
+	view_tint_canvas.follow_viewport_enabled = true
+	add_child(view_tint_canvas)
+
+	palette_overlay = ColorRect.new()
+	palette_overlay.name = "ViewTint"
+	palette_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	palette_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	palette_overlay.color = Color(1.0, 0.9, 0.75, 0.08)
+	view_tint_canvas.add_child(palette_overlay)
+
+	# 盲人全黑覆盖层（最高优先级）
+	blind_black = ColorRect.new()
+	blind_black.name = "BlindBlack"
+	blind_black.set_anchors_preset(Control.PRESET_FULL_RECT)
+	blind_black.color = Color(0, 0, 0, 1)
+	blind_black.mouse_filter = Control.MOUSE_FILTER_PASS
+	blind_black.visible = false
+	blind_black.z_index = 9999
+	view_tint_canvas.add_child(blind_black)
+
+	blind_label = Label.new()
+	blind_label.name = "BlindLabel"
+	blind_label.text = "盲人模式 - 按F键回声定位"
+	blind_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	blind_label.position = Vector2(300, 500)
+	blind_label.size = Vector2(680, 60)
+	blind_label.add_theme_font_size_override("font_size", 28)
+	blind_label.add_theme_color_override("font_color", Color(0.4, 0.6, 1.0))
+	blind_label.visible = false
+	blind_label.z_index = 10000
+	view_tint_canvas.add_child(blind_label)
+
+	# Blind cursor (layer 1000, above blind_black)
+	view_overlay_canvas = CanvasLayer.new()
+	view_overlay_canvas.name = "ViewOverlayCanvas"
+	view_overlay_canvas.layer = 10000
+	view_overlay_canvas.follow_viewport_enabled = true
+	add_child(view_overlay_canvas)
+
+	blind_cursor = Panel.new()
+	blind_cursor.name = "BlindCursor"
+	blind_cursor.size = Vector2(14, 14)
+	blind_cursor.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	blind_cursor.visible = false
+	var cs := StyleBoxFlat.new()
+	cs.bg_color = Color.WHITE
+	cs.set_corner_radius_all(7)
+	blind_cursor.add_theme_stylebox_override("panel", cs)
+	view_overlay_canvas.add_child(blind_cursor)
+
+	monster_canvas = CanvasLayer.new()
+	monster_canvas.name = "MonsterCanvas"
+	monster_canvas.layer = 9000
+	monster_canvas.follow_viewport_enabled = true
+	add_child(monster_canvas)
+
+func _make_depression_spikes() -> void:
+	_spike_canvas = CanvasLayer.new()
+	_spike_canvas.name = "DepressionSpikes"
+	_spike_canvas.layer = 400
+	_spike_canvas.follow_viewport_enabled = true
+	_spike_canvas.visible = false
+	add_child(_spike_canvas)
+
+	for x_tile in range(0, WORLD_TILE_W, 4):
+		var sx := x_tile * TILE_SIZE
+		var spike := Polygon2D.new()
+		var h: float = 8.0 + fmod(sx * 0.13, 6.0)
+		spike.polygon = PackedVector2Array([
+			Vector2(-3, h), Vector2(3, h), Vector2(0, -3)
+		])
+		spike.position = Vector2(sx, GROUND_Y_PX)
+		spike.color = Color("#ff3333")
+		spike.modulate.a = 0.7
+		spike.z_index = 10
+		_spike_canvas.add_child(spike)
+
+	var label := Label.new()
+	label.text = "地面布满尖刺..."
+	label.position = Vector2(12, 12)
+	label.add_theme_font_size_override("font_size", 16)
+	label.add_theme_color_override("font_color", Color("#ff6666"))
+	_spike_canvas.add_child(label)
+
+# ══════════════════════════════════════════════════════════════
+#  PARALLAX BACKGROUNDS - 美化版
+# ══════════════════════════════════════════════════════════════
+func _make_parallax_backgrounds() -> void:
+	_add_parallax_layer(0.03, _draw_distant_mountains)
+	_add_parallax_layer(0.08, _draw_clouds)
+	_add_parallax_layer(0.12, _draw_mid_hills)
+	_add_parallax_layer(0.22, _draw_trees_far)
+	_add_parallax_layer(0.35, _draw_buildings_bg)
+
+func _add_parallax_layer(parallax_factor: float, draw_func: Callable) -> void:
+	var container := Node2D.new()
+	container.name = "Parallax_%.2f" % parallax_factor
+	container.z_index = int(-80 + parallax_factor * 30)
+	add_child(container)
+	draw_func.call(container)
+	parallax_layers.append({"node": container, "factor": parallax_factor})
+
+func _draw_distant_mountains(container: Node2D) -> void:
+	var colors: Array = [Color("#8899bb"), Color("#99aacc"), Color("#7788aa"), Color("#aabbdd")]
+	for i in range(12):
+		var mountain := Polygon2D.new()
+		var x: float = i * 1300.0 - 300.0
+		var h: float = 300.0 + fmod(i * 1.7, 1.0) * 250.0
+		var w: float = 1100.0 + fmod(i + 3, 1.0) * 500.0
+		mountain.polygon = PackedVector2Array([
+			Vector2(x, 3400.0), Vector2(x + w * 0.25, 3400.0 - h * 0.55),
+			Vector2(x + w * 0.5, 3400.0 - h), Vector2(x + w * 0.75, 3400.0 - h * 0.5),
+			Vector2(x + w, 3400.0),
+		])
+		mountain.color = colors[i % colors.size()]
+		mountain.modulate.a = 0.4
+		container.add_child(mountain)
+	# 雪顶
+	for i in range(8):
+		var snow := Polygon2D.new()
+		var x := i * 1900.0 + 200.0
+		snow.polygon = PackedVector2Array([
+			Vector2(x - 120, 3400 - 400), Vector2(x + 120, 3400 - 400),
+			Vector2(x - 40, 3400 - 460), Vector2(x + 40, 3400 - 460),
+		])
+		snow.color = Color(1, 1, 1, 0.5)
+		container.add_child(snow)
+
+func _draw_mid_hills(container: Node2D) -> void:
+	var colors := [Color("#7da86b"), Color("#8db878"), Color("#6d985b"), Color("#9dc888")]
+	for i in range(14):
+		var hill := Polygon2D.new()
+		var x := i * 1200.0 - 200.0
+		var w := 900.0 + fmod(i * 3.1, 1.0) * 400.0
+		var cx := x + w * 0.5
+		hill.polygon = PackedVector2Array([
+			Vector2(x, 3400.0),
+			Vector2(cx - w * 0.2, 3300.0 - fmod(i * 0.7, 1.0) * 120),
+			Vector2(cx, 3260.0 - fmod(i * 0.3, 1.0) * 100),
+			Vector2(cx + w * 0.2, 3290.0 - fmod(i * 0.5, 1.0) * 90),
+			Vector2(x + w, 3400.0),
+		])
+		hill.color = colors[i % colors.size()]
+		hill.modulate.a = 0.5
+		container.add_child(hill)
+
+func _draw_clouds(container: Node2D) -> void:
+	for i in range(20):
+		var cloud := Polygon2D.new()
+		var cx := i * 750.0 + sin(i * 1.3) * 250.0
+		var cy := 300.0 + cos(i * 1.7) * 180.0
+		var pts := PackedVector2Array()
+		for j in range(24):
+			var a := TAU * j / 24.0
+			var rx := 60.0 + sin(j * 3.0) * 20.0
+			var ry := 22.0 + cos(j * 2.0) * 8.0
+			pts.append(Vector2(cx + cos(a) * rx, cy + sin(a) * ry))
+		cloud.polygon = pts
+		cloud.color = Color(1, 1, 1, 0.25 + fmod(i * 0.3, 1.0) * 0.2)
+		container.add_child(cloud)
+
+func _draw_trees_far(container: Node2D) -> void:
+	var tree_colors := [Color("#3a6b30"), Color("#4a7b3e"), Color("#2d5a24"), Color("#558a45")]
+	for i in range(35):
+		var tx := i * 480.0 + fmod(i * 3.7, 1.0) * 150.0
+		var ty := 3280.0 - fmod(i * 2.3, 1.0) * 60.0
+		var th := 100.0 + fmod(i * 1.1, 1.0) * 80.0
+		# 树干
+		var trunk := Polygon2D.new()
+		trunk.polygon = PackedVector2Array([
+			Vector2(tx - 4, ty), Vector2(tx + 4, ty),
+			Vector2(tx + 3, ty - th * 0.35), Vector2(tx - 3, ty - th * 0.35),
+		])
+		trunk.color = Color("#5a3a28")
+		container.add_child(trunk)
+		# 树冠（多层）
+		for layer in range(3):
+			var canopy := Polygon2D.new()
+			var cp := PackedVector2Array()
+			var cx_off := fmod(layer * 1.3, 1.0) * 12 - 6
+			var cy_off := th * 0.3 + layer * th * 0.18
+			var r := 35.0 - layer * 8.0
+			for j in range(14):
+				var a := TAU * j / 14.0
+				cp.append(Vector2(tx + cx_off + cos(a) * r, ty - cy_off + sin(a) * r * 0.7))
+			canopy.polygon = cp
+			canopy.color = tree_colors[(i + layer) % tree_colors.size()]
+			canopy.modulate.a = 0.8
+			container.add_child(canopy)
+
+func _draw_buildings_bg(container: Node2D) -> void:
+	var bld_colors := [Color("#8a7060"), Color("#9a8070"), Color("#7a6050"), Color("#a09080")]
+	# 灯塔
+	_draw_lighthouse(Vector2(4900, 2900), container)
+	# 水坝
+	_draw_dam(Vector2(6200, 3000), container)
+	# 许愿堂
+	_draw_observatory(Vector2(9800, 2950), container)
+
+func _draw_lighthouse(pos: Vector2, container: Node2D) -> void:
+	var x := pos.x; var y := pos.y
+	var body := Polygon2D.new()
+	body.polygon = PackedVector2Array([
+		Vector2(x - 20, y + 200), Vector2(x + 20, y + 200),
+		Vector2(x + 12, y), Vector2(x - 12, y),
+	])
+	body.color = Color("#d0d8e0")
+	container.add_child(body)
+	# 灯塔条纹
+	for si in range(6):
+		var stripe := ColorRect.new()
+		stripe.position = Vector2(x - 18 + si * 6, y + 10 + si * 30)
+		stripe.size = Vector2(12 + si, 8)
+		stripe.color = Color("#e04040") if si % 2 == 0 else Color("#ffffff")
+		container.add_child(stripe)
+	# 灯室
+	var light_room := Polygon2D.new()
+	light_room.polygon = PackedVector2Array([
+		Vector2(x - 10, y - 10), Vector2(x + 10, y - 10),
+		Vector2(x + 14, y), Vector2(x - 14, y),
+	])
+	light_room.color = Color("#ffe8a0", 0.8)
+	container.add_child(light_room)
+
+func _draw_dam(pos: Vector2, container: Node2D) -> void:
+	var x := pos.x; var y := pos.y
+	for row in range(5):
+		var block := ColorRect.new()
+		block.position = Vector2(x + row * 40, y + row * 8)
+		block.size = Vector2(36, 22)
+		block.color = Color("#889098")
+		container.add_child(block)
+	var wall := ColorRect.new()
+	wall.position = Vector2(x + 40, y - 80)
+	wall.size = Vector2(160, 120)
+	wall.color = Color("#788890", 0.5)
+	container.add_child(wall)
+
+func _draw_observatory(pos: Vector2, container: Node2D) -> void:
+	var x := pos.x; var y := pos.y
+	# 基座
+	var base := Polygon2D.new()
+	base.polygon = PackedVector2Array([
+		Vector2(x - 50, y + 80), Vector2(x + 50, y + 80),
+		Vector2(x + 30, y + 30), Vector2(x - 30, y + 30),
+	])
+	base.color = Color("#706868")
+	container.add_child(base)
+	# 穹顶
+	var dome := Polygon2D.new()
+	var dp := PackedVector2Array()
+	for i in range(18):
+		var a := PI + TAU * i / 34.0
+		dp.append(Vector2(x + cos(a) * 40, y + 30 + sin(a) * 35))
+	dome.polygon = dp
+	dome.color = Color("#90a0b0")
+	container.add_child(dome)
+	# 望远镜
+	var scope := ColorRect.new()
+	scope.position = Vector2(x - 3, y)
+	scope.size = Vector2(6, 50)
+	scope.color = Color("#c0c0c0")
+	container.add_child(scope)
+
+# ══════════════════════════════════════════════════════════════
+#  TILEMAP WORLD
+# ══════════════════════════════════════════════════════════════
 func _make_tilemap_world() -> void:
-	# ── 创建 7 层 TileMapLayer ──
-	_ground_layer = _create_layer("Ground_3", true, -30)
-	_water_layer = _create_layer("Water_1", false, -28)
-	_bridge_layer = _create_layer("Bridge_2", false, -27)
-	_deco_layer = _create_layer("New_layer_0", false, -26)
-	_pickup_layer = _create_layer("Pickups_4", false, -25)
-	_block_layer = _create_layer("Blocks_5", true, -24)
-	_bg_layer = _create_layer("Background_6", false, -32)
+	_ground_layer = _create_layer("Ground", true, -30)
+	_water_layer = _create_layer("Water", true, -28)
+	_bridge_layer = _create_layer("Bridge", false, -27)
+	_deco_layer = _create_layer("Deco", false, -26)
+	_pickup_layer = _create_layer("Pickups", false, -25)
+	_block_layer = _create_layer("Blocks", true, -24)
+	_bg_layer = _create_layer("Background", false, -32)
 
-	# 1. 背景：远山 + 云
-	_paint_background_decor()
-
-	# 2. 地下基础：把地下层铺成实心岩石平台
-	_paint_underground_floor()
-
-	# 3. 地面：所有平台用代码绘制
+	_paint_background_bg()
 	_paint_all_platforms()
-
-	# 4. 桥（瀑布附近）连接地面与地下
-	_paint_waterfalls()
-
-	# 5. 纹理墙左侧深坑（ADHD冲刺跳跃）
-	_paint_wall_pit()
-
-	# 6. 装饰：树、灌木、浮空小平台
+	_paint_water_features()
+	_paint_underground_solid()
+	_paint_underground_maze_walls()
+	_paint_texture_wall_blocker()
 	_paint_decorations()
-
-	# 7. 地下迷宫台阶入口 + 黑暗覆盖层 + 梯子出口
-	_make_maze_entrance()
 
 func _create_layer(name: String, with_collision: bool, z: int) -> TileMapLayer:
 	var layer := TileMapLayer.new()
@@ -339,350 +417,396 @@ func _create_layer(name: String, with_collision: bool, z: int) -> TileMapLayer:
 	add_child(layer)
 	return layer
 
-# ── 平台绘制：每个平台是一个矩形块，顶面用草边，侧面用草中，内部用填充 ──
+func _paint_background_bg() -> void:
+	for y in range(0, GROUND_ROW, 12):
+		for x in range(WORLD_TILE_W):
+			if (x + y) % 29 == 0:
+				_bg_layer.set_cell(Vector2i(x, y), 0, T_BG_CLOUD)
+	for x in range(WORLD_TILE_W):
+		_bg_layer.set_cell(Vector2i(x, 4), 0, T_BG_MOUNTAIN)
+
 func _paint_all_platforms() -> void:
 	for p in PLATFORMS:
-		var x0: int = p["x0"]
-		var x1: int = p["x1"]
-		var row: int = p["row"]
-		_paint_platform(x0, x1, row)
+		_paint_platform(p["x0"], p["x1"], p["row"])
 
 func _paint_platform(x0: int, x1: int, top_row: int) -> void:
-	# 顶面（草边 tile，第 0 行）
-	_ground_layer.set_cell(Vector2i(x0, top_row), 0, T_GRASS_TL)
-	_ground_layer.set_cell(Vector2i(x1, top_row), 0, T_GRASS_TR)
-	for x in range(x0 + 1, x1):
-		_ground_layer.set_cell(Vector2i(x, top_row), 0, T_GRASS_TM)
-	# 侧面（往下 8 行 = 128px 厚的实体）
-	var body_depth := 8
+	# 顶层草坪 —— 用不同色块交替
+	for x in range(x0, x1 + 1):
+		var tile := T_GRASS_TM
+		if x == x0: tile = T_GRASS_TL
+		elif x == x1: tile = T_GRASS_TR
+		elif (x % 7) == 0: tile = T_GRASS_FILL_ALT
+		_ground_layer.set_cell(Vector2i(x, top_row), 0, tile)
+
+	var body_depth: int = 20 if top_row == UG_GROUND_ROW else 12
 	for y in range(1, body_depth + 1):
 		var yi := top_row + y
-		_ground_layer.set_cell(Vector2i(x0, yi), 0, T_GRASS_MID_L)
-		_ground_layer.set_cell(Vector2i(x1, yi), 0, T_GRASS_MID_R)
-		for x in range(x0 + 1, x1):
-			_ground_layer.set_cell(Vector2i(x, yi), 0, T_GRASS_MID)
-	# 内部最底 2 行用无碰撞的填充
-	for y in range(body_depth + 1, body_depth + 4):
-		var yi := top_row + y
-		_ground_layer.set_cell(Vector2i(x0, yi), 0, T_GRASS_FILL)
-		_ground_layer.set_cell(Vector2i(x1, yi), 0, T_GRASS_FILL_ALT)
-		for x in range(x0 + 1, x1):
-			_ground_layer.set_cell(Vector2i(x, yi), 0, T_GRASS_FILL)
+		for x in range(x0, x1 + 1):
+			var tile := T_GRASS_MID
+			if (x + y) % 5 == 0: tile = T_GRASS_FILL_ALT
+			elif (x + y) % 7 == 0: tile = T_GRASS_MID_L
+			elif y == body_depth: tile = T_GRASS_FILL
+			_ground_layer.set_cell(Vector2i(x, yi), 0, tile)
 
-# ── 地下层：填补所有地下区域为石底（视觉上让背景层继续延伸）──
-func _paint_underground_floor() -> void:
-	# 地下层在 GROUND_ROW~WORLD_TILE_H-1 之间
-	# 平台会盖住一部分，剩下的填成深色背景
-	for y in range(UG_GROUND_ROW + 6, WORLD_TILE_H):
-		for x in range(WORLD_TILE_W):
-			_bg_layer.set_cell(Vector2i(x, y), 0, T_GRASS_FILL)
-	# 在 GROUND_ROW + 1 ~ UG_GROUND_ROW - 1 之间填一层 "天空下面"
-	for y in range(GROUND_ROW + 12, UG_GROUND_ROW):
-		for x in range(WORLD_TILE_W):
-			if (x + y) % 7 == 0:
-				_bg_layer.set_cell(Vector2i(x, y), 0, T_BG_CLOUD)
+func _paint_water_features() -> void:
+	# 灯塔旁边的湖
+	for x in range(290, 305):
+		for y in range(GROUND_ROW, GROUND_ROW + 30):
+			_water_layer.set_cell(Vector2i(x, y), 0, T_WATER_BODY)
+		_water_layer.set_cell(Vector2i(x, GROUND_ROW), 0, T_WATER_TOP)
+	# 桥上
+	_bridge_layer.set_cell(Vector2i(297, GROUND_ROW), 0, T_BRIDGE_H)
+	_bridge_layer.set_cell(Vector2i(298, GROUND_ROW), 0, T_BRIDGE_H)
+	_bridge_layer.set_cell(Vector2i(299, GROUND_ROW), 0, T_BRIDGE_H)
+	# 水坝下游水
+	for x in range(420, 435):
+		for y in range(GROUND_ROW, GROUND_ROW + 24):
+			_water_layer.set_cell(Vector2i(x, y), 0, T_WATER_BODY)
+	# 游乐园小湖
+	for x in range(490, 500):
+		for y in range(GROUND_ROW, GROUND_ROW + 18):
+			_water_layer.set_cell(Vector2i(x, y), 0, T_WATER_BODY)
 
-# ── 桥/瀑布：在灯塔区（x: 4800-5500）从地面直通地下 ──
-func _paint_waterfalls() -> void:
-	# 灯塔平台附近的瀑布
-	var bridge_x := 5400 / TILE_SIZE  # 337
-	var top_row := GROUND_ROW
-	var bot_row := UG_GROUND_ROW
-	# 桥面（横跨瀑布的窄桥）—— 在 ground row 同一行
-	for x in range(bridge_x - 3, bridge_x + 4):
-		_bridge_layer.set_cell(Vector2i(x, top_row), 0, T_BRIDGE_H)
-	# 瀑布水柱（仅视觉，从地下顶面到桥底）
-	for y in range(top_row + 2, bot_row):
-		_water_layer.set_cell(Vector2i(bridge_x, y), 0, T_WATER_BODY)
-		_water_layer.set_cell(Vector2i(bridge_x - 1, y), 0, T_WATER_BODY)
+func _paint_underground_solid() -> void:
+	var left_col := 260
+	var right_col := 440
+	for y in range(UG_GROUND_ROW, WORLD_TILE_H):
+		for x in range(left_col, right_col + 1):
+			var tile := T_GRASS_MID
+			if (x + y) % 4 == 0: tile = T_GRASS_FILL
+			elif (x + y) % 7 == 0: tile = T_GRASS_FILL_ALT
+			_ground_layer.set_cell(Vector2i(x, y), 0, tile)
 
-# ── 背景装饰 ──
-func _paint_background_decor() -> void:
-	# 远山轮廓（最顶部几行）
-	for x in range(WORLD_TILE_W):
-		_bg_layer.set_cell(Vector2i(x, 5), 0, T_BG_MOUNTAIN)
-		_bg_layer.set_cell(Vector2i(x, 6), 0, T_BG_MOUNTAIN)
-	# 零散云朵
-	for i in range(40):
-		var cx: int = (i * 47 + 13) % WORLD_TILE_W
-		var cy: int = 8 + (i % 4) * 2
-		_bg_layer.set_cell(Vector2i(cx, cy), 0, T_BG_CLOUD)
-		if i % 3 == 0:
-			_bg_layer.set_cell(Vector2i(cx + 1, cy), 0, T_BG_CLOUD)
+func _paint_underground_maze_walls() -> void:
+	var floor_row := UG_GROUND_ROW
+	var wall_h := 12
+	var wall_top := floor_row - wall_h
 
-# ── 装饰：树木、灌木、浮空小平台 ──
-func _paint_decorations() -> void:
-	# 树：放在平台顶面行上
-	for p in PLATFORMS:
-		if p["row"] != GROUND_ROW:
-			continue
-		var x0: int = p["x0"]
-		var x1: int = p["x1"]
-		# 每个平台放 1-3 棵树
-		var tree_count: int = 1 + (x1 - x0) / 40
-		for i in range(tree_count):
-			var tx: int = x0 + 4 + (i * 13 + (x0 % 7)) % max(1, (x1 - x0 - 8))
-			var ty: int = int(p["row"]) - 1  # 树在平台顶面再上一格
-			_deco_layer.set_cell(Vector2i(tx, ty), 0, T_DEC_TREE)
-		# 中央广场不放树
-		if "plaza" in str(p.get("tag", "")):
-			continue
-		# 灌木在树旁边
-		for i in range(tree_count):
-			var bx: int = x0 + 7 + (i * 19 + 5) % max(1, (x1 - x0 - 10))
-			_deco_layer.set_cell(Vector2i(bx, int(p["row"]) - 1), 0, T_DEC_BUSH)
+	# 地下可见迷宫墙壁（带碰撞的 block_layer）
+	# 左墙：从入口区域的边缘开始
+	for y in range(wall_top, floor_row + 1):
+		_block_layer.set_cell(Vector2i(265, y), 0, T_GRASS_MID)
+		_block_layer.set_cell(Vector2i(320, y), 0, T_GRASS_MID)
+		_block_layer.set_cell(Vector2i(375, y), 0, T_GRASS_MID)
+		_block_layer.set_cell(Vector2i(435, y), 0, T_GRASS_MID)
 
-	# 浮空小平台（让游戏有跳跃元素）
-	# 关键缺口上方加一个浮空平台，玩家可踩上去再跳到下一平台
-	var floating_platforms: Array = [
-		# [col_x, row_y, width]  浮空平台 tile 坐标
-		# 深坑上方浮台（ADHD起跳点）
-		{"cx": 25,  "cy": GROUND_ROW - 3,  "w": 4},    # 深坑正上方
-		{"cx": 44,  "cy": GROUND_ROW - 4,  "w": 5},    # 纹理墙与密室之间
-		{"cx": 69,  "cy": GROUND_ROW - 6,  "w": 4},    # 密室与宴会厅之间
-		{"cx": 96,  "cy": GROUND_ROW - 5,  "w": 5},    # 宴会厅之后
-		{"cx": 127, "cy": GROUND_ROW - 4,  "w": 4},    # 进中央广场前
-		{"cx": 168, "cy": GROUND_ROW - 5,  "w": 5},   # 广场中段
-		{"cx": 202, "cy": GROUND_ROW - 4,  "w": 4},   # 广场出
-		{"cx": 245, "cy": GROUND_ROW - 5,  "w": 5},   # 进灯塔
-		{"cx": 322, "cy": GROUND_ROW - 4,  "w": 4},   # 灯塔出
-		{"cx": 363, "cy": GROUND_ROW - 5,  "w": 5},   # 进水坝
-		{"cx": 404, "cy": GROUND_ROW - 4,  "w": 4},   # 水坝出
-		{"cx": 444, "cy": GROUND_ROW - 5,  "w": 5},   # 进车站
-		{"cx": 481, "cy": GROUND_ROW - 4,  "w": 4},   # 车站出
-		{"cx": 522, "cy": GROUND_ROW - 5,  "w": 5},   # 进游乐园
-		{"cx": 561, "cy": GROUND_ROW - 4,  "w": 4},   # 游乐园出
-		{"cx": 600, "cy": GROUND_ROW - 5,  "w": 5},   # 进天文台
-		# 地下层浮空
-		{"cx": 282, "cy": UG_GROUND_ROW - 4, "w": 4},
-		{"cx": 322, "cy": UG_GROUND_ROW - 5, "w": 4},
-		{"cx": 362, "cy": UG_GROUND_ROW - 4, "w": 4},
+	# 水平隔墙（形成岔路结构）
+	var hwalls := [
+		{"y": wall_top + 4, "x0": 270, "x1": 316, "gap": 296},     # 入口后第一道
+		{"y": wall_top + 8, "x0": 265, "x1": 318, "gap": 292},     # 第二道（引导到岔路口）
 	]
-	for fp in floating_platforms:
-		var cx: int = fp["cx"]
-		var cy: int = fp["cy"]
-		var w: int = fp["w"]
-		# 平台顶面
-		_ground_layer.set_cell(Vector2i(cx, cy), 0, T_GRASS_TL)
-		_ground_layer.set_cell(Vector2i(cx + w, cy), 0, T_GRASS_TR)
-		for x in range(cx + 1, cx + w):
-			_ground_layer.set_cell(Vector2i(x, cy), 0, T_GRASS_TM)
-		# 平台底（仅视觉无碰撞）
-		_ground_layer.set_cell(Vector2i(cx, cy + 1), 0, T_GRASS_FILL)
-		_ground_layer.set_cell(Vector2i(cx + w, cy + 1), 0, T_GRASS_FILL_ALT)
-		for x in range(cx + 1, cx + w):
-			_ground_layer.set_cell(Vector2i(x, cy + 1), 0, T_GRASS_FILL)
+	for hw in hwalls:
+		for x in range(hw["x0"], hw["x1"] + 1):
+			if x >= hw["gap"] - 1 and x <= hw["gap"] + 1:
+				continue
+			_block_layer.set_cell(Vector2i(x, hw["y"]), 0, T_GRASS_MID)
 
-# ── 纹理墙左侧深坑（ADHD 冲刺跳跃）──
-# 坑在 forest_start(0-21) 和 forest_wall(29-42) 之间
-# 宽 7 格 (22-28) = 112px，深约 13 格 = 208px
-# 坑内有小平台，需要 ADHD 模式冲刺才能跳过
-func _paint_wall_pit() -> void:
-	var pit_x0 := 22
-	var pit_x1 := 28
-	var pit_top := GROUND_ROW + 1
-	var pit_bottom := GROUND_ROW + 13  # 208px 深
+	# 中间分隔墙（形成岔路A和B的分界）
+	for y in range(wall_top + 8, floor_row + 1):
+		_block_layer.set_cell(Vector2i(347, y), 0, T_GRASS_MID)
 
-	# 坑壁（左右垂直面）
-	for y in range(pit_top, pit_bottom + 1):
-		_ground_layer.set_cell(Vector2i(pit_x0, y), 0, T_GRASS_MID_L)
-		_ground_layer.set_cell(Vector2i(pit_x1, y), 0, T_GRASS_MID_R)
-	# 坑底
-	for x in range(pit_x0 + 1, pit_x1):
-		_ground_layer.set_cell(Vector2i(x, pit_bottom), 0, T_GRASS_MID)
-		_ground_layer.set_cell(Vector2i(x, pit_bottom + 1), 0, T_GRASS_FILL)
+	# 岔路A区域（左边 → 钥匙）
+	for y in range(wall_top + 5, floor_row + 1):
+		_block_layer.set_cell(Vector2i(280, y), 0, T_GRASS_MID)
+	# 岔路A尽头
+	for x in range(282, 340):
+		for y in range(wall_top, wall_top + 4):
+			_block_layer.set_cell(Vector2i(x, y), 0, T_GRASS_MID if (x+y)%2==0 else T_GRASS_MID_L)
 
-	# 坑内窄平台（ADHD冲刺用）
-	# 左侧小平台：row GROUND_ROW+4（64px 深），2 格宽
-	var p1_row := GROUND_ROW + 4
-	_ground_layer.set_cell(Vector2i(pit_x0 + 1, p1_row), 0, T_GRASS_TL)
-	_ground_layer.set_cell(Vector2i(pit_x0 + 2, p1_row), 0, T_GRASS_TR)
-	# 右侧小平台：row GROUND_ROW+8（128px 深），2 格宽
-	var p2_row := GROUND_ROW + 8
-	var p2_l := pit_x1 - 2
-	_ground_layer.set_cell(Vector2i(p2_l, p2_row), 0, T_GRASS_TL)
-	_ground_layer.set_cell(Vector2i(pit_x1 - 1, p2_row), 0, T_GRASS_TR)
-	# 中间小浮台：row GROUND_ROW+6，1 格宽
-	_ground_layer.set_cell(Vector2i(25, GROUND_ROW + 6), 0, T_GRASS_TM)
+	# 岔路B区域（右边 → 宝箱）
+	for y in range(wall_top + 5, floor_row + 1):
+		_block_layer.set_cell(Vector2i(410, y), 0, T_GRASS_MID)
+	# 岔路B尽头
+	for x in range(355, 406):
+		for y in range(wall_top, wall_top + 4):
+			_block_layer.set_cell(Vector2i(x, y), 0, T_GRASS_MID if (x+y)%2==0 else T_GRASS_FILL)
 
-	# 坑边警告标签（像素坐标）
-	var pit_label := Label.new()
-	pit_label.text = "⚠ 深坑\nADHD冲刺"
-	pit_label.position = Vector2((pit_x0 + pit_x1) / 2.0 * TILE_SIZE - 36, GROUND_Y_PX + 20)
-	pit_label.add_theme_font_size_override("font_size", 11)
-	pit_label.add_theme_color_override("font_color", Color("#ff6666"))
-	pit_label.z_index = 5
-	add_child(pit_label)
+func _paint_texture_wall_blocker() -> void:
+	var wall_col := 263
+	var wall_top := GROUND_ROW - 18
+	var wall_bot := GROUND_ROW
+	for y in range(wall_top, wall_bot + 1):
+		for dx in [-1, 0, 1]:
+			_block_layer.set_cell(Vector2i(wall_col + dx, y), 0, T_GRASS_MID)
+			_texture_wall_blocks.append(Vector2i(wall_col + dx, y))
 
-# ── 地下迷宫台阶入口 ──
-# 灯塔区域（x=~5100）往下走的台阶
-# 带黑暗覆盖层 + 梯子上行（按W）
-var _maze_dark_overlay: ColorRect
+	var label := Label.new()
+	label.text = "══ 石墙 ══\n需要盲人模式触摸"
+	label.position = Vector2(wall_col * TILE_SIZE - 45, GROUND_Y_PX - 310)
+	label.add_theme_font_size_override("font_size", 13)
+	label.add_theme_color_override("font_color", Color("#ffaa44"))
+	label.z_index = 10
+	add_child(label)
 
-func _make_maze_entrance() -> void:
-	# ── 台阶（地面层 → 地下层）──
-	var stair_top_x := 5100.0
-	var stair_top_y := GROUND_Y_PX
-	var stair_w := 80
-	var stair_h := UG_GROUND_Y_PX - GROUND_Y_PX  # ~1104px 深
+func remove_texture_wall_blocker() -> void:
+	for pos in _texture_wall_blocks:
+		_block_layer.set_cell(pos, -1)
+	_texture_wall_blocks.clear()
+	hint_updated.emit("石门打开了！后面的区域现已可通行。")
 
-	# 台阶可见提示（地面层标记）
-	var stair_marker := Area2D.new()
-	stair_marker.name = "MazeStairEntrance"
-	stair_marker.position = Vector2(stair_top_x, stair_top_y - 20)
+func _paint_decorations() -> void:
+	# 树和灌木
+	for p in PLATFORMS:
+		if p["row"] != GROUND_ROW: continue
+		var x0: int = p["x0"]; var x1: int = p["x1"]
+		for i in range((x1 - x0) / 30):
+			var tx := x0 + 5 + i * 30
+			if tx < x1 - 3:
+				_deco_layer.set_cell(Vector2i(tx, GROUND_ROW - 1), 0, T_DEC_TREE)
+		for i in range((x1 - x0) / 40):
+			var bx := x0 + 10 + i * 40
+			if bx < x1 - 3:
+				_deco_layer.set_cell(Vector2i(bx, GROUND_ROW - 1), 0, T_DEC_BUSH)
+
+# ══════════════════════════════════════════════════════════════
+#  手绘装饰 — 各区域特色建筑
+# ══════════════════════════════════════════════════════════════
+func _make_beautiful_decor() -> void:
+	# 中央广场喷泉
+	_draw_fountain(Vector2(3400, GROUND_Y_PX - 20))
+	# 森林小屋
+	_draw_cabin(Vector2(4600, GROUND_Y_PX - 30))
+	# 车站
+	_draw_station(Vector2(6900, GROUND_Y_PX - 30))
+	# 游乐园摩天轮
+	_draw_ferris_wheel(Vector2(8100, GROUND_Y_PX - 60))
+	# 花朵
+	for i in range(60):
+		var fx := 500 + i * 160 + fmod(i * 2.7, 1.0) * 80
+		if fx < 11000:
+			_draw_flower(Vector2(fx, GROUND_Y_PX - 5), [Color("#ff9999"), Color("#ffcc66"), Color("#ff6699"), Color("#99ccff")][i % 4])
+	# 石头
+	for i in range(40):
+		var rx := 300 + i * 280 + fmod(i * 1.3, 1.0) * 120
+		if rx < 11000:
+			_draw_rock(Vector2(rx, GROUND_Y_PX - 2), [Color("#888888"), Color("#999999"), Color("#777777")][i % 3])
+
+func _draw_fountain(pos: Vector2) -> void:
+	var p := Polygon2D.new()
+	var base := PackedVector2Array()
+	for i in range(20):
+		var a := TAU * i / 20.0
+		base.append(Vector2(pos.x + cos(a) * 30, pos.y + sin(a) * 30))
+	p.polygon = base
+	p.color = Color("#808890")
+	p.z_index = -5
+	add_child(p)
+	var water := Polygon2D.new()
+	var wp := PackedVector2Array()
+	for i in range(16):
+		var a := TAU * i / 16.0
+		wp.append(Vector2(pos.x + cos(a) * 18, pos.y + sin(a) * 18))
+	water.polygon = wp
+	water.color = Color("#5599cc", 0.6)
+	add_child(water)
+
+func _draw_cabin(pos: Vector2) -> void:
+	for row in range(4):
+		for col in range(3):
+			var log := ColorRect.new()
+			log.position = Vector2(pos.x - 24 + col * 16, pos.y - 60 + row * 15)
+			log.size = Vector2(14, 13)
+			log.color = Color("#8b6914") if (row + col) % 2 == 0 else Color("#7a5a10")
+			add_child(log)
+	var roof := Polygon2D.new()
+	roof.polygon = PackedVector2Array([
+		Vector2(pos.x - 32, pos.y - 60), Vector2(pos.x + 28, pos.y - 60),
+		Vector2(pos.x, pos.y - 85)
+	])
+	roof.color = Color("#a04030")
+	roof.z_index = -5
+	add_child(roof)
+
+func _draw_station(pos: Vector2) -> void:
+	var back := ColorRect.new()
+	back.position = Vector2(pos.x - 60, pos.y - 50)
+	back.size = Vector2(120, 70)
+	back.color = Color("#b0a090")
+	back.z_index = -20
+	add_child(back)
+	var roof := Polygon2D.new()
+	roof.polygon = PackedVector2Array([
+		Vector2(pos.x - 70, pos.y - 50), Vector2(pos.x + 70, pos.y - 50),
+		Vector2(pos.x, pos.y - 75)
+	])
+	roof.color = Color("#d04030")
+	roof.z_index = -5
+	add_child(roof)
+
+func _draw_ferris_wheel(pos: Vector2) -> void:
+	var cx := pos.x; var cy := pos.y
+	for i in range(8):
+		var a := TAU * i / 8.0
+		var gondola := Polygon2D.new()
+		gondola.polygon = PackedVector2Array([
+			Vector2(cos(a) * 45 - 5, sin(a) * 45 - 3 + cy),
+			Vector2(cos(a) * 45 + 5, sin(a) * 45 - 3 + cy),
+			Vector2(cos(a) * 45 + 4, sin(a) * 45 + 5 + cy),
+			Vector2(cos(a) * 45 - 4, sin(a) * 45 + 5 + cy),
+		])
+		gondola.position = Vector2(cx, cy)
+		gondola.color = Color("#ff8855") if i % 2 == 0 else Color("#55aaff")
+		add_child(gondola)
+	var center := Polygon2D.new()
+	var cp := PackedVector2Array()
+	for i in range(12):
+		var a := TAU * i / 12.0
+		cp.append(Vector2(cx + cos(a) * 8, cy + sin(a) * 8))
+	center.polygon = cp
+	center.color = Color("#ffd700")
+	add_child(center)
+
+func _draw_flower(pos: Vector2, color: Color) -> void:
+	for i in range(6):
+		var a := TAU * i / 6.0
+		var petal := Polygon2D.new()
+		petal.polygon = PackedVector2Array([
+			Vector2(pos.x, pos.y),
+			Vector2(pos.x + cos(a - 0.2) * 6, pos.y + sin(a - 0.2) * 6),
+			Vector2(pos.x + cos(a) * 5, pos.y + sin(a) * 5),
+			Vector2(pos.x + cos(a + 0.2) * 6, pos.y + sin(a + 0.2) * 6),
+		])
+		petal.color = color
+		petal.z_index = -3
+		add_child(petal)
+
+func _draw_rock(pos: Vector2, color: Color) -> void:
+	var rock := Polygon2D.new()
+	var sz := 6.0 + fmod(pos.x * 0.1, 1.0) * 8.0
+	rock.polygon = PackedVector2Array([
+		Vector2(pos.x - sz, pos.y),
+		Vector2(pos.x - sz * 0.3, pos.y - sz * 0.7),
+		Vector2(pos.x + sz * 0.5, pos.y - sz),
+		Vector2(pos.x + sz, pos.y),
+	])
+	rock.color = color
+	rock.z_index = -4
+	add_child(rock)
+
+# ══════════════════════════════════════════════════════════════
+#  地下迷宫入口
+# ══════════════════════════════════════════════════════════════
+func _make_underground_maze_entrance() -> void:
+	# 台阶入口
+	var stair := Area2D.new()
+	stair.name = "MazeStairEntrance"
+	stair.position = Vector2(4900, GROUND_Y_PX - 30)
 	var mshape := CollisionShape2D.new()
 	var mrect := RectangleShape2D.new()
-	mrect.size = Vector2(stair_w, 60)
+	mrect.size = Vector2(80, 60)
 	mshape.shape = mrect
-	stair_marker.add_child(mshape)
-
-	var marker_vis := Polygon2D.new()
-	marker_vis.polygon = PackedVector2Array([
+	stair.add_child(mshape)
+	var mvis := Polygon2D.new()
+	mvis.polygon = PackedVector2Array([
 		Vector2(-40, -20), Vector2(40, -20), Vector2(40, 20), Vector2(-40, 20)
 	])
-	marker_vis.color = Color("#2a1a3a")
-	stair_marker.add_child(marker_vis)
+	mvis.color = Color("#2a1a3a")
+	stair.add_child(mvis)
+	var sl := Label.new()
+	sl.text = "↓ 地下迷宫"
+	sl.position = Vector2(-26, -10)
+	sl.add_theme_font_size_override("font_size", 11)
+	sl.add_theme_color_override("font_color", Color("#c0b0ff"))
+	stair.add_child(sl)
+	stair.set_meta("kind", "maze_stairs")
+	stair.set_meta("target_y", UG_GROUND_Y_PX - 30)
+	stair.set_meta("target_x", 5100.0)
+	interactables.append(stair)
 
-	var stair_label := Label.new()
-	stair_label.text = "↓ 往下走\n进入地下"
-	stair_label.position = Vector2(-32, -16)
-	stair_label.add_theme_font_size_override("font_size", 12)
-	stair_label.add_theme_color_override("font_color", Color("#9080e0"))
-	stair_marker.add_child(stair_label)
-
-	stair_marker.set_meta("kind", "maze_stairs")
-	stair_marker.set_meta("target_y", UG_GROUND_Y_PX - 30)
-	stair_marker.set_meta("target_x", 5200.0)
-	interactables.append(stair_marker)
-
-	# ── 地下层梯子（爬回地面）──
-	# 用 W 键向上爬
+	# 梯子回地面
 	var ladder := Area2D.new()
 	ladder.name = "MazeLadder"
-	ladder.position = Vector2(5200, UG_GROUND_Y_PX - 30)
+	ladder.position = Vector2(5100, UG_GROUND_Y_PX - 40)
 	var lshape := CollisionShape2D.new()
 	var lrect := RectangleShape2D.new()
 	lrect.size = Vector2(40, 120)
 	lshape.shape = lrect
 	ladder.add_child(lshape)
-
-	var lad_vis := Polygon2D.new()
-	lad_vis.polygon = PackedVector2Array([
-		Vector2(-16, -50), Vector2(16, -50), Vector2(16, 50), Vector2(-16, 50)
+	var lvis := Polygon2D.new()
+	lvis.polygon = PackedVector2Array([
+		Vector2(-14, -50), Vector2(14, -50), Vector2(14, 50), Vector2(-14, 50)
 	])
-	lad_vis.color = Color("#6a4050")
-	ladder.add_child(lad_vis)
-
-	var lad_label := Label.new()
-	lad_label.text = "[W] 爬上去"
-	lad_label.position = Vector2(-28, -14)
-	lad_label.add_theme_font_size_override("font_size", 11)
-	lad_label.add_theme_color_override("font_color", Color("#a0ffa0"))
-	ladder.add_child(lad_label)
-
+	lvis.color = Color("#5a3040")
+	ladder.add_child(lvis)
+	var ll := Label.new()
+	ll.text = "[E] 爬上去"
+	ll.position = Vector2(-28, -10)
+	ll.add_theme_font_size_override("font_size", 11)
+	ll.add_theme_color_override("font_color", Color("#80ff80"))
+	ladder.add_child(ll)
 	ladder.set_meta("kind", "ladder")
 	ladder.set_meta("target_y", GROUND_Y_PX - 30)
-	ladder.set_meta("target_x", 5150.0)
+	ladder.set_meta("target_x", 4950.0)
 	interactables.append(ladder)
 
-	# ── 黑暗覆盖层（CanvasLayer 999）──
-	var dark_canvas := CanvasLayer.new()
-	dark_canvas.name = "UndergroundDarkness"
-	dark_canvas.layer = 999
-	dark_canvas.visible = false
-	add_child(dark_canvas)
+	# 岔路A标记（钥匙端 — 左）
+	_maze_fork_a_zone = Area2D.new()
+	_maze_fork_a_zone.name = "MazeForkA"
+	_maze_fork_a_zone.position = Vector2(5000, UG_GROUND_Y_PX - 30)
+	var ash := CollisionShape2D.new()
+	var ar := RectangleShape2D.new()
+	ar.size = Vector2(100, 50)
+	ash.shape = ar
+	_maze_fork_a_zone.add_child(ash)
+	var al := Label.new()
+	al.text = "岔路A →\n钥匙"
+	al.position = Vector2(-28, -16)
+	al.add_theme_font_size_override("font_size", 12)
+	al.add_theme_color_override("font_color", Color("#60ff60"))
+	_maze_fork_a_zone.add_child(al)
+	_maze_fork_a_zone.set_meta("kind", "maze_fork_a")
+	interactables.append(_maze_fork_a_zone)
 
-	_maze_dark_overlay = ColorRect.new()
-	_maze_dark_overlay.name = "DarkOverlay"
-	_maze_dark_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_maze_dark_overlay.color = Color(0, 0, 0, 0.92)
-	dark_canvas.add_child(_maze_dark_overlay)
+	# 岔路B标记（宝箱端 — 右）
+	_maze_fork_b_zone = Area2D.new()
+	_maze_fork_b_zone.name = "MazeForkB"
+	_maze_fork_b_zone.position = Vector2(6000, UG_GROUND_Y_PX - 30)
+	var bsh := CollisionShape2D.new()
+	var br := RectangleShape2D.new()
+	br.size = Vector2(100, 50)
+	bsh.shape = br
+	_maze_fork_b_zone.add_child(bsh)
+	var bl := Label.new()
+	bl.text = "← 岔路B\n宝箱(需4钥匙)"
+	bl.position = Vector2(-32, -16)
+	bl.add_theme_font_size_override("font_size", 12)
+	bl.add_theme_color_override("font_color", Color("#ffd700"))
+	_maze_fork_b_zone.add_child(bl)
+	_maze_fork_b_zone.set_meta("kind", "maze_fork_b")
+	interactables.append(_maze_fork_b_zone)
 
-	# 黑暗中微弱的位置标签
-	var dark_hint := Label.new()
-	dark_hint.name = "DarkHint"
-	dark_hint.text = "完全黑暗...\n按 F 键回声定位\n按 W 爬梯子返回"
-	dark_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	dark_hint.position = Vector2(350, 280)
-	dark_hint.size = Vector2(580, 80)
-	dark_hint.add_theme_font_size_override("font_size", 18)
-	dark_hint.add_theme_color_override("font_color", Color("#6666aa"))
-	dark_canvas.add_child(dark_hint)
-
-func set_underground_darkness(active: bool, blind_mode: bool = false) -> void:
-	var dark_canvas := get_node_or_null("UndergroundDarkness") as CanvasLayer
-	if dark_canvas == null:
-		return
-	dark_canvas.visible = active
-	if _maze_dark_overlay:
-		var alpha: float = 0.35 if (active and blind_mode) else (0.92 if active else 0.0)
-		_maze_dark_overlay.color = Color(0, 0, 0, alpha)
-
-# ─── REGIONS / BUILDINGS ───────────────────────────
+# ══════════════════════════════════════════════════════════════
+#  REGIONS & LABELS
+# ══════════════════════════════════════════════════════════════
 func _make_regions_on_tilemap() -> void:
-	var gy: float = GROUND_Y_PX
-	var ugy: float = UG_GROUND_Y_PX
+	var gy := GROUND_Y_PX
+	_label_region("中央广场", Vector2(3300, 2960), Color("#b5a05e"))
+	_label_region("← 石墙", Vector2(4100, 2960), Color("#ff8040"))
+	_label_region("森林", Vector2(5000, 2950), Color("#5f8b5f"))
+	_label_region("灯塔", Vector2(5500, 2950), Color("#6eb8db"))
+	_label_region("水坝", Vector2(6200, 2950), Color("#7b9088"))
+	_label_region("旧车站", Vector2(6900, 2950), Color("#878792"))
+	_label_region("游乐园", Vector2(7900, 2950), Color("#e7a84c"))
+	_label_region("许愿堂", Vector2(9800, 2950), Color("#8fa9d7"))
+	_label_region("地下迷宫", Vector2(5300, 4050), Color("#645880"))
 
-	_label_region("左侧森林",   Vector2(700, 2950), Color("#5f8b5f"))
-	_label_region("中央广场",   Vector2(3300, 2960), Color("#b5a05e"))
-	_label_region("湖泊灯塔",   Vector2(4750, 2950), Color("#6eb8db"))
-	_label_region("水坝工业区", Vector2(5950, 2950), Color("#7b9088"))
-	_label_region("旧车站",     Vector2(7300, 2950), Color("#878792"))
-	_label_region("游乐园",     Vector2(8850, 2950), Color("#e7a84c"))
-	_label_region("许愿堂",     Vector2(10150, 2950), Color("#8fa9d7"))
-	_label_region("地下迷宫",   Vector2(5200, 4080), Color("#645880"))
+	_add_zone_marker(Vector2(4200, gy), "关卡1\n石墙", Color("#ff8040"))
+	_add_zone_marker(Vector2(5000, gy), "关卡2\n找不同", Color("#c080d0"))
+	_add_zone_marker(Vector2(5800, 3100), "关卡3\n油画舞步", Color("#d060a0"))
+	_add_zone_marker(Vector2(6600, gy), "关卡4\n石台拼图", Color("#78d0b8"))
+	_add_zone_marker(Vector2(5400, 4220), "关卡5\n迷宫", Color("#645880"))
+	_add_zone_marker(Vector2(7800, 3140), "关卡6\n灯板", Color("#ffaa30"))
+	_add_zone_marker(Vector2(9800, gy), "关卡7\n密码台", Color("#a080f0"))
 
-	# 关卡标记（球体 + 标签）
-	_add_zone_marker(Vector2(464, gy),   "关卡1\n纹理墙",    Color("#e0a050"))
-	_add_zone_marker(Vector2(1200, gy),  "关卡2\n找不同",    Color("#c080d0"))
-	_add_zone_marker(Vector2(2000, 3100),"关卡3\n油画舞步",  Color("#d060a0"))
-	_add_zone_marker(Vector2(8800, gy),  "关卡4\n灯板谜题",  Color("#ffaa30"))
-	_add_zone_marker(Vector2(10500, gy), "关卡5\nNPC密码台", Color("#a080f0"))
-	_add_zone_marker(Vector2(6000, gy),  "石台拼图",        Color("#78d0b8"))
+func _label_region(text: String, pos: Vector2, color: Color) -> void:
+	var label := Label.new()
+	label.text = text
+	label.position = pos
+	label.modulate = color.darkened(0.2)
+	label.add_theme_font_size_override("font_size", 38)
+	label.z_index = -7
+	add_child(label)
 
-	# 建筑物视觉（简化 ColorRect）—— 底部对齐到地面 Y=3200
-	# pos 是建筑中心，size 是建筑宽高；建筑底部应在 GROUND_Y_PX 上
-	_add_building_detail(Vector2(464, 3125),   Vector2(70, 150),  Color("#6a5545"), "纹理墙")
-	_add_building_detail(Vector2(1200, 3135),  Vector2(100, 130), Color("#8a7060"), "密室")
-	_add_building_detail(Vector2(2000, 3125),  Vector2(160, 150), Color("#9a8068"), "宴会厅")
-	_add_building_detail(Vector2(3400, 3150),  Vector2(220, 100), Color("#d3ae76"), "中央广场")
-	_add_building_detail(Vector2(4800, 3040),  Vector2(80, 320),  Color("#d7dee7"), "灯塔")
-	_add_building_detail(Vector2(6000, 3115),  Vector2(240, 170), Color("#8ea7b1"), "水坝")
-	_add_building_detail(Vector2(7500, 3130),  Vector2(550, 140), Color("#9b9080"), "旧车站")
-	# 许愿堂：双层小楼
-	_add_building_detail(Vector2(10200, 3170), Vector2(120, 72),  Color("#9a98b8"), "1F")
-	_add_building_detail(Vector2(10200, 3080), Vector2(120, 76),  Color("#b7c8e8"), "许愿堂 2F")
-
-	# 灯塔光晕
-	var glow := Polygon2D.new()
-	var gp := PackedVector2Array()
-	for i in range(16):
-		var a: float = TAU * i / 16.0
-		gp.append(Vector2(cos(a) * 28.0, sin(a) * 28.0))
-	glow.polygon = gp; glow.position = Vector2(4800, 2770)
-	glow.color = Color("#ffe8a0"); glow.modulate.a = 0.5; glow.z_index = -1
-	add_child(glow)
-
-	# 许愿堂屋顶
-	var roof := Polygon2D.new()
-	roof.polygon = PackedVector2Array([
-		Vector2(-82, 0), Vector2(82, 0), Vector2(0, -50)
-	])
-	roof.position = Vector2(10200, 3028)
-	roof.color = Color("#a04030")
-	roof.z_index = -1
-	add_child(roof)
-
-	# 摩天轮
-	_draw_wheel(Vector2(9000, 3040))
-
-	# 风向标
-	_make_wind_vanes()
-
-	# 宝箱
-	_add_treasure_chest(GameData.LASER_SYSTEM["treasure_pos"])
-
-# ── 区域标记（关卡位置指示器）──
 func _add_zone_marker(pos: Vector2, text: String, color: Color) -> void:
 	var marker := Area2D.new()
 	marker.position = pos
@@ -691,166 +815,25 @@ func _add_zone_marker(pos: Vector2, text: String, color: Color) -> void:
 	circle.radius = 28
 	shape.shape = circle
 	marker.add_child(shape)
-	
 	var orb := Polygon2D.new()
-	var pts: PackedVector2Array = PackedVector2Array()
+	var pts := PackedVector2Array()
 	for i in range(10):
-		var a: float = TAU * i / 10.0
+		var a := TAU * i / 10.0
 		pts.append(Vector2(cos(a) * 18, sin(a) * 18))
 	orb.polygon = pts
 	orb.color = color
 	marker.add_child(orb)
-	
 	var label := Label.new()
 	label.text = text
 	label.position = Vector2(-36, -48)
 	label.add_theme_font_size_override("font_size", 11)
 	label.add_theme_color_override("font_color", color.lightened(0.2))
 	marker.add_child(label)
-	
 	marker.set_meta("kind", "zone_indicator")
 
-func _add_building_detail(pos: Vector2, size: Vector2, color: Color, label_text: String) -> void:
-	var rect := ColorRect.new()
-	rect.position = pos - size / 2.0
-	rect.size = size
-	rect.color = color
-	rect.z_index = -10
-	add_child(rect)
-	
-	# Roof highlight
-	var roof := ColorRect.new()
-	roof.position = pos - size / 2.0
-	roof.size = Vector2(size.x, 8.0)
-	roof.color = color.lightened(0.2)
-	roof.z_index = -9
-	add_child(roof)
-	
-	# Windows
-	if size.x > 120:
-		for w in range(int(size.x / 80.0)):
-			var window := ColorRect.new()
-			window.position = pos - size / 2.0 + Vector2(30.0 + w * 80.0, size.y * 0.3)
-			window.size = Vector2(24, 30)
-			window.color = Color("#fff8e8")
-			window.modulate.a = 0.7
-			window.z_index = -8
-			add_child(window)
-	
-	var label := Label.new()
-	label.text = label_text
-	label.position = pos + Vector2(-size.x * 0.35, -size.y * 0.68)
-	label.add_theme_font_size_override("font_size", 22)
-	label.z_index = -7
-	add_child(label)
-
-# ─── WIND VANES + LASER SYSTEM ──────────────────
-# 风向标1（左侧）+ 风向标2（右侧）
-# 放入激光装置后发射光束，交叉点=宝藏位置
-func _make_wind_vanes() -> void:
-	var vane1 := _make_wind_vane(GameData.LASER_SYSTEM["wind_vane_1"]["pos"], "风向标1")
-	vane1.set_meta("vane_id", 1)
-	interactables.append(vane1)
-	
-	var vane2 := _make_wind_vane(GameData.LASER_SYSTEM["wind_vane_2"]["pos"], "风向标2")
-	vane2.set_meta("vane_id", 2)
-	interactables.append(vane2)
-
-func _make_wind_vane(pos: Vector2, name_label: String) -> Area2D:
-	var vane := Area2D.new()
-	vane.name = name_label
-	vane.position = pos
-	
-	var shape := CollisionShape2D.new()
-	var box := RectangleShape2D.new()
-	box.size = Vector2(40, 60)
-	shape.shape = box
-	vane.add_child(shape)
-	
-	var tower := ColorRect.new()
-	tower.position = Vector2(-15, -40)
-	tower.size = Vector2(30, 60)
-	tower.color = Color("#8088a0")
-	vane.add_child(tower)
-	
-	var blade := Polygon2D.new()
-	var bp := PackedVector2Array([
-		Vector2(0, -55), Vector2(6, -20), Vector2(0, -15),
-		Vector2(-6, -20), Vector2(0, -55)
-	])
-	blade.polygon = bp
-	blade.color = Color("#c0d0e0")
-	vane.add_child(blade)
-	
-	var label := Label.new()
-	label.text = "[ %s ]" % name_label
-	label.position = Vector2(-32, -72)
-	label.add_theme_font_size_override("font_size", 12)
-	label.add_theme_color_override("font_color", Color("#b0c0e0"))
-	vane.add_child(label)
-	
-	var status := Label.new()
-	status.name = "VaneStatus"
-	status.text = "(空)"
-	status.position = Vector2(-12, 10)
-	status.add_theme_font_size_override("font_size", 10)
-	status.add_theme_color_override("font_color", Color("#888888"))
-	vane.add_child(status)
-	
-	return vane
-
-func _add_treasure_chest(pos: Vector2) -> void:
-	var chest := Area2D.new()
-	chest.name = "TreasureChest"
-	chest.position = pos
-	
-	var shape := CollisionShape2D.new()
-	var box := RectangleShape2D.new()
-	box.size = Vector2(50, 36)
-	shape.shape = box
-	chest.add_child(shape)
-	
-	var body := Polygon2D.new()
-	body.polygon = PackedVector2Array([
-		Vector2(-25, -5), Vector2(25, -5), Vector2(22, 18), Vector2(-22, 18)
-	])
-	body.color = Color("#a07030")
-	chest.add_child(body)
-	
-	var lid := Polygon2D.new()
-	lid.polygon = PackedVector2Array([
-		Vector2(-24, -5), Vector2(24, -5), Vector2(20, -16), Vector2(-20, -16)
-	])
-	lid.color = Color("#c08838")
-	chest.add_child(lid)
-	
-	var lock := ColorRect.new()
-	lock.position = Vector2(-6, 2)
-	lock.size = Vector2(12, 10)
-	lock.color = Color("#ffd700")
-	lock.name = "Lock"
-	chest.add_child(lock)
-	
-	var label := Label.new()
-	label.text = "★ 时间胶囊宝箱 ★"
-	label.position = Vector2(-52, -30)
-	label.add_theme_font_size_override("font_size", 13)
-	label.add_theme_color_override("font_color", Color("#ffd700"))
-	chest.add_child(label)
-	
-	var key_count := Label.new()
-	key_count.name = "KeyCount"
-	key_count.text = "(需要4把钥匙: 0/4)"
-	key_count.position = Vector2(-50, 22)
-	key_count.add_theme_font_size_override("font_size", 10)
-	key_count.add_theme_color_override("font_color", Color("#ccaa66"))
-	chest.add_child(key_count)
-	
-	chest.set_meta("kind", "treasure_chest")
-	puzzle_nodes["treasure_chest"] = chest
-	interactables.append(chest)
-
-# ─── NPCs ──────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════
+#  NPCs / PUZZLES / COLLECTIBLES
+# ══════════════════════════════════════════════════════════════
 func _make_npcs() -> void:
 	for data in GameData.NPCS:
 		var npc := MindscapeNPC.new()
@@ -858,209 +841,80 @@ func _make_npcs() -> void:
 		add_child(npc)
 		interactables.append(npc)
 
-# ─── PUZZLES (6大关卡) ──────────────────────────
 func _make_puzzles(state: Dictionary) -> void:
-	# 遍历设计文档中的6个关卡定义
 	for level_data in GameData.LEVELS:
 		var level_id: String = level_data["id"]
 		var level_pos: Vector2 = level_data["pos"]
 		var level_type: String = level_data["type"]
 		var prereq: String = level_data.get("prereq", "")
-		
-		# 检查前置条件
-		if prereq != "" and not state.get("completed_levels", []).has(prereq):
-			continue
-		# 检查是否已完成
-		if state.get("completed_levels", []).has(level_id):
-			continue
-		
-		# 根据类型创建对应的谜题实例
+		if prereq != "" and not state.get("completed_levels", []).has(prereq): continue
+		if state.get("completed_levels", []).has(level_id): continue
 		var puzzle_instance := _create_puzzle_instance(level_type, level_id, level_data)
 		if puzzle_instance != null:
 			puzzle_instance.position = level_pos
 			add_child(puzzle_instance)
-			
-			# 连接完成信号
 			if puzzle_instance.has_signal("puzzle_completed"):
 				puzzle_instance.puzzle_completed.connect(_on_puzzle_completed.bind(level_id))
-			
 			puzzle_nodes[level_id] = puzzle_instance
 			interactables.append(puzzle_instance)
 
 func _create_puzzle_instance(type: String, id: String, data: Dictionary) -> Node2D:
 	match type:
-		"texture_wall":
-			var p := PuzzleTextureWall.new()
-			if data.has("correct_sequence"):
-				p.correct_sequence = data["correct_sequence"]
-			return p
-		"find_diff":
-			return PuzzleFindDifference.new()
-		"dance_sequence":
-			return PuzzleBanquetPainting.new()
-		"light_board":
-			return PuzzleAmusementLights.new()
-		"npc_cipher":
-			return PuzzleNPCPassword.new()
-		"audio_maze":
-			return PuzzleDarkMaze.new()
-		"nine_grid":
-			return PuzzleNineGrid.new()
-		_:
-			push_warning("Unknown puzzle type: %s" % type)
-			return null
+		"texture_wall":    return PuzzleTextureWall.new()
+		"find_diff":       return PuzzleFindDifference.new()
+		"dance_sequence":  return PuzzleBanquetPainting.new()
+		"light_board":     return PuzzleAmusementLights.new()
+		"npc_cipher":      return PuzzleNPCPassword.new()
+		"audio_maze":      return PuzzleDarkMaze.new()
+		"nine_grid":       return PuzzleNineGrid.new()
+		_:                 return null
 
 func _on_puzzle_completed(level_id: String, reward: String = "") -> void:
-	# 记录关卡完成（由 main.gd 的 state 管理）
-	print("Puzzle completed: %s (reward: %s)" % [level_id, reward])
-	hint_updated.emit("✨ 关卡 '%s' 已完成！" % level_id)
-	# 转发给主场景监听
+	if level_id == "texture_wall":
+		remove_texture_wall_blocker()
 	puzzle_completed.emit(level_id, reward)
 
-# ─── COLLECTIBLES ──────────────────────────────────
 func _make_collectibles(state: Dictionary) -> void:
 	var collected: Array = state.get("collectibles", [])
-	
-	# All ground-level Y=3170 (just above surface).
-	# IMPORTANT: collectibles are placed in GAPS between walkable platforms so they never appear "under" a platform.
-	var placements: Array = []
-	
-	# Forest — platforms at [900-1280], [1450-1750]
-	placements.append_array([
-		{"i": 0, "pos": Vector2(300, 3170)},
-		{"i": 1, "pos": Vector2(650, 3170)},
-		{"i": 2, "pos": Vector2(1350, 3170)},   # gap 1280→1450
-		{"i": 3, "pos": Vector2(1850, 3170)},
-		{"i": 4, "pos": Vector2(2100, 3170)},
-		{"i": 5, "pos": Vector2(2350, 3170)},
-	])
-	
-	# Plaza — platform at [2600-2900], [3700-4000]; spawn buffer 3100-3600 kept clear-ish
-	placements.append_array([
-		{"i": 6, "pos": Vector2(2480, 3170)},    # gap 2400→2600
-		{"i": 7, "pos": Vector2(2560, 3170)},
-		{"i": 8, "pos": Vector2(3000, 3170)},    # gap 2900→3700 (left of spawn)
-		{"i": 9, "pos": Vector2(3400, 3170)},
-		{"i": 10, "pos": Vector2(3600, 3170)},
-		{"i": 11, "pos": Vector2(4080, 3170)},    # gap 4000→4400
-	])
-	
-	# Lighthouse — platform at [4700-5300]
-	placements.append_array([
-		{"i": 12, "pos": Vector2(4450, 3170)},    # gap 4400→4700
-		{"i": 13, "pos": Vector2(4600, 3170)},
-		{"i": 14, "pos": Vector2(5380, 3170)},    # gap 5300→5600
-		{"i": 15, "pos": Vector2(5550, 3170)},
-		{"i": 16, "pos": Vector2(5700, 3170)},
-		{"i": 17, "pos": Vector2(5800, 3170)},
-	])
-	
-	# Dam — platform at [6050-6650]
-	placements.append_array([
-		{"i": 18, "pos": Vector2(5750, 3170)},    # gap 5600→6050
-		{"i": 19, "pos": Vector2(5900, 3170)},
-		{"i": 20, "pos": Vector2(6000, 3170)},
-		{"i": 21, "pos": Vector2(6700, 3170)},    # gap 6650→6800
-		{"i": 22, "pos": Vector2(6760, 3170)},
-	])
-	
-	# Station — platform at [7300-8100]
-	placements.append_array([
-		{"i": 23, "pos": Vector2(6900, 3170)},    # gap 6800→7300
-		{"i": 24, "pos": Vector2(7050, 3170)},
-		{"i": 25, "pos": Vector2(7200, 3170)},
-		{"i": 26, "pos": Vector2(8200, 3170)},    # gap 8100→8500
-		{"i": 27, "pos": Vector2(8350, 3170)},
-		{"i": 28, "pos": Vector2(8460, 3170)},
-	])
-	
-	# Park — platform at [8850-9450]
-	placements.append_array([
-		{"i": 29, "pos": Vector2(8580, 3170)},    # gap 8500→8850
-		{"i": 30, "pos": Vector2(8750, 3170)},
-		{"i": 31, "pos": Vector2(9500, 3170)},    # gap 9450→9800
-		{"i": 32, "pos": Vector2(9600, 3170)},
-		{"i": 33, "pos": Vector2(9700, 3170)},
-		{"i": 34, "pos": Vector2(8560, 3170)},    # extra in left gap
-	])
-	
-	# Observatory — platform at [10000-10600]
-	placements.append_array([
-		{"i": 35, "pos": Vector2(9850, 3170)},    # gap 9800→10000
-		{"i": 36, "pos": Vector2(9950, 3170)},
-		{"i": 37, "pos": Vector2(10700, 3170)},   # gap 10600→11200
-		{"i": 38, "pos": Vector2(10900, 3170)},
-	])
-	
-	# Underground — platforms at [4800-5120], [5400-5700], [5700-5960]
-	placements.append_array([
-		{"i": 39, "pos": Vector2(4700, 4150)},    # gap 4600→4800
-		{"i": 40, "pos": Vector2(5200, 4150)},    # gap 5120→5400
-		{"i": 41, "pos": Vector2(5320, 4150)},
-		{"i": 42, "pos": Vector2(6100, 4150)},    # gap 5960→7200
-		{"i": 43, "pos": Vector2(6350, 4150)},
-		{"i": 44, "pos": Vector2(6600, 4150)},
-		{"i": 45, "pos": Vector2(6900, 4150)},
-	])
-	
-	for placement in placements:
-		var i: int = placement["i"]
+	var placements: Array = [
+		{"i": 0, "pos": Vector2(2400, 3170)}, {"i": 1, "pos": Vector2(2800, 3170)},
+		{"i": 2, "pos": Vector2(3600, 3170)}, {"i": 3, "pos": Vector2(4400, 3170)},
+		{"i": 4, "pos": Vector2(5200, 3170)}, {"i": 5, "pos": Vector2(5600, 3170)},
+		{"i": 6, "pos": Vector2(6000, 3170)}, {"i": 7, "pos": Vector2(6600, 3170)},
+		{"i": 8, "pos": Vector2(7200, 3170)}, {"i": 9, "pos": Vector2(7600, 3170)},
+		{"i": 10, "pos": Vector2(8000, 3170)}, {"i": 11, "pos": Vector2(8400, 3170)},
+		{"i": 12, "pos": Vector2(8800, 3170)}, {"i": 13, "pos": Vector2(9200, 3170)},
+		{"i": 14, "pos": Vector2(9600, 3170)}, {"i": 15, "pos": Vector2(10000, 3170)},
+		{"i": 16, "pos": Vector2(10400, 3170)}, {"i": 17, "pos": Vector2(10800, 3170)},
+		{"i": 18, "pos": Vector2(4800, 4150)}, {"i": 19, "pos": Vector2(5200, 4150)},
+		{"i": 20, "pos": Vector2(5600, 4150)},
+	]
+	for p in placements:
+		var i: int = p["i"]
 		var id := "collectible_%02d" % i
-		if collected.has(id):
-			continue
-		var area := _add_marker(placement["pos"], "★ 纪念物", Color("#f9f4bf"), 28)
+		if collected.has(id): continue
+		var area := _add_marker(p["pos"], "★ 纪念物", Color("#f9f4bf"), 28)
 		area.set_meta("kind", "collectible")
 		area.set_meta("id", id)
 		collectible_nodes[id] = area
 		interactables.append(area)
 
-# ─── MEMORY ANCHORS ────────────────────────────────
 func _make_memory_anchors() -> void:
-	# All ground-level, placed in gaps between walkable platforms
-	var anchor_positions := {
-		"plaza": Vector2(3300, 3170),
-		"forest": Vector2(800, 3170),
-		"lighthouse": Vector2(4450, 3170),
-		"dam": Vector2(5950, 3170),
-		"station": Vector2(6950, 3170),
-		"park": Vector2(8600, 3170),
-		"observatory": Vector2(9850, 3170),
-		"underground": Vector2(5350, UG_GROUND_Y_PX - 25),
+	var positions := {
+		"plaza": Vector2(3400, 3170), "forest": Vector2(4800, 3170),
+		"lighthouse": Vector2(4900, 3170), "dam": Vector2(6200, 3170),
+		"station": Vector2(6900, 3170), "park": Vector2(7900, 3170),
+		"observatory": Vector2(9800, 3170), "underground": Vector2(5350, UG_GROUND_Y_PX - 25),
 	}
 	for key in GameData.REGIONS.keys():
-		var pos: Vector2 = anchor_positions.get(key, Vector2(3000, 3170))
-		var area := _add_marker(pos, "记忆长椅 休息/切换视角", Color("#bdf7ff"), 44)
+		if key == "spawn": continue
+		var pos: Vector2 = positions.get(key, Vector2(4500, 3170))
+		var area := _add_marker(pos, "记忆长椅", Color("#bdf7ff"), 44)
 		area.set_meta("kind", "anchor")
 		area.set_meta("id", key)
 		anchor_nodes.append(area)
 		interactables.append(area)
-	
-	# ── Guidance trail: glowing dots from plaza → echo stone ──
-	_add_guidance_trail()
 
-# ─── GUIDANCE TRAIL ──────────────────────────────
-func _add_guidance_trail() -> void:
-	# Small glowing dots from plaza center to the echo stone, guiding new players
-	var start_x := 3450.0
-	var end_x := 4700.0
-	var gy: float = 3170.0  # just above ground surface
-	var count := 14
-	for i in range(count):
-		var t: float = float(i) / float(count - 1)
-		var x := lerpf(start_x, end_x, t)
-		var dot := Polygon2D.new()
-		var dp := PackedVector2Array()
-		for j in range(8):
-			var a: float = TAU * j / 8.0
-			dp.append(Vector2(cos(a), sin(a)) * 5.0)
-		dot.polygon = dp
-		dot.position = Vector2(x, gy)
-		dot.color = Color("#ffe8a0")
-		dot.modulate.a = 0.5 + 0.3 * sin(t * PI)
-		dot.z_index = 2
-		add_child(dot)
-
-# ─── MARKERS ────────────────────────────────────────
 func _add_marker(pos: Vector2, label_text: String, color: Color, radius := 36) -> Area2D:
 	var area := Area2D.new()
 	area.position = pos
@@ -1071,312 +925,183 @@ func _add_marker(pos: Vector2, label_text: String, color: Color, radius := 36) -
 	shape.shape = circle
 	area.add_child(shape)
 	var orb := Polygon2D.new()
-	var pts: PackedVector2Array = PackedVector2Array()
+	var pts := PackedVector2Array()
 	for i in range(12):
-		var a: float = TAU * i / 12.0
+		var a := TAU * i / 12.0
 		pts.append(Vector2(cos(a), sin(a)) * radius * 0.45)
 	orb.polygon = pts
 	orb.color = color
 	area.add_child(orb)
-	var particles := CPUParticles2D.new()
-	particles.amount = 10
-	particles.lifetime = 1.4
-	particles.emitting = true
-	particles.emission_shape = CPUParticles2D.EMISSION_SHAPE_SPHERE
-	particles.emission_sphere_radius = radius * 0.3
-	particles.gravity = Vector2.ZERO
-	particles.initial_velocity_min = 4.0
-	particles.initial_velocity_max = 18.0
-	particles.scale_amount_min = 1.0
-	particles.scale_amount_max = 2.0
-	particles.color = color
-	area.add_child(particles)
 	var label := Label.new()
 	label.text = label_text
-	label.position = Vector2(-70, -58)
+	label.position = Vector2(-60, -52)
 	label.add_theme_font_size_override("font_size", 16)
 	area.add_child(label)
 	area.add_to_group("interactable")
 	return area
 
-# ─── MONSTERS ──────────────────────────────────────
 func _make_monsters(state: Dictionary) -> void:
 	var completed: Array = state.get("completed_regions", [])
 	var data: Array = [
-		{"id": "noise_lighthouse", "type": "noise", "region": "lighthouse", "pos": Vector2(5350, 3170)},
-		{"id": "mouth_station", "type": "silent_mouth", "region": "station", "pos": Vector2(8150, 3170)},
-		{"id": "distractor_park", "type": "distractor", "region": "park", "pos": Vector2(9480, 3170)},
-		{"id": "shadow_forest", "type": "shadow", "region": "forest", "pos": Vector2(1820, 3170)},
+		{"id": "noise_lighthouse", "type": "noise", "region": "lighthouse", "pos": Vector2(5300, 3170)},
+		{"id": "mouth_station", "type": "silent_mouth", "region": "station", "pos": Vector2(7100, 3170)},
+		{"id": "distractor_park", "type": "distractor", "region": "park", "pos": Vector2(8400, 3170)},
+		{"id": "shadow_forest", "type": "shadow", "region": "forest", "pos": Vector2(4600, 3170)},
 	]
 	for item in data:
-		if completed.has(item["region"]):
-			continue
+		if completed.has(item["region"]): continue
 		var monster := MindscapeMonster.new()
 		monster.setup(item["id"], item["type"], item["pos"])
-		monster_canvas.add_child(monster)  # on layer 1001 — visible above blind black overlay
+		monster_canvas.add_child(monster)
 
-# ─── FERRIS WHEEL ──────────────────────────────────
-func _draw_wheel(center: Vector2) -> void:
-	var line := Line2D.new()
-	line.width = 5
-	line.default_color = Color("#e96d7c")
-	line.z_index = -6
-	for i in range(65):
-		var a: float = TAU * i / 64.0
-		line.add_point(center + Vector2(cos(a), sin(a)) * 185.0)
-	add_child(line)
-	for i in range(8):
-		var spoke := Line2D.new()
-		spoke.width = 3
-		spoke.default_color = Color("#f1c46d")
-		spoke.z_index = -6
-		spoke.add_point(center)
-		spoke.add_point(center + Vector2(cos(TAU * i / 8.0), sin(TAU * i / 8.0)) * 185.0)
-		add_child(spoke)
-	
-	# Hub
-	var hub := Polygon2D.new()
-	var hp := PackedVector2Array()
-	for i in range(16):
-		var a: float = TAU * i / 16.0
-		hp.append(Vector2(cos(a), sin(a)) * 20.0)
-	hub.polygon = hp
-	hub.position = center
-	hub.color = Color("#f5c842")
-	hub.z_index = -5
-	add_child(hub)
-
-# ─── LABELS ─────────────────────────────────────────
-func _label_region(text: String, pos: Vector2, color: Color) -> void:
-	var label := Label.new()
-	label.text = text
-	label.position = pos
-	label.modulate = color.darkened(0.25)
-	label.add_theme_font_size_override("font_size", 36)
-	label.z_index = -7
-	add_child(label)
-
-# ─── INTERACTION ────────────────────────────────────
+# ══════════════════════════════════════════════════════════════
+#  INTERACTION
+# ══════════════════════════════════════════════════════════════
 func nearest_interactable(point: Vector2, max_distance: float = 110.0) -> Node2D:
 	var best: Node2D = null
 	var best_dist: float = max_distance
-	var best_priority: int = -1  # higher = more important
-	
+	var best_priority: int = -1
 	for node in interactables:
-		if not is_instance_valid(node):
-			continue
+		if not is_instance_valid(node): continue
 		var dist: float = point.distance_to(node.global_position)
-		if dist > best_dist:
-			continue
-		
+		if dist > best_dist: continue
 		var priority: int = 0
+		if node is PuzzleTextureWall or node is PuzzleFindDifference or node is PuzzleBanquetPainting or node is PuzzleAmusementLights or node is PuzzleNPCPassword or node is PuzzleDarkMaze or node is PuzzleNineGrid:
+			priority = 4
 		match node.get_meta("kind", ""):
 			"puzzle": priority = 4
 			"npc": priority = 3
 			"anchor": priority = 2
-			"teleport": priority = 2
+			"maze_stairs": priority = 3
+			"ladder": priority = 3
 			"collectible": priority = 1
-		
-		# Prefer closer nodes; if very close (<5px diff), use priority
+			"maze_fork_a": priority = 4
+			"maze_fork_b": priority = 4
 		if dist < best_dist - 5.0 or (abs(dist - best_dist) < 5.0 and priority > best_priority):
-			best_dist = dist
-			best = node
-			best_priority = priority
-	
+			best_dist = dist; best = node; best_priority = priority
 	return best
 
 func remove_interactable(node: Node) -> void:
 	interactables.erase(node)
-	if is_instance_valid(node):
-		node.queue_free()
+	if is_instance_valid(node): node.queue_free()
 
-# ─── VIEW PALETTE (pure ColorRect tints — NO shaders, GL Compat safe!) ───
-# All shader functions below this section are deprecated and will be removed.
-
+# ══════════════════════════════════════════════════════════════
+#  VIEW PALETTE + EFFECTS
+# ══════════════════════════════════════════════════════════════
 func _process(delta: float) -> void:
 	view_pulse_time += delta
-	# Animate view tint breathing (subtle alpha pulse)
 	_animate_view_tint()
-	# Blind cursor tracking
 	if current_palette_view == "blind" and blind_cursor.visible:
 		_update_blind_cursor(delta)
-	# Underground darkness tracking
-	_update_underground_darkness()
-
-# ── 地下黑暗覆盖：根据玩家Y坐标自动开关 ──
-# 玩家在地下平台区域 (y > GROUND_Y_PX + 800) 时显示黑暗覆盖
-# 盲人模式下覆盖变半透明
-func _update_underground_darkness() -> void:
-	var player: Node2D = _get_player()
-	if player == null:
-		return
-	var is_underground := player.global_position.y > GROUND_Y_PX + 800
-	var is_blind := current_palette_view == "blind"
-	set_underground_darkness(is_underground, is_blind)
-
-func _get_player() -> Node2D:
-	for node in get_tree().get_nodes_in_group("player"):
-		return node
-	return null
 
 func set_view_palette(view: String) -> void:
-	if not is_instance_valid(palette_overlay):
-		return
+	if not is_instance_valid(palette_overlay): return
 	current_palette_view = view
 	view_pulse_time = 0.0
-	
-	# Clear any old shader material
 	palette_overlay.material = null
-	
-	# ── Apply ColorRect tint per view ──
+
 	match view:
 		"blind":
-			# PITCH BLACK overlay (at layer 500, world hidden; monsters at 1001 stay visible)
-			palette_overlay.color = Color(0.0, 0.0, 0.0, 1.0)
-			palette_overlay.mouse_filter = Control.MOUSE_FILTER_PASS
+			palette_overlay.color = Color(1, 1, 1, 0)
+			blind_black.visible = true
+			blind_label.visible = true
 			blind_cursor.visible = true
 			cursor_pulse_time = 0.0
-		"deaf":
-			# Complete desaturation + blue-grey tint + grain visible via vignette
-			palette_overlay.color = Color(0.5, 0.65, 0.85, 0.52)
-			palette_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			blind_cursor.visible = false
 		"adhd":
-			# High contrast bright gold tint + rapid pulse
-			palette_overlay.color = Color(1.0, 0.95, 0.55, 0.10)
-			palette_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			palette_overlay.color = Color(1.0, 0.92, 0.4, 0.12)
+			blind_black.visible = false; blind_label.visible = false
+			blind_cursor.visible = false
+		"autism":
+			palette_overlay.color = Color(0.6, 0.75, 1.0, 0.2)
+			blind_black.visible = false; blind_label.visible = false
 			blind_cursor.visible = false
 		"depression":
-			# Heavy blue-grey oppression + dark vignette
-			palette_overlay.color = Color(0.15, 0.25, 0.35, 0.48)
-			palette_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			palette_overlay.color = Color(0.12, 0.18, 0.28, 0.5)
+			blind_black.visible = false; blind_label.visible = false
 			blind_cursor.visible = false
 		_:
-			# Normal: warm amber glow, almost transparent
-			palette_overlay.color = Color(1.0, 0.9, 0.75, 0.08)
-			palette_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			palette_overlay.color = Color(1.0, 0.9, 0.75, 0.06)
+			blind_black.visible = false; blind_label.visible = false
 			blind_cursor.visible = false
-	
-	# Notify all monsters to update visibility for this view
+
+	if _spike_canvas: _spike_canvas.visible = (view == "depression")
 	_notify_monsters_view_changed(view)
 
-func get_current_view() -> String:
-	return current_palette_view
-
-# ─── KEY SYSTEM HELPERS ──────────────────────
-func update_treasure_key_count(collected_keys: Array) -> void:
-	var chest: Node = puzzle_nodes.get("treasure_chest")
-	if not is_instance_valid(chest):
-		return
-	var key_label: Label = chest.get_node_or_null("KeyCount") as Label
-	if key_label:
-		key_label.text = "(需要4把钥匙: %d/4)" % collected_keys.size()
-	var lock: ColorRect = chest.get_node_or_null("Lock") as ColorRect
-	if lock:
-		if collected_keys.size() >= 4:
-			lock.color = Color("#00ff00")
-		else:
-			lock.color = Color("#ffd700")
+func get_current_view() -> String: return current_palette_view
 
 func _animate_view_tint() -> void:
-	if not is_instance_valid(palette_overlay) or current_palette_view == "blind":
-		return
+	if not is_instance_valid(palette_overlay) or current_palette_view == "blind": return
 	var base := palette_overlay.color
 	match current_palette_view:
-		"normal":
-			pass  # static warm tint
-		"deaf":
-			# Slow film-like flicker
-			var flick := 1.0 + 0.020 * sin(view_pulse_time * 3.7)
-			palette_overlay.color = Color(base.r, base.g, base.b, clampf(0.52 * flick, 0.48, 0.58))
 		"adhd":
-			# Rapid attention pulse
-			var pulse := 1.0 + 0.025 * sin(view_pulse_time * 6.0)
-			palette_overlay.color = Color(base.r, base.g, base.b, clampf(0.10 * pulse, 0.07, 0.14))
+			var p := 1.0 + 0.04 * sin(view_pulse_time * 8.0)
+			palette_overlay.color = Color(base.r, base.g, base.b, clampf(0.12 * p, 0.08, 0.18))
+		"autism":
+			var p := 1.0 + 0.02 * sin(view_pulse_time * 2.5)
+			palette_overlay.color = Color(base.r, base.g, base.b, clampf(0.2 * p, 0.17, 0.25))
 		"depression":
-			# Slow heavy breathing
-			var breathe := 1.0 + 0.030 * sin(view_pulse_time * 0.8)
-			palette_overlay.color = Color(base.r, base.g, base.b, clampf(0.48 * breathe, 0.43, 0.53))
+			var br := 1.0 + 0.04 * sin(view_pulse_time * 0.6)
+			palette_overlay.color = Color(base.r, base.g, base.b, clampf(0.5 * br, 0.44, 0.56))
+		_: pass
 
 func _update_blind_cursor(delta: float) -> void:
 	var camera := get_viewport().get_camera_2d()
-	if camera == null:
-		return
-	# Find player in scene
-	var player: Node2D = null
-	for node in get_tree().get_nodes_in_group("player"):
-		player = node
-		break
-	if player == null:
-		return
+	if camera == null: return
+	var player := _get_player()
+	if player == null: return
 	var vs := get_viewport().get_visible_rect().size
 	var cam_pos := camera.global_position
 	var p_pos := player.global_position
 	var zoom := camera.zoom
 	var screen_pos := (p_pos - cam_pos) / zoom + vs / 2.0
 	blind_cursor.position = screen_pos - blind_cursor.size / 2.0
-	# Breathing pulse animation
 	cursor_pulse_time += delta
-	var alpha: float = 0.7 + 0.3 * sin(cursor_pulse_time * 2.5)
+	var alpha: float = 0.8 + 0.2 * sin(cursor_pulse_time * 3.0)
 	var st := blind_cursor.get_theme_stylebox("panel") as StyleBoxFlat
-	if st != null:
-		st.bg_color = Color(1.0, 1.0, 1.0, alpha)
+	if st != null: st.bg_color = Color(1.0, 1.0, 1.0, alpha)
 
-func trigger_echo_pulse(_screen_center: Vector2) -> void:
-	if current_palette_view != "blind" or not is_instance_valid(view_overlay_canvas):
-		return
-	
-	var screen_size := get_viewport().get_visible_rect().size
-	var start_size: float = 12.0
-	var end_size: float = minf(screen_size.x, screen_size.y) * 1.5
-	
+func trigger_echo_pulse(_center: Vector2) -> void:
+	if current_palette_view != "blind" or not is_instance_valid(view_overlay_canvas): return
+	var ss := get_viewport().get_visible_rect().size
+	var start_sz: float = 14.0
+	var end_sz: float = minf(ss.x, ss.y) * 1.5
 	var ring := Panel.new()
-	ring.name = "EchoRing"
 	ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var ring_style := StyleBoxFlat.new()
-	ring_style.bg_color = Color.TRANSPARENT
-	ring_style.border_width_left = 3
-	ring_style.border_width_right = 3
-	ring_style.border_width_top = 3
-	ring_style.border_width_bottom = 3
-	ring_style.border_color = Color(1.0, 1.0, 1.0, 0.9)
-	ring.add_theme_stylebox_override("panel", ring_style)
-	ring.size = Vector2(start_size, start_size)
-	var cx: float = screen_size.x * 0.5
-	var cy: float = screen_size.y * 0.5
-	ring.position = Vector2(cx - start_size/2.0, cy - start_size/2.0)
+	var rs := StyleBoxFlat.new()
+	rs.bg_color = Color.TRANSPARENT
+	rs.border_width_left = 3; rs.border_width_right = 3
+	rs.border_width_top = 3; rs.border_width_bottom = 3
+	rs.border_color = Color(1.0, 1.0, 1.0, 0.9)
+	ring.add_theme_stylebox_override("panel", rs)
+	ring.size = Vector2(start_sz, start_sz)
+	ring.position = Vector2(ss.x * 0.5 - start_sz / 2.0, ss.y * 0.5 - start_sz / 2.0)
 	view_overlay_canvas.add_child(ring)
-	
-	# Animate expansion using tween — bind captures the ring ref
-	var tween := create_tween()
-	tween.set_parallel(true)
-	
-	# bind(ring, start_size, end_size) passes extra args after tween's val
-	tween.tween_method(
-		_echo_ring_step.bind(ring, start_size, end_size),
-		0.0, 1.0, 0.55
-	)
+	var tween := create_tween().set_parallel(true)
+	tween.tween_method(_echo_ring_step.bind(ring, start_sz, end_sz), 0.0, 1.0, 0.55)
 	tween.tween_callback(_echo_ring_done.bind(ring))
 
 func _echo_ring_step(val: float, ring: Panel, start_sz: float, end_sz: float) -> void:
-	if not is_instance_valid(ring):
-		return
+	if not is_instance_valid(ring): return
 	var sz := lerpf(start_sz, end_sz, val)
 	ring.size = Vector2(sz, sz)
 	var vs := get_viewport().get_visible_rect().size
-	ring.position = Vector2(vs.x/2.0 - sz/2.0, vs.y/2.0 - sz/2.0)
+	ring.position = Vector2(vs.x / 2.0 - sz / 2.0, vs.y / 2.0 - sz / 2.0)
 	var st := ring.get_theme_stylebox("panel") as StyleBoxFlat
 	if st != null:
 		st.set_corner_radius_all(int(sz / 2.0))
 		st.border_color = Color(1.0, 1.0, 1.0, lerpf(0.9, 0.0, val))
 
 func _echo_ring_done(ring: Panel) -> void:
-	if is_instance_valid(ring):
-		ring.queue_free()
+	if is_instance_valid(ring): ring.queue_free()
 
 func _notify_monsters_view_changed(view: String) -> void:
 	for node in get_tree().get_nodes_in_group("monster"):
 		if is_instance_valid(node) and node.has_method("on_view_changed"):
 			node.on_view_changed(view)
 
-# No per-frame position update needed - they move naturally with the camera.
+func _get_player() -> Node2D:
+	for node in get_tree().get_nodes_in_group("player"): return node
+	return null
+
+func update_treasure_key_count(collected_keys: Array) -> void:
+	pass

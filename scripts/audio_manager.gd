@@ -65,8 +65,8 @@ func _generate_sample() -> Vector2:
 	match current_view:
 		"blind":
 			view_mod = 0.3  # quieter, more ambient
-		"deaf":
-			view_mod = 0.05  # nearly silent
+		"autism":
+			view_mod = 0.7  # 安静专注
 		"adhd":
 			view_mod = 1.3  # more energetic
 		"depression":

@@ -1,13 +1,10 @@
 extends Area2D
 class_name PuzzleAmusementLights
 # ════════════════════════════════════════════════════════════
-#  关卡4：游乐园灯板 (Amusement Park Light Board)
-#  位置：出生点往右第一个场景（游乐园区域）
-#  规则：
-#    3×3灯板网格
-#    盲人模式：每个灯有不同声音（正确=清晰音，错误=杂音）
-#    ADHD模式：快速跑动点亮所有正确位置的灯板
-#  产出：钥匙2
+#  关卡6：游乐园灯板 — 跳跃平台式
+#  3个浮空物理平台（玩家可以跳上去）
+#  开始键 START → 15秒倒计时 → 数字键点亮灯 → 结束键 END
+#  正确图案：X形，超时/错误重来
 # ════════════════════════════════════════════════════════════
 
 signal puzzle_completed(key_id: String)
@@ -15,217 +12,211 @@ signal hint_updated(text: String)
 
 var player_in_range: bool = false
 var is_completed: bool = false
+var challenge_active: bool = false
+var time_left: float = 0.0
+const TIME_LIMIT: float = 15.0
 
-# 3x3 灯板配置 — 正确位置(1=需要点亮, 0=不需要)
-const GRID_SIZE := 3
-@export var correct_pattern: Array = [1, 0, 1, 0, 1, 0, 1, 0, 1]  # X形图案
-var current_state: Array = [0, 0, 0, 0, 0, 0, 0, 0, 0]       # 当前状态
+const CORRECT: Array = [1,0,1, 0,1,0, 1,0,1]  # X形
+var lights: Array = [0,0,0, 0,0,0, 0,0,0]
 
-# 每个格子的声音频率（盲人模式用）
-const TONE_FREQUENCIES: Array = [440.0, 493.9, 523.3, 587.3, 659.3, 698.5, 784.0, 880.0, 987.8]
-
-var light_nodes: Array = []        # 灯板节点数组
-var board_container: Node2D       # 整体容器
-var hint_label: Label
+var light_nodes: Array[ColorRect] = []
+var platform_bodies: Array[StaticBody2D] = []
+var timer_label: Label
+var status_label: Label
+var start_btn: Button
+var end_btn: Button
 
 func _ready() -> void:
 	body_entered.connect(_on_body_entered)
 	body_exited.connect(_on_body_exited)
-	_make_light_board()
-	_make_hint()
+	var shape := CollisionShape2D.new()
+	var rect := RectangleShape2D.new()
+	rect.size = Vector2(300, 250)
+	shape.shape = rect
+	shape.position = Vector2(0, -40)
+	add_child(shape)
+	_build_platforms()
+	_build_ui()
 
-func _make_light_board() -> void:
-	board_container = Node2D.new()
-	board_container.name = "LightBoard"
-	board_container.position = Vector2(0, -20)
-	add_child(board_container)
-	
-	# 底板
-	var back := ColorRect.new()
-	back.position = Vector2(-55, -55)
-	back.size = Vector2(110, 110)
-	back.color = Color("#2a2040")
-	back.z_index = -1
-	board_container.add_child(back)
-	
-	# 外框
-	var border := ColorRect.new()
-	border.position = Vector2(-58, -58)
-	border.size = Vector2(116, 116)
-	border.color = Color("#8a7060")
-	border.z_index = -2
-	board_container.add_child(border)
-	
-	# 创建3x3灯板格子
-	for idx in range(GRID_SIZE * GRID_SIZE):
-		var gx: int = idx % GRID_SIZE
-		var gy: int = idx / GRID_SIZE
-		var cell_pos: Vector2 = Vector2(gx * 36 - 36, gy * 36 - 36)
-		
-		var cell := Area2D.new()
-		cell.name = "Cell_%d" % idx
-		cell.position = cell_pos
-		cell.set_meta("idx", idx)
-		board_container.add_child(cell)
-		
-		var shape := CollisionShape2D.new()
-		var box := RectangleShape2D.new()
-		box.size = Vector2(32, 32)
-		shape.shape = box
-		cell.add_child(shape)
-		
-		# 灯板视觉
-		var light := Polygon2D.new()
-		light.name = "Light"
-		var lp := PackedVector2Array()
-		for i in range(8):
-			var a: float = TAU * i / 8.0
-			lp.append(Vector2(cos(a) * 14, sin(a) * 14))
-		light.polygon = lp
-		light.color = Color("#403050")
-		cell.add_child(light)
-		light_nodes.append(light)
-		
-		# 格子编号（调试用，正式版可隐藏）
-		var num := Label.new()
-		num.text = "%d" % (idx + 1)
-		num.position = Vector2(-4, -6)
-		num.add_theme_font_size_override("font_size", 10)
-		num.add_theme_color_override("font_color", Color("#666668"))
-		cell.add_child(num)
-	
-	# 标题
+func _build_platforms() -> void:
+	var heights := [-100, -55, -100]  # row 0, 2 = 高平台, row 1 = 中平台
+	for row in range(3):
+		var py: int = heights[row]
+		for col in range(3):
+			var idx := row * 3 + col
+			var px := (col - 1) * 70
+
+			# 平台 StaticBody2D
+			var body := StaticBody2D.new()
+			body.position = Vector2(px, py)
+			body.collision_layer = 1
+			body.collision_mask = 0
+			body.z_index = 1
+			var cshape := CollisionShape2D.new()
+			var crect := RectangleShape2D.new()
+			crect.size = Vector2(50, 8)
+			cshape.shape = crect
+			cshape.position = Vector2(0, 4)
+			body.add_child(cshape)
+			# 平台外观
+			var plat := ColorRect.new()
+			plat.position = Vector2(-25, -4)
+			plat.size = Vector2(50, 12)
+			plat.color = Color("#5a4a3a")
+			body.add_child(plat)
+			# 平台边框
+			var border := ColorRect.new()
+			border.position = Vector2(-27, -6)
+			border.size = Vector2(54, 16)
+			border.color = Color("#ffaa44", 0.5)
+			body.add_child(border)
+			add_child(body)
+			platform_bodies.append(body)
+
+			# 灯（在平台上方的视觉）
+			var light := ColorRect.new()
+			light.position = Vector2(px - 10, py - 16)
+			light.size = Vector2(20, 12)
+			light.color = Color("#332244")
+			light.z_index = 2
+			add_child(light)
+			light_nodes.append(light)
+
+			# 数字标签
+			var num := Label.new()
+			num.text = str(idx + 1)
+			num.position = Vector2(px - 4, py - 14)
+			num.add_theme_font_size_override("font_size", 11)
+			num.add_theme_color_override("font_color", Color("#9999aa"))
+			num.z_index = 3
+			add_child(num)
+
+func _build_ui() -> void:
 	var title := Label.new()
 	title.text = "[ 游乐园灯板 ]"
-	title.position = Vector2(-50, -95)
+	title.position = Vector2(-55, -125)
 	title.add_theme_font_size_override("font_size", 16)
 	title.add_theme_color_override("font_color", Color("#ffd760"))
 	add_child(title)
 
-func _make_hint() -> void:
-	hint_label = Label.new()
-	hint_label.position = Vector2(-80, 70)
-	hint_label.add_theme_font_size_override("font_size", 13)
-	hint_label.add_theme_color_override("font_color", Color("#ffe8a0"))
-	hint_label.text = "按 [E] 开始挑战"
-	add_child(hint_label)
+	# START按钮
+	start_btn = Button.new()
+	start_btn.text = "START"
+	start_btn.position = Vector2(-160, 50)
+	start_btn.size = Vector2(80, 36)
+	start_btn.pressed.connect(_on_start)
+	add_child(start_btn)
+
+	# END按钮
+	end_btn = Button.new()
+	end_btn.text = "END"
+	end_btn.position = Vector2(80, 50)
+	end_btn.size = Vector2(80, 36)
+	end_btn.pressed.connect(_on_end)
+	end_btn.visible = false
+	add_child(end_btn)
+
+	# 计时器
+	timer_label = Label.new()
+	timer_label.text = ""
+	timer_label.position = Vector2(-20, 5)
+	timer_label.add_theme_font_size_override("font_size", 28)
+	timer_label.add_theme_color_override("font_color", Color("#ff6644"))
+	timer_label.visible = false
+	add_child(timer_label)
+
+	# 状态
+	status_label = Label.new()
+	status_label.position = Vector2(-130, 75)
+	status_label.add_theme_font_size_override("font_size", 13)
+	status_label.add_theme_color_override("font_color", Color("#ffe8a0"))
+	status_label.text = "跳到平台上 → 按 START"
+	add_child(status_label)
 
 func _on_body_entered(body: Node2D) -> void:
 	if body.is_in_group("player"):
 		player_in_range = true
-		if not is_completed:
-			hint_label.text = "按 [E] 开始灯板挑战"
 
 func _on_body_exited(body: Node2D) -> void:
 	if body.is_in_group("player"):
 		player_in_range = false
 
 func _input(event: InputEvent) -> void:
-	if not player_in_range or is_completed:
+	if not player_in_range or is_completed or not challenge_active:
 		return
-	if event.is_action_pressed("interact"):
-		_start_challenge()
+	# 数字键1-9点亮灯
+	if event is InputEventKey and event.pressed:
+		var kn := -1
+		if event.keycode >= KEY_0 and event.keycode <= KEY_9:
+			kn = event.keycode - KEY_0
+		elif event.keycode >= KEY_KP_0 and event.keycode <= KEY_KP_9:
+			kn = event.keycode - KEY_KP_0
+		if kn >= 1 and kn <= 9:
+			_toggle_light(kn - 1)
 
-func _start_challenge() -> void:
-	hint_updated.emit("灯板已激活！走到灯前踩亮它。盲人模式听音，ADHD快速跑！")
-	hint_label.text = "踩亮正确的灯！(F键听音)"
-	# 高亮所有应该亮的灯的边框提示一瞬
-	for idx in range(correct_pattern.size()):
-		if correct_pattern[idx] == 1:
-			var tween := create_tween()
-			tween.tween_property(light_nodes[idx], "color", Color("#ffffff"), 0.15)
-			tween.tween_property(light_nodes[idx], "color", Color("#403050"), 0.3)
+func _on_start() -> void:
+	challenge_active = true
+	time_left = TIME_LIMIT
+	lights = [0,0,0, 0,0,0, 0,0,0]
+	for l in light_nodes:
+		l.color = Color("#332244")
+	timer_label.visible = true
+	timer_label.text = "%.1f" % time_left
+	end_btn.visible = true
+	start_btn.visible = false
+	status_label.text = "按数字键1-9点亮灯 (X形)"
+	hint_updated.emit("灯板启动！跳到平台上按数字键1-9点亮，15秒后按END提交！")
+	set_process(true)
 
-# 检测玩家踩到哪个格子
-var press_cooldowns: Dictionary = {}
+func _on_end() -> void:
+	if not challenge_active: return
+	challenge_active = false
+	set_process(false)
+	timer_label.visible = false
+	end_btn.visible = false
+	start_btn.visible = true
 
-func _process(_delta: float) -> void:
-	if is_completed:
-		return
-	
-	# 持续检测碰撞
-	var player: Node2D = _get_player()
-	if player == null:
-		return
-	
-	for idx in range(light_nodes.size()):
-		var cell: Area2D = board_container.get_node_or_null("Cell_%d" % idx) as Area2D
-		if cell == null:
-			continue
-		if cell.get_overlapping_bodies().has(player):
-			_on_cell_stepped(idx)
-
-func _on_cell_stepped(idx: int) -> void:
-	# 冷却防重复触发
-	if press_cooldowns.get(idx, 0.0) > Time.get_ticks_msec():
-		return
-	press_cooldowns[idx] = Time.get_ticks_msec() + 400
-	
-	# 切换状态
-	current_state[idx] = 1 - current_state[idx]
-	var is_on: bool = current_state[idx] == 1
-	
-	# 更新视觉效果 + 播放声音
-	var light: Polygon2D = light_nodes[idx]
-	if is_on:
-		light.color = Color("#ffdd44")
+	if _check_pattern():
+		is_completed = true
+		status_label.text = "✨ 灯板正确！获得钥匙2！"
+		hint_updated.emit("✨ 正确！你获得钥匙2！")
+		for l in light_nodes:
+			l.color = Color("#ffd700")
+		puzzle_completed.emit("key_2")
 	else:
-		light.color = Color("#403050")
-	
-	_play_cell_tone(idx, correct_pattern[idx] == 1)
-	_check_completion()
+		status_label.text = "图案不对...按 START 重来"
+		hint_updated.emit("灯板图案不正确。X形：灯1,3,5,7,9点亮就是X。按START重试。")
 
-func _play_cell_tone(cell_idx: int, is_correct_position: bool) -> void:
-	# 根据当前视角决定播放方式
-	var view: String = _get_current_view()
-	var freq: float = TONE_FREQUENCIES[cell_idx]
-	
-	if view == "blind":
-		# 盲人模式：正确位置=清晰正弦波，错误位置=噪音/杂音
-		AudioManager.play_tone(freq if is_correct_position else freq * 1.03, 0.35)
-		if is_correct_position:
-			hint_updated.emit("♪ 清晰的声音...这里是对的！")
-		else:
-			hint_updated.emit("♩ 杂音...不是这里")
-	elif view == "adhd":
-		# ADHD模式：快速反馈闪烁
-		pass
+func _process(delta: float) -> void:
+	if not challenge_active: return
+	time_left -= delta
+	timer_label.text = "%.1f" % maxf(0, time_left)
+	if time_left <= 3.0:
+		timer_label.modulate = Color(1, 0.2, 0.2) if int(time_left * 4) % 2 == 0 else Color(1, 1, 1)
 	else:
-		# 其他模式：简单音效
-		AudioManager.play_tone(freq, 0.2)
+		timer_label.modulate = Color(1, 1, 1)
+	if time_left <= 0:
+		_time_up()
 
-func _check_completion() -> void:
-	# 检查是否所有正确位置的灯都已点亮，且错误位置都未点亮
-	var all_correct: bool = true
-	for idx in range(correct_pattern.size()):
-		if correct_pattern[idx] != current_state[idx]:
-			all_correct = false
-			break
-	
-	if all_correct:
-		_complete_puzzle()
+func _time_up() -> void:
+	challenge_active = false
+	set_process(false)
+	timer_label.visible = false
+	end_btn.visible = false
+	start_btn.visible = true
+	status_label.text = "超时了！按 START 重新挑战"
+	hint_updated.emit("15秒倒计时结束！记住图案是X形，按START重试。")
 
-func _complete_puzzle() -> void:
-	is_completed = true
-	hint_label.text = "✨ 获得钥匙2（游乐园钥匙）！"
-	hint_updated.emit("✨ 你获得了钥匙2！")
-	puzzle_completed.emit("key_2")
-	
-	# 全部灯变金色庆祝
-	for light in light_nodes:
-		var tween := create_tween()
-		tween.tween_property(light, "color", Color("#ffd700"), 0.3)
+func _toggle_light(idx: int) -> void:
+	lights[idx] = 1 - lights[idx]
+	light_nodes[idx].color = Color("#ffdd44") if lights[idx] == 1 else Color("#332244")
+	AudioManager.play_tone(440.0 + idx * 50, 0.15)
 
-func _get_current_view() -> String:
-	var world: Node = get_tree().get_nodes_in_group("world").front()
-	if world and world.has_method("get_current_view"):
-		return world.get_current_view()
-	return "normal"
-
-func _get_player() -> Node2D:
-	for node in get_tree().get_nodes_in_group("player"):
-		return node
-	return null
+func _check_pattern() -> bool:
+	for i in range(9):
+		if lights[i] != CORRECT[i]:
+			return false
+	return true
 
 func is_solved() -> bool:
 	return is_completed
