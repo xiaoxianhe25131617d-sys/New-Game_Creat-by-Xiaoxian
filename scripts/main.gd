@@ -57,7 +57,7 @@ func _update_audio_region() -> void:
 		region = "station"
 	elif px < 9800:                  # 游乐园
 		region = "park"
-	else:                              # 天文台
+	else:                              # 许愿堂
 		region = "observatory"
 	AudioManager.set_region(region)
 	AudioManager.set_view(str(state.get("current_view", "normal")))
@@ -70,6 +70,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event.is_action_pressed("pause_menu"):
 		toggle_pause()
+		get_viewport().set_input_as_handled()
+	elif event.is_action_pressed("ui_up") and current_near != null and current_near.get_meta("kind", "") == "ladder":
+		# W/↑ 爬梯子
+		var tx: float = current_near.get_meta("target_x", 5150.0)
+		var ty: float = current_near.get_meta("target_y", 3200.0)
+		player.global_position = Vector2(tx, ty)
+		show_toast("爬回了地面！")
 		get_viewport().set_input_as_handled()
 	elif event.is_action_pressed("interact"):
 		interact()
@@ -405,9 +412,9 @@ func _get_objective() -> String:
 	if not completed.has("amusement_lights"):
 		return "→ 往右走到[游乐园灯板]，用盲人模式听音+ADHD模式快速点亮"
 	if not completed.has("npc_password"):
-		return "→ 最右侧[天文台]的[NPC密码台]等待着你"
+		return "→ 最右侧[许愿堂]的[NPC密码台]等待着你"
 	if not completed.has("dark_maze"):
-		return "→ 瀑布附近的[地下黑暗迷宫]入口——需要盲人模式进入"
+		return "→ 灯塔附近往下走台阶——[地下黑暗迷宫]需要盲人模式"
 	
 	if keys.size() < 4:
 		var missing := 4 - keys.size()
@@ -461,6 +468,18 @@ func interact() -> void:
 			var target: Vector2 = current_near.get_meta("target", GameData.PLAYER_START) as Vector2
 			player.global_position = target
 			show_toast("回到了地面。")
+		"maze_stairs":
+			# 走入地下迷宫
+			var tx: float = current_near.get_meta("target_x", 5200.0)
+			var ty: float = current_near.get_meta("target_y", 4300.0)
+			player.global_position = Vector2(tx, ty)
+			show_toast("走下台阶...周围一片漆黑。按F声波探测，按W爬梯子返回。", 4.0)
+		"ladder":
+			# 从地下爬回地面（也用E交互）
+			var tx: float = current_near.get_meta("target_x", 5150.0)
+			var ty: float = current_near.get_meta("target_y", 3200.0)
+			player.global_position = Vector2(tx, ty)
+			show_toast("爬回了地面！")
 		"treasure_chest":
 			try_open_treasure_chest(current_near)
 		"zone_indicator":

@@ -196,8 +196,8 @@ func _talk_to_next_npc() -> void:
 				read_subtexts[next_idx] = true
 				highlight_marker(next_idx, Color("#a0a0ff"))
 				hint_updated.emit("发现%s的潜台词：%s" % [data["name"], data["subtext"]])
-			"autism":
-				# 自闭症模式：显示可见文本+密码本提示
+			"adhd":
+				# ADHD模式：显示可见文本+密码本提示（高对比细节）
 				var first_char: String = data["subtext"].left(1)
 				var code_num: String = CIPHER_BOOK.get(first_char, "?")
 				dialogue.text = "[color=#e0e0e0]%s[/color]\n[color=#ffff00]密码本: '%s' → %s[/color]" % [data["visible_text"], first_char, code_num]

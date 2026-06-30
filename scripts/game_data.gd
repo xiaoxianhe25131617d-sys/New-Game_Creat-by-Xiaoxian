@@ -24,8 +24,9 @@ const VIEW_COLORS: Dictionary = {
 	"depression": Color("#8ca7bd"),
 }
 
-# 玩家出生点（中央广场区域）
-const PLAYER_START: Vector2 = Vector2(3400, 3170)
+# 玩家出生点（中央广场区域）—— Y 值是角色中心点
+# 角色高 62px，地面顶面在 Y=3200，所以中心应在 3200-31=3169
+const PLAYER_START: Vector2 = Vector2(3400, 3168)
 const WORLD_SIZE: Vector2 = Vector2(11200, 4500)
 
 # ════════════════════════════════════════════════════════════
@@ -39,7 +40,7 @@ const REGIONS: Dictionary = {
 	"dam":        {"name": "水坝工业区", "x": 6200, "view": "blind"},
 	"station":    {"name": "旧车站",     "x": 7300, "view": "deaf"},
 	"park":       {"name": "游乐园",     "x": 8800, "view": "adhd"},
-	"observatory":{"name": "天文台",     "x": 10200, "view": "adhd"},
+	"observatory":{"name": "许愿堂",     "x": 10200, "view": "adhd"},
 	"underground": {"name": "地下迷宫",   "x": 5200, "view": "blind", "y": 4300},
 }
 
@@ -51,12 +52,12 @@ const LEVELS: Array = [
 		"id": "texture_wall",
 		"name": "纹理墙",
 		"region": "forest",
-		"pos": Vector2(400, 3170),
+		"pos": Vector2(480, 3170),
 		"type": "texture_wall",
 		"prereq": "",           # 无前置
 		"reward": "stone_door", # 打开石门 → 解锁左侧其他关卡
-		"hint": "这面墙表面凹凸不平。用键盘按键感受它的纹理...",
-		"view_hint": "普通视角即可，需要仔细触摸。",
+		"hint": "这面墙表面凹凸不平。用键盘按键感受它的纹理...\n左侧有深坑，需要ADHD模式冲刺才能跳过。",
+		"view_hint": "普通视角即可，需要仔细触摸。过深坑需要ADHD冲刺。",
 	},
 	{
 		"id": "find_difference",
@@ -100,18 +101,29 @@ const LEVELS: Array = [
 		"prereq": "",
 		"reward": "key_4",
 		"hint": "5个NPC各说一段话...他们真正想表达的是什么？",
-		"view_hint": "抑郁症模式看潜台词，自闭症模式读密码本。",
+		"view_hint": "抑郁症模式看潜台词，ADHD模式读密码本。",
 	},
 	{
 		"id": "dark_maze",
 		"name": "地下黑暗迷宫",
 		"region": "underground",
-		"pos": Vector2(5200, 4300),
+		"pos": Vector2(5200, 4250),
 		"type": "audio_maze",
 		"prereq": "",
 		"reward": "key_3",
-		"hint": "完全黑暗的迷宫...只能靠声音辨别方向。正确路线会发出'对'的声音。",
-		"view_hint": "盲人模式——听觉导航是唯一出路。",
+		"hint": "从灯塔旁的台阶走下去...完全黑暗的迷宫，靠声音辨别方向。",
+		"view_hint": "盲人模式——听觉导航是唯一出路。F键回声探测。",
+	},
+	{
+		"id": "nine_grid",
+		"name": "石台拼图",
+		"region": "dam",
+		"pos": Vector2(6000, 3165),
+		"type": "nine_grid",
+		"prereq": "",
+		"reward": "laser_device_2",
+		"hint": "石台上的3×3拼图...滑动方块到正确位置。抑郁症模式每10秒闪烁正确图案。",
+		"view_hint": "抑郁症模式每10秒能看到正确排列的提示。",
 	},
 ]
 
@@ -131,16 +143,16 @@ const KEYS: Dictionary = {
 # ════════════════════════════════════════════════════════════
 const LASER_SYSTEM: Dictionary = {
 	"laser_device_1": {"name": "激光装置1", "source": "find_difference"},
-	"laser_device_2": {"name": "激光装置2", "source": "nine_grid_puzzle"},  # 九宫格拼图奖励
+	"laser_device_2": {"name": "激光装置2", "source": "nine_grid"},  # 石台拼图奖励
 	"wind_vane_1":   {"name": "风向标1",   "pos": Vector2(2800, 2900), "direction": Vector2(1, 0.3)},
 	"wind_vane_2":   {"name": "风向标2",   "pos": Vector2(7200, 2900), "direction": Vector2(-1, 0.3)},
 	"treasure_pos":  Vector2(5000, 2700),  # 两束激光交叉点 = 宝藏位置
 }
 
-# 九宫格拼图（额外谜题，产出激光装置2）
+# 石台拼图（九宫格滑动拼图，产出激光装置2）
 const NINE_GRID: Dictionary = {
-	"pos": Vector2(6000, 3170),
-	"hint": "石台上的9格拼图...抑郁症模式每10秒闪烁显示正确图案轮廓。",
+	"pos": Vector2(6000, 3165),
+	"hint": "石台上的3×3拼图...抑郁症模式每10秒闪烁显示正确图案轮廓。",
 	"reward": "laser_device_2",
 }
 

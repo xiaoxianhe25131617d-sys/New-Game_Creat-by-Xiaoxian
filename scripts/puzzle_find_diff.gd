@@ -18,9 +18,9 @@ var current_view_for_diff: String = ""     # 用于找差异的视角
 # 差异数据：每个差异只在特定视角下可见
 # 差异对应"故事书"中的数字/符号
 const DIFFERENCES: Array = [
-	{"id": 0, "view": "autism", "position_offset": Vector2(30, -20), "symbol": "★", "hint": "自闭症视角：左上角多了一颗星"},
+	{"id": 0, "view": "adhd", "position_offset": Vector2(30, -20), "symbol": "★", "hint": "ADHD视角：左上角多了一颗星"},
 	{"id": 1, "view": "depression", "position_offset": Vector2(-25, 15), "symbol": "◆", "hint": "抑郁视角：右侧阴影形状不同"},
-	{"id": 2, "view": "autism", "position_offset": Vector2(10, 30), "symbol": "●", "hint": "自闭症视角：地面有一个隐藏圆点"},
+	{"id": 2, "view": "adhd", "position_offset": Vector2(10, 30), "symbol": "●", "hint": "ADHD视角：地面有一个隐藏圆点"},
 	{"id": 3, "view": "depression", "position_offset": Vector2(-40, -10), "symbol": "▲", "hint": "抑郁视角：窗户边框缺了一角"},
 ]
 

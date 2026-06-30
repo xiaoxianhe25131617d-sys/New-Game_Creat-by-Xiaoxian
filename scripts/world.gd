@@ -214,44 +214,409 @@ func _draw_trees(container: Node2D) -> void:
 		container.add_child(canopy)
 
 # ════════════════════════════════════════════════════════════
-#  MAP SOURCE — 直接加载用户在编辑器里手工搭好的 map/Map.tscn
-#  （包含 7 层 TileMapLayer: New_layer_0, Water_1, Bridge_2,
-#    Ground_3, Pickups_4, Blocks_5, Background_6）
+#  MAP SOURCE — 代码生成完整瓦片世界（覆盖整个 11200×4500 地图）
+#  7 层 TileMapLayer: New_layer_0, Water_1, Bridge_2,
+#    Ground_3, Pickups_4, Blocks_5, Background_6
 #  瓦片尺寸 16x16，碰撞层 1，玩家 mask 匹配。
+#  地面行 = 200（像素 3200），地下行 = 269（像素 4304）
 # ════════════════════════════════════════════════════════════
 const TILE_SIZE := 16
+const GROUND_ROW := 200          # 地面顶面行（Y=3200px）
+const UG_GROUND_ROW := 269       # 地下顶面行（Y=4304px）
 # 出生点/传送门/区域标签等世界坐标仍按像素单位组织（瓦片×16）
-const GROUND_Y_PX := 200 * TILE_SIZE  # 3200，与新瓦片地面行匹配
-const UG_GROUND_Y_PX := 269 * TILE_SIZE  # 地下行
+const GROUND_Y_PX := GROUND_ROW * TILE_SIZE  # 3200
+const UG_GROUND_Y_PX := UG_GROUND_ROW * TILE_SIZE  # 4304
 
-var _map_root: Node2D  # 持有加载的 Map.tscn 实例
+# World extent (tiles)
+const WORLD_TILE_W := 700  # 11200 / 16
+const WORLD_TILE_H := 281  # 4500 / 16
+
+# 瓦片坐标（atlas 内坐标）—— 与现有 tileset.tres 兼容
+# 地面：第 0 行：4,5 是带碰撞的左右顶角；2 是中间带碰撞；3 是中带碰撞
+# 装饰层：第 0 行 0,1 是填充；6,7 是不同种草
+const T_GRASS_TL := Vector2i(4, 0)   # 平台左上角（含物理）
+const T_GRASS_TR := Vector2i(5, 0)   # 平台右上角（含物理）
+const T_GRASS_TM := Vector2i(6, 0)   # 平台顶面中间（含物理）—— 原数据用 6,0 和 3,0
+const T_GRASS_MID_L := Vector2i(3, 0)  # 平台左边垂直面（含物理）
+const T_GRASS_MID_R := Vector2i(2, 0)  # 平台右边垂直面（含物理）
+const T_GRASS_MID := Vector2i(2, 0)    # 平台中间填充
+const T_GRASS_FILL := Vector2i(0, 0)   # 内部无碰撞填充
+const T_GRASS_FILL_ALT := Vector2i(1, 0)  # 内部填充变种
+# 装饰
+const T_DEC_TREE := Vector2i(6, 2)  # 树
+const T_DEC_BUSH := Vector2i(7, 2)  # 灌木
+# 水
+const T_WATER_TOP := Vector2i(0, 1)  # 水面顶
+const T_WATER_BODY := Vector2i(1, 1)  # 水体
+# 桥
+const T_BRIDGE_H := Vector2i(4, 0)   # 桥面（复用 4,0 草）
+# 背景
+const T_BG_MOUNTAIN := Vector2i(2, 3)
+const T_BG_CLOUD := Vector2i(3, 2)
+
+var _ground_layer: TileMapLayer
+var _water_layer: TileMapLayer
+var _bridge_layer: TileMapLayer
+var _bg_layer: TileMapLayer
+var _block_layer: TileMapLayer
+var _pickup_layer: TileMapLayer
+var _deco_layer: TileMapLayer
+
+# 平台定义（X 轴起止瓦片列，行号）—— 平台之间留出可跳跃的缺口
+# 格式: [start_col, end_col, row, kind]
+# kind: "ground" / "underground" / "plaza" / "elevated"
+const PLATFORMS: Array = [
+	# ── 左侧森林 (x: 0-2000) ──
+	{"x0": 0,   "x1": 21,  "row": GROUND_ROW,     "tag": "forest_start"},
+	{"x0": 29,  "x1": 42,  "row": GROUND_ROW,     "tag": "forest_wall"},      # 纹理墙区 (x=464), 左侧有深坑
+	{"x0": 49,  "x1": 78,  "row": GROUND_ROW,     "tag": "forest_house"},     # 找不同密室 (x=1200=tile75)
+	{"x0": 84,  "x1": 102, "row": GROUND_ROW,     "tag": "forest_painting"},  # 宴会厅油画 (x=2000=tile125在forest_end)
+	{"x0": 101, "x1": 130, "row": GROUND_ROW,     "tag": "forest_end"},
+	# ── 中央广场 (x: 2000-4400) ──
+	{"x0": 137, "x1": 165, "row": GROUND_ROW,     "tag": "plaza_l"},
+	{"x0": 175, "x1": 206, "row": GROUND_ROW,     "tag": "plaza_r"},          # 包含 3300 锚点
+	{"x0": 210, "x1": 245, "row": GROUND_ROW,     "tag": "plaza_bridge"},     # 包含 3400 玩家出生点
+	# ── 湖泊灯塔 (x: 4400-5700) ──
+	{"x0": 252, "x1": 280, "row": GROUND_ROW,     "tag": "lighthouse"},
+	{"x0": 288, "x1": 322, "row": GROUND_ROW,     "tag": "lighthouse_e"},     # 包含 4900 标记
+	# ── 水坝 (x: 5700-6800) ──
+	{"x0": 328, "x1": 360, "row": GROUND_ROW,     "tag": "dam"},
+	{"x0": 368, "x1": 402, "row": GROUND_ROW,     "tag": "dam_e"},            # 包含 5950 锚点
+	# ── 旧车站 (x: 6800-8500) ──
+	{"x0": 408, "x1": 440, "row": GROUND_ROW,     "tag": "station"},
+	{"x0": 448, "x1": 480, "row": GROUND_ROW,     "tag": "station_e"},        # 包含 6950 锚点
+	# ── 游乐园 (x: 8500-9800) ──
+	{"x0": 486, "x1": 518, "row": GROUND_ROW,     "tag": "park"},
+	{"x0": 526, "x1": 560, "row": GROUND_ROW,     "tag": "park_e"},           # 包含 8600 锚点 + 8800 谜题
+	# ── 天文台 (x: 9800-11200) ──
+	{"x0": 566, "x1": 600, "row": GROUND_ROW,     "tag": "observatory"},      # 包含 9850 锚点
+	{"x0": 608, "x1": 645, "row": GROUND_ROW,     "tag": "observatory_e"},    # 包含 10500 NPC
+	{"x0": 653, "x1": 685, "row": GROUND_ROW,     "tag": "observatory_ext"},
+	# ── 地下迷宫 (x: 4400-6500) ──
+	{"x0": 252, "x1": 280, "row": UG_GROUND_ROW, "tag": "ug_a"},
+	{"x0": 288, "x1": 320, "row": UG_GROUND_ROW, "tag": "ug_b"},
+	{"x0": 328, "x1": 365, "row": UG_GROUND_ROW, "tag": "ug_c"},             # 包含 5350 锚点
+	{"x0": 370, "x1": 405, "row": UG_GROUND_ROW, "tag": "ug_treasure"},
+]
 
 func _make_tilemap_world() -> void:
-	# 加载用户在编辑器里搭好的 Map 场景
-	var map_scene: PackedScene = load("res://map/Map.tscn") as PackedScene
-	if map_scene == null:
-		push_error("Failed to load res://map/Map.tscn")
-		return
-	_map_root = map_scene.instantiate() as Node2D
-	if _map_root == null:
-		push_error("Map.tscn root is not a Node2D")
-		return
-	# Map 整体作为世界的"地形根"放在 z=-30 下
-	_map_root.name = "Map"
-	_map_root.z_index = -30
-	add_child(_map_root)
+	# ── 创建 7 层 TileMapLayer ──
+	_ground_layer = _create_layer("Ground_3", true, -30)
+	_water_layer = _create_layer("Water_1", false, -28)
+	_bridge_layer = _create_layer("Bridge_2", false, -27)
+	_deco_layer = _create_layer("New_layer_0", false, -26)
+	_pickup_layer = _create_layer("Pickups_4", false, -25)
+	_block_layer = _create_layer("Blocks_5", true, -24)
+	_bg_layer = _create_layer("Background_6", false, -32)
 
-	# ── 地面行（行 11）和地下行（行 9）的两个传送门 ──
-	var maze_entry := _add_marker(Vector2(5200, GROUND_Y_PX - 25), "↓ 黑暗迷宫入口 ↓", Color("#8040a0"), 52)
-	maze_entry.set_meta("kind", "teleport")
-	maze_entry.set_meta("target", Vector2(5200, UG_GROUND_Y_PX - 90))
-	maze_entry.set_meta("requires_view", "blind")
-	interactables.append(maze_entry)
+	# 1. 背景：远山 + 云
+	_paint_background_decor()
 
-	var maze_exit := _add_marker(Vector2(5200, UG_GROUND_Y_PX - 90), "↑ 返回地面 ↑", Color("#a0ffc0"), 44)
-	maze_exit.set_meta("kind", "teleport")
-	maze_exit.set_meta("target", Vector2(5200, GROUND_Y_PX - 25))
-	interactables.append(maze_exit)
+	# 2. 地下基础：把地下层铺成实心岩石平台
+	_paint_underground_floor()
+
+	# 3. 地面：所有平台用代码绘制
+	_paint_all_platforms()
+
+	# 4. 桥（瀑布附近）连接地面与地下
+	_paint_waterfalls()
+
+	# 5. 纹理墙左侧深坑（ADHD冲刺跳跃）
+	_paint_wall_pit()
+
+	# 6. 装饰：树、灌木、浮空小平台
+	_paint_decorations()
+
+	# 7. 地下迷宫台阶入口 + 黑暗覆盖层 + 梯子出口
+	_make_maze_entrance()
+
+func _create_layer(name: String, with_collision: bool, z: int) -> TileMapLayer:
+	var layer := TileMapLayer.new()
+	layer.name = name
+	layer.tile_set = load("res://map/tileset.tres") as TileSet
+	layer.collision_enabled = with_collision
+	layer.z_index = z
+	add_child(layer)
+	return layer
+
+# ── 平台绘制：每个平台是一个矩形块，顶面用草边，侧面用草中，内部用填充 ──
+func _paint_all_platforms() -> void:
+	for p in PLATFORMS:
+		var x0: int = p["x0"]
+		var x1: int = p["x1"]
+		var row: int = p["row"]
+		_paint_platform(x0, x1, row)
+
+func _paint_platform(x0: int, x1: int, top_row: int) -> void:
+	# 顶面（草边 tile，第 0 行）
+	_ground_layer.set_cell(Vector2i(x0, top_row), 0, T_GRASS_TL)
+	_ground_layer.set_cell(Vector2i(x1, top_row), 0, T_GRASS_TR)
+	for x in range(x0 + 1, x1):
+		_ground_layer.set_cell(Vector2i(x, top_row), 0, T_GRASS_TM)
+	# 侧面（往下 8 行 = 128px 厚的实体）
+	var body_depth := 8
+	for y in range(1, body_depth + 1):
+		var yi := top_row + y
+		_ground_layer.set_cell(Vector2i(x0, yi), 0, T_GRASS_MID_L)
+		_ground_layer.set_cell(Vector2i(x1, yi), 0, T_GRASS_MID_R)
+		for x in range(x0 + 1, x1):
+			_ground_layer.set_cell(Vector2i(x, yi), 0, T_GRASS_MID)
+	# 内部最底 2 行用无碰撞的填充
+	for y in range(body_depth + 1, body_depth + 4):
+		var yi := top_row + y
+		_ground_layer.set_cell(Vector2i(x0, yi), 0, T_GRASS_FILL)
+		_ground_layer.set_cell(Vector2i(x1, yi), 0, T_GRASS_FILL_ALT)
+		for x in range(x0 + 1, x1):
+			_ground_layer.set_cell(Vector2i(x, yi), 0, T_GRASS_FILL)
+
+# ── 地下层：填补所有地下区域为石底（视觉上让背景层继续延伸）──
+func _paint_underground_floor() -> void:
+	# 地下层在 GROUND_ROW~WORLD_TILE_H-1 之间
+	# 平台会盖住一部分，剩下的填成深色背景
+	for y in range(UG_GROUND_ROW + 6, WORLD_TILE_H):
+		for x in range(WORLD_TILE_W):
+			_bg_layer.set_cell(Vector2i(x, y), 0, T_GRASS_FILL)
+	# 在 GROUND_ROW + 1 ~ UG_GROUND_ROW - 1 之间填一层 "天空下面"
+	for y in range(GROUND_ROW + 12, UG_GROUND_ROW):
+		for x in range(WORLD_TILE_W):
+			if (x + y) % 7 == 0:
+				_bg_layer.set_cell(Vector2i(x, y), 0, T_BG_CLOUD)
+
+# ── 桥/瀑布：在灯塔区（x: 4800-5500）从地面直通地下 ──
+func _paint_waterfalls() -> void:
+	# 灯塔平台附近的瀑布
+	var bridge_x := 5400 / TILE_SIZE  # 337
+	var top_row := GROUND_ROW
+	var bot_row := UG_GROUND_ROW
+	# 桥面（横跨瀑布的窄桥）—— 在 ground row 同一行
+	for x in range(bridge_x - 3, bridge_x + 4):
+		_bridge_layer.set_cell(Vector2i(x, top_row), 0, T_BRIDGE_H)
+	# 瀑布水柱（仅视觉，从地下顶面到桥底）
+	for y in range(top_row + 2, bot_row):
+		_water_layer.set_cell(Vector2i(bridge_x, y), 0, T_WATER_BODY)
+		_water_layer.set_cell(Vector2i(bridge_x - 1, y), 0, T_WATER_BODY)
+
+# ── 背景装饰 ──
+func _paint_background_decor() -> void:
+	# 远山轮廓（最顶部几行）
+	for x in range(WORLD_TILE_W):
+		_bg_layer.set_cell(Vector2i(x, 5), 0, T_BG_MOUNTAIN)
+		_bg_layer.set_cell(Vector2i(x, 6), 0, T_BG_MOUNTAIN)
+	# 零散云朵
+	for i in range(40):
+		var cx: int = (i * 47 + 13) % WORLD_TILE_W
+		var cy: int = 8 + (i % 4) * 2
+		_bg_layer.set_cell(Vector2i(cx, cy), 0, T_BG_CLOUD)
+		if i % 3 == 0:
+			_bg_layer.set_cell(Vector2i(cx + 1, cy), 0, T_BG_CLOUD)
+
+# ── 装饰：树木、灌木、浮空小平台 ──
+func _paint_decorations() -> void:
+	# 树：放在平台顶面行上
+	for p in PLATFORMS:
+		if p["row"] != GROUND_ROW:
+			continue
+		var x0: int = p["x0"]
+		var x1: int = p["x1"]
+		# 每个平台放 1-3 棵树
+		var tree_count: int = 1 + (x1 - x0) / 40
+		for i in range(tree_count):
+			var tx: int = x0 + 4 + (i * 13 + (x0 % 7)) % max(1, (x1 - x0 - 8))
+			var ty: int = int(p["row"]) - 1  # 树在平台顶面再上一格
+			_deco_layer.set_cell(Vector2i(tx, ty), 0, T_DEC_TREE)
+		# 中央广场不放树
+		if "plaza" in str(p.get("tag", "")):
+			continue
+		# 灌木在树旁边
+		for i in range(tree_count):
+			var bx: int = x0 + 7 + (i * 19 + 5) % max(1, (x1 - x0 - 10))
+			_deco_layer.set_cell(Vector2i(bx, int(p["row"]) - 1), 0, T_DEC_BUSH)
+
+	# 浮空小平台（让游戏有跳跃元素）
+	# 关键缺口上方加一个浮空平台，玩家可踩上去再跳到下一平台
+	var floating_platforms: Array = [
+		# [col_x, row_y, width]  浮空平台 tile 坐标
+		# 深坑上方浮台（ADHD起跳点）
+		{"cx": 25,  "cy": GROUND_ROW - 3,  "w": 4},    # 深坑正上方
+		{"cx": 44,  "cy": GROUND_ROW - 4,  "w": 5},    # 纹理墙与密室之间
+		{"cx": 69,  "cy": GROUND_ROW - 6,  "w": 4},    # 密室与宴会厅之间
+		{"cx": 96,  "cy": GROUND_ROW - 5,  "w": 5},    # 宴会厅之后
+		{"cx": 127, "cy": GROUND_ROW - 4,  "w": 4},    # 进中央广场前
+		{"cx": 168, "cy": GROUND_ROW - 5,  "w": 5},   # 广场中段
+		{"cx": 202, "cy": GROUND_ROW - 4,  "w": 4},   # 广场出
+		{"cx": 245, "cy": GROUND_ROW - 5,  "w": 5},   # 进灯塔
+		{"cx": 322, "cy": GROUND_ROW - 4,  "w": 4},   # 灯塔出
+		{"cx": 363, "cy": GROUND_ROW - 5,  "w": 5},   # 进水坝
+		{"cx": 404, "cy": GROUND_ROW - 4,  "w": 4},   # 水坝出
+		{"cx": 444, "cy": GROUND_ROW - 5,  "w": 5},   # 进车站
+		{"cx": 481, "cy": GROUND_ROW - 4,  "w": 4},   # 车站出
+		{"cx": 522, "cy": GROUND_ROW - 5,  "w": 5},   # 进游乐园
+		{"cx": 561, "cy": GROUND_ROW - 4,  "w": 4},   # 游乐园出
+		{"cx": 600, "cy": GROUND_ROW - 5,  "w": 5},   # 进天文台
+		# 地下层浮空
+		{"cx": 282, "cy": UG_GROUND_ROW - 4, "w": 4},
+		{"cx": 322, "cy": UG_GROUND_ROW - 5, "w": 4},
+		{"cx": 362, "cy": UG_GROUND_ROW - 4, "w": 4},
+	]
+	for fp in floating_platforms:
+		var cx: int = fp["cx"]
+		var cy: int = fp["cy"]
+		var w: int = fp["w"]
+		# 平台顶面
+		_ground_layer.set_cell(Vector2i(cx, cy), 0, T_GRASS_TL)
+		_ground_layer.set_cell(Vector2i(cx + w, cy), 0, T_GRASS_TR)
+		for x in range(cx + 1, cx + w):
+			_ground_layer.set_cell(Vector2i(x, cy), 0, T_GRASS_TM)
+		# 平台底（仅视觉无碰撞）
+		_ground_layer.set_cell(Vector2i(cx, cy + 1), 0, T_GRASS_FILL)
+		_ground_layer.set_cell(Vector2i(cx + w, cy + 1), 0, T_GRASS_FILL_ALT)
+		for x in range(cx + 1, cx + w):
+			_ground_layer.set_cell(Vector2i(x, cy + 1), 0, T_GRASS_FILL)
+
+# ── 纹理墙左侧深坑（ADHD 冲刺跳跃）──
+# 坑在 forest_start(0-21) 和 forest_wall(29-42) 之间
+# 宽 7 格 (22-28) = 112px，深约 13 格 = 208px
+# 坑内有小平台，需要 ADHD 模式冲刺才能跳过
+func _paint_wall_pit() -> void:
+	var pit_x0 := 22
+	var pit_x1 := 28
+	var pit_top := GROUND_ROW + 1
+	var pit_bottom := GROUND_ROW + 13  # 208px 深
+
+	# 坑壁（左右垂直面）
+	for y in range(pit_top, pit_bottom + 1):
+		_ground_layer.set_cell(Vector2i(pit_x0, y), 0, T_GRASS_MID_L)
+		_ground_layer.set_cell(Vector2i(pit_x1, y), 0, T_GRASS_MID_R)
+	# 坑底
+	for x in range(pit_x0 + 1, pit_x1):
+		_ground_layer.set_cell(Vector2i(x, pit_bottom), 0, T_GRASS_MID)
+		_ground_layer.set_cell(Vector2i(x, pit_bottom + 1), 0, T_GRASS_FILL)
+
+	# 坑内窄平台（ADHD冲刺用）
+	# 左侧小平台：row GROUND_ROW+4（64px 深），2 格宽
+	var p1_row := GROUND_ROW + 4
+	_ground_layer.set_cell(Vector2i(pit_x0 + 1, p1_row), 0, T_GRASS_TL)
+	_ground_layer.set_cell(Vector2i(pit_x0 + 2, p1_row), 0, T_GRASS_TR)
+	# 右侧小平台：row GROUND_ROW+8（128px 深），2 格宽
+	var p2_row := GROUND_ROW + 8
+	var p2_l := pit_x1 - 2
+	_ground_layer.set_cell(Vector2i(p2_l, p2_row), 0, T_GRASS_TL)
+	_ground_layer.set_cell(Vector2i(pit_x1 - 1, p2_row), 0, T_GRASS_TR)
+	# 中间小浮台：row GROUND_ROW+6，1 格宽
+	_ground_layer.set_cell(Vector2i(25, GROUND_ROW + 6), 0, T_GRASS_TM)
+
+	# 坑边警告标签（像素坐标）
+	var pit_label := Label.new()
+	pit_label.text = "⚠ 深坑\nADHD冲刺"
+	pit_label.position = Vector2((pit_x0 + pit_x1) / 2.0 * TILE_SIZE - 36, GROUND_Y_PX + 20)
+	pit_label.add_theme_font_size_override("font_size", 11)
+	pit_label.add_theme_color_override("font_color", Color("#ff6666"))
+	pit_label.z_index = 5
+	add_child(pit_label)
+
+# ── 地下迷宫台阶入口 ──
+# 灯塔区域（x=~5100）往下走的台阶
+# 带黑暗覆盖层 + 梯子上行（按W）
+var _maze_dark_overlay: ColorRect
+
+func _make_maze_entrance() -> void:
+	# ── 台阶（地面层 → 地下层）──
+	var stair_top_x := 5100.0
+	var stair_top_y := GROUND_Y_PX
+	var stair_w := 80
+	var stair_h := UG_GROUND_Y_PX - GROUND_Y_PX  # ~1104px 深
+
+	# 台阶可见提示（地面层标记）
+	var stair_marker := Area2D.new()
+	stair_marker.name = "MazeStairEntrance"
+	stair_marker.position = Vector2(stair_top_x, stair_top_y - 20)
+	var mshape := CollisionShape2D.new()
+	var mrect := RectangleShape2D.new()
+	mrect.size = Vector2(stair_w, 60)
+	mshape.shape = mrect
+	stair_marker.add_child(mshape)
+
+	var marker_vis := Polygon2D.new()
+	marker_vis.polygon = PackedVector2Array([
+		Vector2(-40, -20), Vector2(40, -20), Vector2(40, 20), Vector2(-40, 20)
+	])
+	marker_vis.color = Color("#2a1a3a")
+	stair_marker.add_child(marker_vis)
+
+	var stair_label := Label.new()
+	stair_label.text = "↓ 往下走\n进入地下"
+	stair_label.position = Vector2(-32, -16)
+	stair_label.add_theme_font_size_override("font_size", 12)
+	stair_label.add_theme_color_override("font_color", Color("#9080e0"))
+	stair_marker.add_child(stair_label)
+
+	stair_marker.set_meta("kind", "maze_stairs")
+	stair_marker.set_meta("target_y", UG_GROUND_Y_PX - 30)
+	stair_marker.set_meta("target_x", 5200.0)
+	interactables.append(stair_marker)
+
+	# ── 地下层梯子（爬回地面）──
+	# 用 W 键向上爬
+	var ladder := Area2D.new()
+	ladder.name = "MazeLadder"
+	ladder.position = Vector2(5200, UG_GROUND_Y_PX - 30)
+	var lshape := CollisionShape2D.new()
+	var lrect := RectangleShape2D.new()
+	lrect.size = Vector2(40, 120)
+	lshape.shape = lrect
+	ladder.add_child(lshape)
+
+	var lad_vis := Polygon2D.new()
+	lad_vis.polygon = PackedVector2Array([
+		Vector2(-16, -50), Vector2(16, -50), Vector2(16, 50), Vector2(-16, 50)
+	])
+	lad_vis.color = Color("#6a4050")
+	ladder.add_child(lad_vis)
+
+	var lad_label := Label.new()
+	lad_label.text = "[W] 爬上去"
+	lad_label.position = Vector2(-28, -14)
+	lad_label.add_theme_font_size_override("font_size", 11)
+	lad_label.add_theme_color_override("font_color", Color("#a0ffa0"))
+	ladder.add_child(lad_label)
+
+	ladder.set_meta("kind", "ladder")
+	ladder.set_meta("target_y", GROUND_Y_PX - 30)
+	ladder.set_meta("target_x", 5150.0)
+	interactables.append(ladder)
+
+	# ── 黑暗覆盖层（CanvasLayer 999）──
+	var dark_canvas := CanvasLayer.new()
+	dark_canvas.name = "UndergroundDarkness"
+	dark_canvas.layer = 999
+	dark_canvas.visible = false
+	add_child(dark_canvas)
+
+	_maze_dark_overlay = ColorRect.new()
+	_maze_dark_overlay.name = "DarkOverlay"
+	_maze_dark_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_maze_dark_overlay.color = Color(0, 0, 0, 0.92)
+	dark_canvas.add_child(_maze_dark_overlay)
+
+	# 黑暗中微弱的位置标签
+	var dark_hint := Label.new()
+	dark_hint.name = "DarkHint"
+	dark_hint.text = "完全黑暗...\n按 F 键回声定位\n按 W 爬梯子返回"
+	dark_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	dark_hint.position = Vector2(350, 280)
+	dark_hint.size = Vector2(580, 80)
+	dark_hint.add_theme_font_size_override("font_size", 18)
+	dark_hint.add_theme_color_override("font_color", Color("#6666aa"))
+	dark_canvas.add_child(dark_hint)
+
+func set_underground_darkness(active: bool, blind_mode: bool = false) -> void:
+	var dark_canvas := get_node_or_null("UndergroundDarkness") as CanvasLayer
+	if dark_canvas == null:
+		return
+	dark_canvas.visible = active
+	if _maze_dark_overlay:
+		var alpha: float = 0.35 if (active and blind_mode) else (0.92 if active else 0.0)
+		_maze_dark_overlay.color = Color(0, 0, 0, alpha)
 
 # ─── REGIONS / BUILDINGS ───────────────────────────
 func _make_regions_on_tilemap() -> void:
@@ -264,26 +629,29 @@ func _make_regions_on_tilemap() -> void:
 	_label_region("水坝工业区", Vector2(5950, 2950), Color("#7b9088"))
 	_label_region("旧车站",     Vector2(7300, 2950), Color("#878792"))
 	_label_region("游乐园",     Vector2(8850, 2950), Color("#e7a84c"))
-	_label_region("天文台",     Vector2(10150, 2950), Color("#8fa9d7"))
+	_label_region("许愿堂",     Vector2(10150, 2950), Color("#8fa9d7"))
 	_label_region("地下迷宫",   Vector2(5200, 4080), Color("#645880"))
 
 	# 关卡标记（球体 + 标签）
-	_add_zone_marker(Vector2(400, gy),   "关卡1\n纹理墙",    Color("#e0a050"))
+	_add_zone_marker(Vector2(464, gy),   "关卡1\n纹理墙",    Color("#e0a050"))
 	_add_zone_marker(Vector2(1200, gy),  "关卡2\n找不同",    Color("#c080d0"))
 	_add_zone_marker(Vector2(2000, 3100),"关卡3\n油画舞步",  Color("#d060a0"))
 	_add_zone_marker(Vector2(8800, gy),  "关卡4\n灯板谜题",  Color("#ffaa30"))
 	_add_zone_marker(Vector2(10500, gy), "关卡5\nNPC密码台", Color("#a080f0"))
-	_add_zone_marker(Vector2(5200, ugy - 20), "关卡6\n黑暗迷宫", Color("#8040c0"))
+	_add_zone_marker(Vector2(6000, gy),  "石台拼图",        Color("#78d0b8"))
 
-	# 建筑物视觉（简化 ColorRect）
-	_add_building_detail(Vector2(400, 3100),   Vector2(60, 140),  Color("#6a5545"), "纹理墙")
-	_add_building_detail(Vector2(1200, 3080),  Vector2(100, 130), Color("#8a7060"), "密室")
-	_add_building_detail(Vector2(2000, 3050),  Vector2(160, 150), Color("#9a8068"), "宴会厅")
-	_add_building_detail(Vector2(3400, 3080),  Vector2(220, 100), Color("#d3ae76"), "中央广场")
-	_add_building_detail(Vector2(4800, 2950),  Vector2(80, 320),  Color("#d7dee7"), "灯塔")
-	_add_building_detail(Vector2(6000, 3080),  Vector2(240, 170), Color("#8ea7b1"), "水坝")
-	_add_building_detail(Vector2(7500, 3080),  Vector2(550, 140), Color("#9b9080"), "旧车站")
-	_add_building_detail(Vector2(10200, 3080), Vector2(240, 150), Color("#b7c8e8"), "天文台")
+	# 建筑物视觉（简化 ColorRect）—— 底部对齐到地面 Y=3200
+	# pos 是建筑中心，size 是建筑宽高；建筑底部应在 GROUND_Y_PX 上
+	_add_building_detail(Vector2(464, 3125),   Vector2(70, 150),  Color("#6a5545"), "纹理墙")
+	_add_building_detail(Vector2(1200, 3135),  Vector2(100, 130), Color("#8a7060"), "密室")
+	_add_building_detail(Vector2(2000, 3125),  Vector2(160, 150), Color("#9a8068"), "宴会厅")
+	_add_building_detail(Vector2(3400, 3150),  Vector2(220, 100), Color("#d3ae76"), "中央广场")
+	_add_building_detail(Vector2(4800, 3040),  Vector2(80, 320),  Color("#d7dee7"), "灯塔")
+	_add_building_detail(Vector2(6000, 3115),  Vector2(240, 170), Color("#8ea7b1"), "水坝")
+	_add_building_detail(Vector2(7500, 3130),  Vector2(550, 140), Color("#9b9080"), "旧车站")
+	# 许愿堂：双层小楼
+	_add_building_detail(Vector2(10200, 3170), Vector2(120, 72),  Color("#9a98b8"), "1F")
+	_add_building_detail(Vector2(10200, 3080), Vector2(120, 76),  Color("#b7c8e8"), "许愿堂 2F")
 
 	# 灯塔光晕
 	var glow := Polygon2D.new()
@@ -295,15 +663,15 @@ func _make_regions_on_tilemap() -> void:
 	glow.color = Color("#ffe8a0"); glow.modulate.a = 0.5; glow.z_index = -1
 	add_child(glow)
 
-	# 天文台穹顶
-	var dome := Polygon2D.new()
-	var dp := PackedVector2Array()
-	for i in range(32):
-		var a: float = PI * i / 31.0
-		dp.append(Vector2(cos(a) * 82.0, sin(a) * 50.0 - 72.0))
-	dome.polygon = dp; dome.position = Vector2(10200, 2900)
-	dome.color = Color("#8fa9d7"); dome.z_index = -1
-	add_child(dome)
+	# 许愿堂屋顶
+	var roof := Polygon2D.new()
+	roof.polygon = PackedVector2Array([
+		Vector2(-82, 0), Vector2(82, 0), Vector2(0, -50)
+	])
+	roof.position = Vector2(10200, 3028)
+	roof.color = Color("#a04030")
+	roof.z_index = -1
+	add_child(roof)
 
 	# 摩天轮
 	_draw_wheel(Vector2(9000, 3040))
@@ -536,6 +904,8 @@ func _create_puzzle_instance(type: String, id: String, data: Dictionary) -> Node
 			return PuzzleNPCPassword.new()
 		"audio_maze":
 			return PuzzleDarkMaze.new()
+		"nine_grid":
+			return PuzzleNineGrid.new()
 		_:
 			push_warning("Unknown puzzle type: %s" % type)
 			return null
@@ -655,7 +1025,7 @@ func _make_memory_anchors() -> void:
 		"station": Vector2(6950, 3170),
 		"park": Vector2(8600, 3170),
 		"observatory": Vector2(9850, 3170),
-		"underground": Vector2(5350, 4150),
+		"underground": Vector2(5350, UG_GROUND_Y_PX - 25),
 	}
 	for key in GameData.REGIONS.keys():
 		var pos: Vector2 = anchor_positions.get(key, Vector2(3000, 3170))
@@ -830,6 +1200,24 @@ func _process(delta: float) -> void:
 	# Blind cursor tracking
 	if current_palette_view == "blind" and blind_cursor.visible:
 		_update_blind_cursor(delta)
+	# Underground darkness tracking
+	_update_underground_darkness()
+
+# ── 地下黑暗覆盖：根据玩家Y坐标自动开关 ──
+# 玩家在地下平台区域 (y > GROUND_Y_PX + 800) 时显示黑暗覆盖
+# 盲人模式下覆盖变半透明
+func _update_underground_darkness() -> void:
+	var player: Node2D = _get_player()
+	if player == null:
+		return
+	var is_underground := player.global_position.y > GROUND_Y_PX + 800
+	var is_blind := current_palette_view == "blind"
+	set_underground_darkness(is_underground, is_blind)
+
+func _get_player() -> Node2D:
+	for node in get_tree().get_nodes_in_group("player"):
+		return node
+	return null
 
 func set_view_palette(view: String) -> void:
 	if not is_instance_valid(palette_overlay):
