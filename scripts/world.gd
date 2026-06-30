@@ -3,6 +3,7 @@ class_name MindscapeWorld
 
 signal interactable_changed(node: Node)
 signal hint_updated(text: String)  # 全局提示消息（显示在HUD）
+signal puzzle_completed(level_id: String, reward: String)  # 转发自各关卡实例
 
 var interactables: Array[Node2D] = []
 var puzzle_nodes: Dictionary = {}
@@ -27,9 +28,8 @@ var view_pulse_time: float = 0.0    # for breathing tint animations
 func build(state: Dictionary) -> void:
 	_make_background_canvas()
 	_make_parallax_backgrounds()
-	_make_land()
-	_make_regions()
-	_make_decorations()
+	_make_tilemap_world()   # ← TileMapLayer 地形 + 装饰
+	_make_regions_on_tilemap()
 	_make_npcs()
 	_make_puzzles(state)
 	_make_collectibles(state)
@@ -213,346 +213,105 @@ func _draw_trees(container: Node2D) -> void:
 		canopy.modulate.a = 0.7
 		container.add_child(canopy)
 
-# ─── LAND / TERRAIN ───────────────────────────────
-# 基于设计文档的完整地图布局（匹配tilemap参考图）：
-#   [左侧森林] → [出生点/中央广场] → [灯塔] → [水坝] → [车站] → [游乐园] → [天文台]
-#   [地下迷宫] 在地下层 (y > 4200)
-#
-# 地面高度统一为 Y=3200，地下为 Y=4300
-const GROUND_Y: float = 3200.0
-const UG_GROUND_Y: float = 4300.0
-const PLAT_Y: float = 3125.0
+# ════════════════════════════════════════════════════════════
+#  MAP SOURCE — 直接加载用户在编辑器里手工搭好的 map/Map.tscn
+#  （包含 7 层 TileMapLayer: New_layer_0, Water_1, Bridge_2,
+#    Ground_3, Pickups_4, Blocks_5, Background_6）
+#  瓦片尺寸 16x16，碰撞层 1，玩家 mask 匹配。
+# ════════════════════════════════════════════════════════════
+const TILE_SIZE := 16
+# 出生点/传送门/区域标签等世界坐标仍按像素单位组织（瓦片×16）
+const GROUND_Y_PX := 200 * TILE_SIZE  # 3200，与新瓦片地面行匹配
+const UG_GROUND_Y_PX := 269 * TILE_SIZE  # 地下行
 
-func _make_land() -> void:
-	var GROUND_H := 750.0
-	var UG_H := 350.0
+var _map_root: Node2D  # 持有加载的 Map.tscn 实例
 
-	# ══════ 地面层地形（从左到右）═══════
-	# ── 区域1：左侧森林（纹理墙+找不同+宴会场）──
-	_add_terrain_segment(0.0,    GROUND_Y, 800.0,  GROUND_H, Color("#4a6838"), Color("#385028"))   # 纹理墙区域
-	_add_terrain_segment(800.0,  GROUND_Y, 800.0,  GROUND_H, Color("#527840"), Color("#406030"))   # 找不同密室区域
-	_add_terrain_segment(1600.0, GROUND_Y, 800.0,  GROUND_H, Color("#5c8a4f"), Color("#4a703e"))   # 宴会厅油画区域
+func _make_tilemap_world() -> void:
+	# 加载用户在编辑器里搭好的 Map 场景
+	var map_scene: PackedScene = load("res://map/Map.tscn") as PackedScene
+	if map_scene == null:
+		push_error("Failed to load res://map/Map.tscn")
+		return
+	_map_root = map_scene.instantiate() as Node2D
+	if _map_root == null:
+		push_error("Map.tscn root is not a Node2D")
+		return
+	# Map 整体作为世界的"地形根"放在 z=-30 下
+	_map_root.name = "Map"
+	_map_root.z_index = -30
+	add_child(_map_root)
 
-	# ── 区域2：出生点 / 中央广场（安全出生区 X:2500-4000）──
-	_add_terrain_segment(2400.0, GROUND_Y, 1800.0, GROUND_H, Color("#8a8860"), Color("#6a6848"))   # 中央广场
-
-	# ── 区域3：湖泊灯塔 ──
-	_add_terrain_segment(4200.0, GROUND_Y, 1200.0, GROUND_H, Color("#6a9890"), Color("#4a7870"))   # 灯塔湖岸
-
-	# ── 区域4：水坝工业区 ──
-	_add_terrain_segment(5400.0, GROUND_Y, 1200.0, GROUND_H, Color("#788068"), Color("#586048"))   # 水坝
-
-	# ── 区域5：旧车站 ──
-	_add_terrain_segment(6600.0, GROUND_Y, 1600.0, GROUND_H, Color("#8a8880"), Color("#6a6860"))   # 车站区
-
-	# ── 区域6：游乐园（灯板在此）──
-	_add_terrain_segment(8200.0, GROUND_Y, 1400.0, GROUND_H, Color("#c8a858"), Color("#a08840"))   # 游乐园
-
-	# ── 区域7：天文台（NPC密码台在最右侧）──
-	_add_terrain_segment(9600.0, GROUND_Y, 1400.0, GROUND_H, Color("#7a88a8"), Color("#5a6888"))   # 天文台
-
-	# ═════ 可行走高台平台 ═════
-	# 森林小路平台
-	_add_platform(Rect2(500,  PLAT_Y, 280, 28), Color("#6a9848"), true, true)
-	_add_platform(Rect2(1100, PLAT_Y, 280, 28), Color("#78a858"), true, true)
-
-	# 广场两侧平台（避开出生缓冲区X:3100-3700）
-	_add_platform(Rect2(2550, PLAT_Y, 300, 28), Color("#9a9858"), true, true)
-	_add_platform(Rect2(3800, PLAT_Y, 300, 28), Color("#9a9858"), true, true)
-
-	# 灯塔栈桥平台
-	_add_platform(Rect2(4450, PLAT_Y, 550, 28), Color("#7aaab8"), true, true)
-
-	# 水坝操作平台
-	_add_platform(Rect2(5650, PLAT_Y, 550, 28), Color("#8a9080"), true, true)
-
-	# 车站站台
-	_add_platform(Rect2(6950, PLAT_Y, 750, 28), Color("#9a9890"), true, true)
-
-	# 游乐园主平台
-	_add_platform(Rect2(8550, PLAT_Y, 550, 28), Color("#e0b868"), true, true)
-
-	# 天文台观景台
-	_add_platform(Rect2(9950, PLAT_Y, 550, 28), Color("#8a98c0"), true, true)
-
-	# ══════ 地下层地形（地下迷宫）═══════
-	# 入口在瀑布附近(X:5200)，向左延伸到钥匙A，向右延伸到宝箱
-	_add_terrain_segment(4800.0, UG_GROUND_Y, 1800.0, UG_H, Color("#30384a"), Color("#202838"))
-
-	# 地下平台
-	_add_platform(Rect2(4950, UG_GROUND_Y - 85, 280, 28), Color("#485868"), true, true)   # 靠近入口
-	_add_platform(Rect2(5450, UG_GROUND_Y - 85, 220, 28), Color("#485868"), true, true)   # 中转
-	_add_platform(Rect2(4950, UG_GROUND_Y - 85, 200, 28), Color("#586878"), true, true)   # 钥匙3附近
-	_add_platform(Rect2(5450, UG_GROUND_Y - 85, 200, 28), Color("#604030"), true, true)   # 宝箱附近
-
-	# ── 地下入口传送门（在地面上）──
-	var maze_entry := _add_marker(Vector2(5200, GROUND_Y - 25), "↓ 黑暗迷宫入口 ↓", Color("#8040a0"), 52)
+	# ── 地面行（行 11）和地下行（行 9）的两个传送门 ──
+	var maze_entry := _add_marker(Vector2(5200, GROUND_Y_PX - 25), "↓ 黑暗迷宫入口 ↓", Color("#8040a0"), 52)
 	maze_entry.set_meta("kind", "teleport")
-	maze_entry.set_meta("target", Vector2(5200, UG_GROUND_Y - 90))
-	maze_entry.set_meta("requires_view", "blind")  # 需要盲人模式才能进入
+	maze_entry.set_meta("target", Vector2(5200, UG_GROUND_Y_PX - 90))
+	maze_entry.set_meta("requires_view", "blind")
 	interactables.append(maze_entry)
 
-	# ── 从迷宫返回地面的出口 ──
-	var maze_exit := _add_marker(Vector2(5200, UG_GROUND_Y - 90), "↑ 返回地面 ↑", Color("#a0ffc0"), 44)
+	var maze_exit := _add_marker(Vector2(5200, UG_GROUND_Y_PX - 90), "↑ 返回地面 ↑", Color("#a0ffc0"), 44)
 	maze_exit.set_meta("kind", "teleport")
-	maze_exit.set_meta("target", Vector2(5200, GROUND_Y - 25))
+	maze_exit.set_meta("target", Vector2(5200, GROUND_Y_PX - 25))
 	interactables.append(maze_exit)
 
-	# ── 台阶连接（视觉引导）──
-	for px in [500.0, 1100.0, 2550.0, 4450.0, 5650.0, 6950.0, 8550.0, 9950.0]:
-		_add_step_block(px - 30.0, GROUND_Y - 55, 26.0, 30.0, false)
-		_add_step_block(px + 250.0, GROUND_Y - 55, 26.0, 30.0, false)
-
-func _add_terrain_segment(x: float, y: float, w: float, h: float, top_color: Color, bottom_color: Color) -> void:
-	var body := StaticBody2D.new()
-	body.position = Vector2(x + w / 2.0, y + h / 2.0)
-	add_child(body)
-	
-	var shape := CollisionShape2D.new()
-	var box := RectangleShape2D.new()
-	box.size = Vector2(w, h)
-	shape.shape = box
-	body.add_child(shape)
-	
-	# Terrain visual with grass top
-	var terrain := ColorRect.new()
-	terrain.position = Vector2(-w / 2.0, -h / 2.0)
-	terrain.size = Vector2(w, h)
-	terrain.color = bottom_color
-	body.add_child(terrain)
-	
-	# Grass layer on top
-	var grass := ColorRect.new()
-	grass.position = Vector2(-w / 2.0, -h / 2.0)
-	grass.size = Vector2(w, 24.0)
-	grass.color = top_color
-	body.add_child(grass)
-	
-	# Dirt/stone texture lines
-	for i in range(int(h / 80.0)):
-		var line := ColorRect.new()
-		line.position = Vector2(-w / 2.0, -h / 2.0 + 30.0 + i * 80.0)
-		line.size = Vector2(w, 3.0)
-		line.color = bottom_color.darkened(0.15)
-		line.modulate.a = 0.3
-		body.add_child(line)
-
-func _add_step_block(x: float, y: float, w: float, h: float, collidable: bool = true) -> void:
-	# Small block for connecting levels. Ground-level connectors are visual-only (no collision).
-	if collidable:
-		var body := StaticBody2D.new()
-		body.position = Vector2(x + w / 2.0, y + h / 2.0)
-		add_child(body)
-		var shape := CollisionShape2D.new()
-		var box := RectangleShape2D.new()
-		box.size = Vector2(w, h)
-		shape.shape = box
-		body.add_child(shape)
-		var visual := ColorRect.new()
-		visual.position = Vector2(-w / 2.0, -h / 2.0)
-		visual.size = Vector2(w, h)
-		visual.color = Color("#6b5b45")
-		body.add_child(visual)
-		var top := ColorRect.new()
-		top.position = Vector2(-w / 2.0, -h / 2.0)
-		top.size = Vector2(w, 5.0)
-		top.color = Color("#8a7a60")
-		body.add_child(top)
-	else:
-		# Visual-only step (no collision, just eye candy between ground segments)
-		var visual := ColorRect.new()
-		visual.position = Vector2(x, y)
-		visual.size = Vector2(w, h)
-		visual.color = Color("#6b5b45")
-		add_child(visual)
-		var top := ColorRect.new()
-		top.position = Vector2(x, y)
-		top.size = Vector2(w, 4.0)
-		top.color = Color("#8a7a60")
-		add_child(top)
-
-func _add_platform(rect: Rect2, color: Color, has_grass: bool = true, walkable: bool = false) -> void:
-	# Platform visual + optional collision for walkable surfaces
-	var container := Node2D.new()
-	container.position = rect.position + rect.size / 2.0
-	add_child(container)
-	
-	var visual := ColorRect.new()
-	visual.position = -rect.size / 2.0
-	visual.size = rect.size
-	visual.color = color
-	container.add_child(visual)
-	
-	if has_grass:
-		var grass := ColorRect.new()
-		grass.position = Vector2(-rect.size.x / 2.0, -rect.size.y / 2.0)
-		grass.size = Vector2(rect.size.x, 8.0)
-		grass.color = color.lightened(0.15)
-		container.add_child(grass)
-	
-	if walkable:
-		# Thin collision (6px) at platform TOP only — player walks underneath freely
-		var body := StaticBody2D.new()
-		body.name = "PlatformCollision"
-		body.position = Vector2(0, -rect.size.y / 2.0 + 3.0)
-		container.add_child(body)
-		var shape := CollisionShape2D.new()
-		var box := RectangleShape2D.new()
-		box.size = Vector2(rect.size.x, 6.0)
-		shape.shape = box
-		body.add_child(shape)
-
-# ─── DECORATIONS ────────────────────────────────────
-func _make_decorations() -> void:
-	# Flowers scattered around
-	for i in range(40):
-		var flower := Polygon2D.new()
-		var fx: float = 200.0 + (i * 283.0)
-		var fy: float = 3220.0
-		var fp := PackedVector2Array()
-		for j in range(6):
-			var a: float = TAU * j / 6.0
-			fp.append(Vector2(cos(a) * 6.0, sin(a) * 6.0 - 10.0))
-		flower.polygon = fp
-		flower.position = Vector2(fx, fy)
-		var flower_colors := [Color("#ff8a9e"), Color("#ffe066"), Color("#ffb3c6"), Color("#fff0a0"), Color("#c4a0ff")]
-		flower.color = flower_colors[i % flower_colors.size()]
-		flower.z_index = -5
-		add_child(flower)
-	
-	# Grass tufts
-	for i in range(30):
-		var tuft := Polygon2D.new()
-		var gx: float = 150.0 + i * 390.0
-		var gy: float = 3225.0
-		var gp := PackedVector2Array([
-			Vector2(0, 0),
-			Vector2(-4, -16),
-			Vector2(-2, -22),
-			Vector2(0, -14),
-			Vector2(3, -24),
-			Vector2(5, -18),
-			Vector2(8, -12),
-			Vector2(6, 0),
-		])
-		tuft.polygon = gp
-		tuft.position = Vector2(gx, gy)
-		tuft.color = Color("#4a7a3a") if i % 2 == 0 else Color("#5a8a4a")
-		tuft.z_index = -4
-		add_child(tuft)
-	
-	# Rocks
-	for i in range(15):
-		var rock := Polygon2D.new()
-		var rx: float = 350.0 + i * 780.0
-		var ry: float = 3228.0
-		var rp := PackedVector2Array()
-		for j in range(10):
-			var a: float = TAU * j / 10.0
-			var rr: float = 10.0 + sin(j * 2.5) * 5.0
-			rp.append(Vector2(cos(a) * rr, sin(a) * rr - 6.0))
-		rock.polygon = rp
-		rock.position = Vector2(rx, ry)
-		rock.color = Color("#8a8a82") if i % 3 == 0 else Color("#9a9a92")
-		rock.z_index = -3
-		add_child(rock)
-	
-	# Underground: glowing crystals
-	for i in range(8):
-		var crystal := Polygon2D.new()
-		var cx: float = 4650.0 + i * 380.0
-		var cy: float = 4170.0 - (i % 3) * 40.0
-		var cp := PackedVector2Array([
-			Vector2(0, 0),
-			Vector2(-4, -18),
-			Vector2(-1, -26),
-			Vector2(3, -22),
-			Vector2(6, -30),
-			Vector2(8, -16),
-			Vector2(4, 0),
-		])
-		crystal.polygon = cp
-		crystal.position = Vector2(cx, cy)
-		crystal.color = Color("#b8e8ff")
-		crystal.modulate.a = 0.6
-		crystal.z_index = -2
-		add_child(crystal)
-
 # ─── REGIONS / BUILDINGS ───────────────────────────
-# 基于设计文档的区域标注（从左到右）
-func _make_regions() -> void:
-	# 区域标签（在地图上方显示）
-	_label_region("左侧森林", Vector2(700, 2950), Color("#5f8b5f"))
-	_label_region("中央广场", Vector2(3300, 2960), Color("#b5a05e"))
-	_label_region("湖泊灯塔", Vector2(4750, 2950), Color("#6eb8db"))
+func _make_regions_on_tilemap() -> void:
+	var gy: float = GROUND_Y_PX
+	var ugy: float = UG_GROUND_Y_PX
+
+	_label_region("左侧森林",   Vector2(700, 2950), Color("#5f8b5f"))
+	_label_region("中央广场",   Vector2(3300, 2960), Color("#b5a05e"))
+	_label_region("湖泊灯塔",   Vector2(4750, 2950), Color("#6eb8db"))
 	_label_region("水坝工业区", Vector2(5950, 2950), Color("#7b9088"))
-	_label_region("旧车站",   Vector2(7300, 2950), Color("#878792"))
-	_label_region("游乐园",   Vector2(8850, 2950), Color("#e7a84c"))
-	_label_region("天文台",   Vector2(10150, 2950), Color("#8fa9d7"))
-	_label_region("地下迷宫", Vector2(5200, 4080), Color("#645880"))
+	_label_region("旧车站",     Vector2(7300, 2950), Color("#878792"))
+	_label_region("游乐园",     Vector2(8850, 2950), Color("#e7a84c"))
+	_label_region("天文台",     Vector2(10150, 2950), Color("#8fa9d7"))
+	_label_region("地下迷宫",   Vector2(5200, 4080), Color("#645880"))
 
-	# ═════ 建筑物/地标 ═════
-	
-	# ── 关卡1：纹理墙（左侧森林入口）──
-	_add_building_detail(Vector2(400, 3100), Vector2(60, 140), Color("#6a5545"), "纹理墙")
-	_add_zone_marker(Vector2(400, 3170), "关卡1\n纹理墙", Color("#e0a050"))
+	# 关卡标记（球体 + 标签）
+	_add_zone_marker(Vector2(400, gy),   "关卡1\n纹理墙",    Color("#e0a050"))
+	_add_zone_marker(Vector2(1200, gy),  "关卡2\n找不同",    Color("#c080d0"))
+	_add_zone_marker(Vector2(2000, 3100),"关卡3\n油画舞步",  Color("#d060a0"))
+	_add_zone_marker(Vector2(8800, gy),  "关卡4\n灯板谜题",  Color("#ffaa30"))
+	_add_zone_marker(Vector2(10500, gy), "关卡5\nNPC密码台", Color("#a080f0"))
+	_add_zone_marker(Vector2(5200, ugy - 20), "关卡6\n黑暗迷宫", Color("#8040c0"))
 
-	# ── 关卡2：找不同密室（森林中部小楼）──
-	_add_building_detail(Vector2(1200, 3080), Vector2(100, 130), Color("#8a7060"), "密室")
-	_add_zone_marker(Vector2(1200, 3170), "关卡2\n找不同", Color("#c080d0"))
+	# 建筑物视觉（简化 ColorRect）
+	_add_building_detail(Vector2(400, 3100),   Vector2(60, 140),  Color("#6a5545"), "纹理墙")
+	_add_building_detail(Vector2(1200, 3080),  Vector2(100, 130), Color("#8a7060"), "密室")
+	_add_building_detail(Vector2(2000, 3050),  Vector2(160, 150), Color("#9a8068"), "宴会厅")
+	_add_building_detail(Vector2(3400, 3080),  Vector2(220, 100), Color("#d3ae76"), "中央广场")
+	_add_building_detail(Vector2(4800, 2950),  Vector2(80, 320),  Color("#d7dee7"), "灯塔")
+	_add_building_detail(Vector2(6000, 3080),  Vector2(240, 170), Color("#8ea7b1"), "水坝")
+	_add_building_detail(Vector2(7500, 3080),  Vector2(550, 140), Color("#9b9080"), "旧车站")
+	_add_building_detail(Vector2(10200, 3080), Vector2(240, 150), Color("#b7c8e8"), "天文台")
 
-	# ── 关卡3：宴会厅油画（森林深处）──
-	_add_building_detail(Vector2(2000, 3050), Vector2(160, 150), Color("#9a8068"), "宴会厅")
-	_add_zone_marker(Vector2(2000, 3100), "关卡3\n油画舞步", Color("#d060a0"))
-
-	# ── 出生点/中央广场 ──
-	_add_building_detail(Vector2(3400, 3080), Vector2(220, 100), Color("#d3ae76"), "中央广场")
-
-	# ── 灯塔 ──
-	_add_building_detail(Vector2(4800, 2950), Vector2(80, 320), Color("#d7dee7"), "灯塔")
+	# 灯塔光晕
 	var glow := Polygon2D.new()
 	var gp := PackedVector2Array()
 	for i in range(16):
 		var a: float = TAU * i / 16.0
 		gp.append(Vector2(cos(a) * 28.0, sin(a) * 28.0))
-	glow.polygon = gp
-	glow.position = Vector2(4800, 2770)
-	glow.color = Color("#ffe8a0")
-	glow.modulate.a = 0.5
-	glow.z_index = -1
+	glow.polygon = gp; glow.position = Vector2(4800, 2770)
+	glow.color = Color("#ffe8a0"); glow.modulate.a = 0.5; glow.z_index = -1
 	add_child(glow)
 
-	# ── 水坝 ──
-	_add_building_detail(Vector2(6000, 3080), Vector2(240, 170), Color("#8ea7b1"), "水坝")
-
-	# ── 车站 ──
-	_add_building_detail(Vector2(7500, 3080), Vector2(550, 140), Color("#9b9080"), "旧车站")
-
-	# ── 游乐园：摩天轮 + 灯板区域 ──
-	_draw_wheel(Vector2(9000, 3040))
-	_add_zone_marker(Vector2(8800, 3170), "关卡4\n灯板谜题", Color("#ffaa30"))
-
-	# ── 天文台 + NPC密码台 ──
-	_add_building_detail(Vector2(10200, 3080), Vector2(240, 150), Color("#b7c8e8"), "天文台")
+	# 天文台穹顶
 	var dome := Polygon2D.new()
 	var dp := PackedVector2Array()
 	for i in range(32):
 		var a: float = PI * i / 31.0
 		dp.append(Vector2(cos(a) * 82.0, sin(a) * 50.0 - 72.0))
-	dome.polygon = dp
-	dome.position = Vector2(10200, 2900)
-	dome.color = Color("#8fa9d7")
-	dome.z_index = -1
+	dome.polygon = dp; dome.position = Vector2(10200, 2900)
+	dome.color = Color("#8fa9d7"); dome.z_index = -1
 	add_child(dome)
-	_add_zone_marker(Vector2(10500, 3170), "关卡5\nNPC密码台", Color("#a080f0"))
 
-	# ── 地下迷宫入口标识 ──
-	_add_zone_marker(Vector2(5200, UG_GROUND_Y - 20), "关卡6\n黑暗迷宫", Color("#8040c0"))
+	# 摩天轮
+	_draw_wheel(Vector2(9000, 3040))
 
-	# ═════ 风向标系统 ═════
+	# 风向标
 	_make_wind_vanes()
 
-	# ═════ 宝藏位置（激光交叉点）═══════
+	# 宝箱
 	_add_treasure_chest(GameData.LASER_SYSTEM["treasure_pos"])
 
 # ── 区域标记（关卡位置指示器）──
@@ -785,6 +544,8 @@ func _on_puzzle_completed(level_id: String, reward: String = "") -> void:
 	# 记录关卡完成（由 main.gd 的 state 管理）
 	print("Puzzle completed: %s (reward: %s)" % [level_id, reward])
 	hint_updated.emit("✨ 关卡 '%s' 已完成！" % level_id)
+	# 转发给主场景监听
+	puzzle_completed.emit(level_id, reward)
 
 # ─── COLLECTIBLES ──────────────────────────────────
 func _make_collectibles(state: Dictionary) -> void:

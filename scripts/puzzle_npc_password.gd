@@ -22,13 +22,13 @@ const NPC_DIALOGUE_DATA: Array = [
 	{"id": "cipher_1", "name": "守卫A", "visible_text": "我守护这个地方很久了。",     "subtext": "我其实很想休息"},
 	{"id": "cipher_2", "name": "学者B", "visible_text": "知识就是力量。",           "subtext": "但我害怕力量被滥用"},
 	{"id": "cipher_3", "name": "工匠C", "visible_text": "工具应该服务于人。",         "subtext": "可人们总是被工具驱使"},
-	{"id": "cipher_4", "name": "旅者D", "visible_text": "旅途的意义在于过程。",       "subtext": "我只想要一个家"},
+	{"id": "cipher_4", "name": "旅者D", "visible_text": "旅途的意义在于过程。",       "subtext": "想找个可以停留的地方"},
 	{"id": "cipher_5", "name": "智者E", "visible_text": "智慧来自于倾听。",           "subtext": "没人真正听我说过话"},
 ]
 
 # 密码本（自闭症模式可见）：潜台词首字→数字映射
 const CIPHER_BOOK: Dictionary = {
-	"我": "1", "但": "2", "可": "3", "我": "4", "没": "5",
+	"我": "1", "但": "2", "可": "3", "想": "4", "没": "5",
 }
 # 正确答案：按站位顺序取每个潜台词的首字符 → 数字序列
 # 实际上我们用 subtext 首字的组合
@@ -89,7 +89,7 @@ func _make_npc_console() -> void:
 		name_lbl.text = data["name"]
 		name_lbl.position = Vector2(nx - 12, -56)
 		name_lbl.add_theme_font_size_override("font_size", 9)
-		name_lbl.add_theme_color_override("font_color", Color("#c0c0e0")
+		name_lbl.add_theme_color_override("font_color", Color("#c0c0e0"))
 		add_child(name_lbl)
 	
 	# 对话显示区
@@ -143,7 +143,7 @@ func _on_body_exited(body: Node2D) -> void:
 	if body.is_in_group("player"):
 		player_in_range = false
 
-func _unhandled_input(event: InputEvent) -> void:
+func _input(event: InputEvent) -> void:
 	if not player_in_range or is_completed:
 		return
 	
@@ -205,7 +205,7 @@ func _talk_to_next_npc() -> void:
 				highlight_marker(next_idx, Color("#ffff00"))
 				hint_updated.emit("密码本翻译：%s = %s" % [first_char, code_num])
 			_:
-				dialogue.text = "[color=#c0c0c0]%s[/color]\n(color=gray)(切换视角查看更多信息))" % [data["visible_text"]]
+				dialogue.text = "[color=#c0c0c0]%s[/color]\n[color=gray](切换视角查看更多信息)[/color]" % [data["visible_text"]]
 				hint_updated.emit("%s说了什么...换个视角试试？" % data["name"])
 	
 	var read_count: int = 0

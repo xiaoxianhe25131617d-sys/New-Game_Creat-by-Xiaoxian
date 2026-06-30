@@ -71,7 +71,7 @@ func _make_light_board() -> void:
 		var shape := CollisionShape2D.new()
 		var box := RectangleShape2D.new()
 		box.size = Vector2(32, 32)
-		shape.shape = shape
+		shape.shape = box
 		cell.add_child(shape)
 		
 		# 灯板视觉
@@ -140,7 +140,7 @@ func _start_challenge() -> void:
 var press_cooldowns: Dictionary = {}
 
 func _process(_delta: float) -> void:
-	if not is_completed:
+	if is_completed:
 		return
 	
 	# 持续检测碰撞

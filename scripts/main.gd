@@ -416,6 +416,14 @@ func _get_objective() -> String:
 	return "→ 四把钥匙集齐！去地下迷宫深处的宝箱..."
 
 func _describe_interactable(node: Node) -> String:
+	# 优先按实例类型识别新关卡节点
+	if node is PuzzleTextureWall:    return "[关卡1] 纹理墙 — 触觉按键谜题"
+	if node is PuzzleFindDifference: return "[关卡2] 找不同密室 — 视角找差异"
+	if node is PuzzleBanquetPainting: return "[关卡3] 宴会厅油画 — 舞蹈序列"
+	if node is PuzzleAmusementLights: return "[关卡4] 游乐园灯板 — 音频+速度"
+	if node is PuzzleNPCPassword:    return "[关卡5] NPC密码台 — 潜台词解码"
+	if node is PuzzleDarkMaze:       return "[关卡6] 黑暗迷宫 — 听觉导航"
+	
 	match node.get_meta("kind", ""):
 		"npc":
 			var npc: MindscapeNPC = node as MindscapeNPC
@@ -434,12 +442,6 @@ func _describe_interactable(node: Node) -> String:
 				return "★ 时间胶囊宝箱（已解锁！）"
 			return "★ 宝箱（%d/4钥匙）" % keys.size()
 		"zone_indicator":
-			if node is PuzzleTextureWall:  return "[关卡1] 纹理墙 — 触觉按键谜题"
-			if node is PuzzleFindDifference: return "[关卡2] 找不同密室 — 视角找差异"
-			if node is PuzzleBanquetPainting: return "[关卡3] 宴会厅油画 — 舞蹈序列"
-			if node is PuzzleAmusementLights: return "[关卡4] 游乐园灯板 — 音频+速度"
-			if node is PuzzleNPCPassword:   return "[关卡5] NPC密码台 — 潜台词解码"
-			if node is PuzzleDarkMaze:       return "[关卡6] 黑暗迷宫 — 听觉导航"
 			return "关卡区域"
 	return "某个东西"
 
@@ -569,6 +571,16 @@ func on_level_completed(level_id: String, reward_id: String = "") -> void:
 			show_toast("获得激光装置2！带到右侧风向标使用。", 3.0)
 		"stone_door":
 			show_toast("石门打开了！左侧区域现已可通行。", 3.0)
+		"treasure":
+			# 来自地下迷宫岔路B的宝箱终点
+			if state.get("collected_keys", []).size() >= 4:
+				state["finished"] = true
+				state["treasure_unlocked"] = true
+				show_toast("🎆🎆🎆 时间胶囊开启了！！！ 🎆🎆🎆", 6.0)
+				AudioManager.play_sfx("collect")
+				show_ending()
+			else:
+				show_toast("迷宫深处的宝箱需要4把钥匙！", 3.0)
 		"":
 			pass  # 无特殊奖励
 	
@@ -908,9 +920,10 @@ func show_toast(text: String, duration: float = 3.0) -> void:
 	tween.tween_callback(toast.queue_free)
 
 func _puzzle_by_id(id: String) -> Dictionary:
-	for puzzle in GameData.PUZZLES:
-		if puzzle.get("id", "") == id:
-			return puzzle
+	# 在新 LEVELS 数据中查找
+	for level in GameData.LEVELS:
+		if level.get("id", "") == id:
+			return level
 	return {}
 
 func _add_button(parent: Control, text: String, callback: Callable) -> Button:

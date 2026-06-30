@@ -2,3 +2,9 @@ res://scripts/audio_manager.gd
 res://scripts/game_data.gd
 res://scripts/main.gd
 res://scripts/world.gd
+res://scripts/puzzle_npc_password.gd
+res://scripts/puzzle_texture_wall.gd
+res://scripts/puzzle_find_diff.gd
+res://scripts/puzzle_banquet.gd
+res://scripts/puzzle_amusement_lights.gd
+res://scripts/puzzle_dark_maze.gd

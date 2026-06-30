@@ -40,7 +40,7 @@ const DANCER_OFFSETS: Dictionary = {
 }
 
 # 油画视觉
-var painting_visual: Polygon2D
+var painting_visual: CanvasItem
 var dancer_nodes: Dictionary = {}
 var button_nodes: Dictionary = {}
 
@@ -114,7 +114,7 @@ func _make_floor_buttons() -> void:
 	# 四个地面按钮
 	for key in BUTTON_POSITIONS.keys():
 		var btn := Area2D.new()
-		btn.name = "Btn_" + key
+		btn.name = "Btn_" + str(key)
 		btn.position = BUTTON_POSITIONS[key]
 		add_child(btn)
 		

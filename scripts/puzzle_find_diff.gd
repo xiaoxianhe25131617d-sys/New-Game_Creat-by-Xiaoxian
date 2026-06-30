@@ -30,7 +30,7 @@ const SYMBOL_CODE: Dictionary = {"★": "1", "◆": "3", "●": "5", "▲": "7"}
 const CORRECT_PASSWORD: String = "1375"
 
 var input_password: String = ""
-var room_visual: Control            # 房间场景可视化
+var room_visual: Node2D             # 房间场景可视化
 var diff_markers: Dictionary = {}   # 差异标记节点
 var ui_panel: Panel                 # UI面板（密码输入）
 var status_label: Label
@@ -127,7 +127,7 @@ func _make_ui_panel() -> void:
 func _on_body_entered(body: Node2D) -> void:
 	if body.is_in_group("player"):
 		player_in_range = true
-		_update_status()
+		status_label.text = "按 [E] 进入密室"
 
 func _on_body_exited(body: Node2D) -> void:
 	if body.is_in_group("player"):

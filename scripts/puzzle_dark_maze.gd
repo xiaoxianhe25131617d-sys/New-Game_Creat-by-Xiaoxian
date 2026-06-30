@@ -10,7 +10,7 @@ class_name PuzzleDarkMaze
 #  产出：岔路A=钥匙3 / 岔路B=宝箱（需四把钥匙开启）
 # ════════════════════════════════════════════════════════════
 
-signal maze_completed(reward_type: String, reward_id: String)
+signal puzzle_completed(reward_id: String)
 signal hint_updated(text: String)
 
 var player_in_range: bool = false
@@ -64,7 +64,7 @@ func _make_maze_structure() -> void:
 		var node: Dictionary = MAZE_NODES[node_id]
 		var pos: Vector2 = node["pos"]
 		for neighbor_id in node["neighbors"]:
-			var edge_key: String = mini(node_id, neighbor_id) + "_" + maxi(node_id, neighbor_id)
+			var edge_key: String = node_id + "_" + neighbor_id
 			if drawn_edges.has(edge_key):
 				continue
 			drawn_edges.append(edge_key)
@@ -86,7 +86,7 @@ func _make_maze_structure() -> void:
 		var pos: Vector2 = node["pos"]
 		
 		var marker := Area2D.new()
-		marker.name = "Node_" + node_id
+		marker.name = "Node_" + str(node_id)
 		marker.position = pos - maze_container.global_position
 		marker.set_meta("node_id", node_id)
 		maze_container.add_child(marker)
@@ -120,7 +120,7 @@ func _make_maze_structure() -> void:
 	# 入口
 	entrance_marker = Area2D.new()
 	entrance_marker.name = "Entrance"
-	entrance_marker.position = MAZE_NODES["entry"] - maze_container.global_position
+	entrance_marker.position = MAZE_NODES["entry"]["pos"] - maze_container.global_position
 	var eshape := CollisionShape2D.new()
 	var ecircle := CircleShape2D.new()
 	ecircle.radius = 24
@@ -147,7 +147,7 @@ func _make_maze_structure() -> void:
 	# 出口A（钥匙3）
 	exit_a_marker = Area2D.new()
 	exit_a_marker.name = "ExitA"
-	exit_a_marker.position = MAZE_NODES["key_a"] - maze_container.global_position
+	exit_a_marker.position = MAZE_NODES["key_a"]["pos"] - maze_container.global_position
 	var ashape := CollisionShape2D.new()
 	var acircle := CircleShape2D.new()
 	acircle.radius = 20
@@ -172,7 +172,7 @@ func _make_maze_structure() -> void:
 	# 出口B（宝藏）
 	exit_b_marker = Area2D.new()
 	exit_b_marker.name = "ExitB"
-	exit_b_marker.position = MAZE_NODES["treasure"] - maze_container.global_position
+	exit_b_marker.position = MAZE_NODES["treasure"]["pos"] - maze_container.global_position
 	var bshape := CollisionShape2D.new()
 	var bcircle := CircleShape2D.new()
 	bcircle.radius = 24
@@ -313,7 +313,7 @@ func _reach_endpoint(node_id: String) -> void:
 		is_inside = false
 		status_label.text = "✨ 获得钥匙3（迷宫钥匙）！"
 		hint_updated.emit("✨ 你在岔路A找到了钥匙3！")
-		maze_completed.emit("key", "key_3")
+		puzzle_completed.emit("key_3")
 	elif reward == "final":
 		# 岔路B：宝箱
 		chosen_path = "B"
@@ -331,7 +331,7 @@ func _check_chest_open() -> void:
 		is_inside = false
 		status_label.text = "✨✨ 宝箱开启！！时间胶囊！！！ ✨✨"
 		hint_updated.emit("🎆🎆🎆 四把钥匙集齐！宝箱开启！你完成了游戏！ 🎆🎆🎆")
-		maze_completed.emit("ending", "treasure")
+		puzzle_completed.emit("treasure")
 		_celebrate_victory()
 	else:
 		# 钥匙不足
@@ -380,7 +380,7 @@ func _get_player() -> Node2D:
 	return null
 
 func _get_collected_keys() -> Array:
-	var main: Node = get_tree().root.get_node_or_null("Main")
+	var main: Node = get_tree().current_scene
 	if main and main.has_method("get_collected_keys"):
 		return main.get_collected_keys()
 	return []

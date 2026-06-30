@@ -174,7 +174,7 @@ func _tween_celebration() -> void:
 		spark.explosiveness = 0.9
 		spark.gravity = Vector2(0, -40)
 		spark.initial_velocity_min = 20
-		snapk.initial_velocity_max = 60
+		spark.initial_velocity_max = 60
 		spark.color = Color("#ffd700")
 		spark.position = Vector2(randf_range(-50, 50), randf_range(-100, 100))
 		add_child(spark)
