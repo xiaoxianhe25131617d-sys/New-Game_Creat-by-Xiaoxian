@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 96">
+  <!-- Player character - explorer silhouette -->
+  <defs>
+    <radialGradient id="bodyGrad" cx="50%" cy="40%" r="60%">
+      <stop offset="0%" stop-color="#f5e6c8"/>
+      <stop offset="100%" stop-color="#d4a86a"/>
+    </radialGradient>
+    <radialGradient id="headGrad" cx="50%" cy="35%" r="50%">
+      <stop offset="0%" stop-color="#ffe8d0"/>
+      <stop offset="100%" stop-color="#e8c898"/>
+    </radialGradient>
+  </defs>
+  <!-- Head -->
+  <ellipse cx="32" cy="18" rx="16" ry="18" fill="url(#headGrad)"/>
+  <!-- Hair -->
+  <ellipse cx="32" cy="10" rx="17" ry="12" fill="#4a3520"/>
+  <ellipse cx="28" cy="14" rx="8" ry="6" fill="#5a4530"/>
+  <!-- Eyes -->
+  <circle cx="26" cy="18" r="2.5" fill="#2a1a0a"/>
+  <circle cx="38" cy="18" r="2.5" fill="#2a1a0a"/>
+  <!-- Smile -->
+  <path d="M28 24 Q32 30 36 24" stroke="#2a1a0a" stroke-width="1.5" fill="none"/>
+  <!-- Body / coat -->
+  <path d="M16 36 L12 82 Q32 90 52 82 L48 36 Z" fill="#5a7a9a"/>
+  <path d="M16 36 L12 82 Q32 90 52 82 L48 36 Z" fill="#6a8aaa" opacity="0.5"/>
+  <!-- Coat detail -->
+  <line x1="32" y1="40" x2="32" y2="84" stroke="#4a6a8a" stroke-width="1.5"/>
+  <!-- Arms -->
+  <path d="M16 40 L4 60 L8 66 L20 50" fill="url(#bodyGrad)"/>
+  <path d="M48 40 L60 60 L56 66 L44 50" fill="url(#bodyGrad)"/>
+  <!-- Legs -->
+  <rect x="22" y="78" width="10" height="14" rx="3" fill="#3a4a5a"/>
+  <rect x="34" y="78" width="10" height="14" rx="3" fill="#3a4a5a"/>
+  <!-- Boots -->
+  <rect x="20" y="88" width="14" height="6" rx="3" fill="#5a3a2a"/>
+  <rect x="32" y="88" width="14" height="6" rx="3" fill="#5a3a2a"/>
+  <!-- Scarf -->
+  <path d="M18 30 Q32 38 46 30 Q44 42 32 46 Q20 42 18 30" fill="#c44a3a"/>
+  <!-- Scarf tail -->
+  <path d="M38 32 Q50 40 46 56 Q44 48 38 44" fill="#c44a3a"/>
+</svg>

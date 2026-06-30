@@ -1,0 +1,8 @@
+[gd_scene load_steps=2 format=3 uid="uid://cy5c_iHXaQM"]
+
+[ext_resource type="TileSet" id="tileset_id" path="tileset.tres"]
+
+[node name="Water_1" type="TileMapLayer"]
+collision_enabled = false
+tile_set = ExtResource("tileset_id")
+tile_map_data = PackedByteArray(0, 0, 11, 0, 13, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12, 0, 13, 0, 0, 0, 1, 0, 0, 0, 0, 0, 13, 0, 13, 0, 0, 0, 0, 0, 0, 0, 0, 0, 14, 0, 13, 0, 0, 0, 1, 0, 0, 0, 0, 0, 15, 0, 13, 0, 0, 0, 1, 0, 0, 0, 0, 0)
