@@ -478,48 +478,121 @@ func _paint_underground_solid() -> void:
 			_ground_layer.set_cell(Vector2i(x, y), 0, tile)
 
 func _paint_underground_maze_walls() -> void:
-	var floor_row := UG_GROUND_ROW
-	var wall_h := 12
-	var wall_top := floor_row - wall_h
+	# ═══════════════════════════════════════════════════════
+	#  真正物理走通的地下迷宫 — 多层高低地形
+	#  入口(行269) → 中央大厅 → 左下层(钥匙) / 右上(宝箱)
+	# ═══════════════════════════════════════════════════════
+	var R0 := 269  # 主层/入口层
+	var R1 := 263  # 上层（宝箱路径）
+	var R2 := 275  # 下层（钥匙路径）
+	var BOT := 282  # 底部填充
 
-	# 地下可见迷宫墙壁（带碰撞的 block_layer）
-	# 左墙：从入口区域的边缘开始
-	for y in range(wall_top, floor_row + 1):
-		_block_layer.set_cell(Vector2i(265, y), 0, T_GRASS_MID)
-		_block_layer.set_cell(Vector2i(320, y), 0, T_GRASS_MID)
-		_block_layer.set_cell(Vector2i(375, y), 0, T_GRASS_MID)
-		_block_layer.set_cell(Vector2i(435, y), 0, T_GRASS_MID)
+	var _G := _ground_layer
+	var _B := _block_layer
+	var WR := T_GRASS_MID  # 墙/地面块(带碰撞)
+	var GF := T_GRASS_FILL  # 填充色
+	var GA := T_GRASS_FILL_ALT  # 替换色
 
-	# 水平隔墙（形成岔路结构）
-	var hwalls := [
-		{"y": wall_top + 4, "x0": 270, "x1": 316, "gap": 296},     # 入口后第一道
-		{"y": wall_top + 8, "x0": 265, "x1": 318, "gap": 292},     # 第二道（引导到岔路口）
-	]
-	for hw in hwalls:
-		for x in range(hw["x0"], hw["x1"] + 1):
-			if x >= hw["gap"] - 1 and x <= hw["gap"] + 1:
-				continue
-			_block_layer.set_cell(Vector2i(x, hw["y"]), 0, T_GRASS_MID)
+	# ── 底部实心大地基 ──
+	_mf_rect(_G, 265, R0 + 1, 440, BOT, WR)
+	_mf_rect(_G, 265, R0, 440, R0, GA)
 
-	# 中间分隔墙（形成岔路A和B的分界）
-	for y in range(wall_top + 8, floor_row + 1):
-		_block_layer.set_cell(Vector2i(347, y), 0, T_GRASS_MID)
+	# ── 外围边界墙 ──
+	_mf_col(_B, R1 - 1, R0, 265, WR)
+	_mf_col(_B, R1 - 1, R0, 440, WR)
+	_mf_row(_B, 265, 440, R1 - 1, WR)
 
-	# 岔路A区域（左边 → 钥匙）
-	for y in range(wall_top + 5, floor_row + 1):
-		_block_layer.set_cell(Vector2i(280, y), 0, T_GRASS_MID)
-	# 岔路A尽头
-	for x in range(282, 340):
-		for y in range(wall_top, wall_top + 4):
-			_block_layer.set_cell(Vector2i(x, y), 0, T_GRASS_MID if (x+y)%2==0 else T_GRASS_MID_L)
+	# ── 入口斜坡 (x:290-304) ──
+	for step in range(8):
+		var sy := R0 + 13 - step
+		var sx := 293 + step
+		_G.set_cell(Vector2i(sx, sy), 0, WR)
+		_G.set_cell(Vector2i(sx + 1, sy), 0, WR)
+	for y in range(R1 - 1, R0):
+		_G.set_cell(Vector2i(292, y), -1)
+		_G.set_cell(Vector2i(293, y), -1)
+	_mf_col(_B, R1 - 1, R0 + 13, 290, WR)
+	_mf_col(_B, R1 - 1, R0 + 13, 304, WR)
 
-	# 岔路B区域（右边 → 宝箱）
-	for y in range(wall_top + 5, floor_row + 1):
-		_block_layer.set_cell(Vector2i(410, y), 0, T_GRASS_MID)
-	# 岔路B尽头
-	for x in range(355, 406):
-		for y in range(wall_top, wall_top + 4):
-			_block_layer.set_cell(Vector2i(x, y), 0, T_GRASS_MID if (x+y)%2==0 else T_GRASS_FILL)
+	# ── 中央大厅 (x:305-350) ──
+	for x in range(305, 351):
+		for y in range(R1 - 1, R0):
+			_G.set_cell(Vector2i(x, y), -1)
+	_mf_row(_B, 305, 350, R1, WR)
+	# 分界柱 x=345-346
+	_mf_col(_B, R1 + 1, R0 - 4, 345, WR)
+	_mf_col(_B, R1 + 1, R0 - 4, 346, WR)
+
+	# ── Fork A: 左转下行 → 钥匙 ──
+	_mf_col(_B, R1, R0, 280, WR)
+	_mf_col(_B, R1, R0, 327, WR)
+	# 下行台阶
+	for step in range(7):
+		var sy := R0 + step
+		var sx := 311 + step
+		_G.set_cell(Vector2i(sx, sy), 0, WR)
+		_G.set_cell(Vector2i(sx + 1, sy), 0, WR)
+	_mf_col(_B, R0 + 1, R2 + 2, 308, WR)
+	_mf_col(_B, R0 + 1, R2 + 2, 322, WR)
+	# 下层区域
+	_mf_row(_G, 270, 324, R2, GA)
+	for y in range(R2 + 1, BOT + 1):
+		_mf_row(_G, 270, 324, y, WR)
+	_mf_col(_B, R1, R2 - 1, 270, WR)
+	_mf_col(_B, R1, R2, 275, WR)
+	_mf_col(_B, R1, R2, 282, WR)
+	_mf_row(_B, 271, 281, R1, WR)
+	for step in range(3):
+		var sy := R2 + step
+		var sx := 278 + step
+		_G.set_cell(Vector2i(sx, sy), 0, WR)
+	_mf_row(_B, 270, 278, R1 - 2, WR)
+
+	# ── Fork B: 右转上行 → 宝箱 ──
+	_mf_col(_B, R1 + 1, R0, 365, WR)
+	_mf_col(_B, R1 + 1, R0, 400, WR)
+	# 上行台阶
+	for step in range(7):
+		var sy := R0 - step
+		var sx := 370 + step
+		_G.set_cell(Vector2i(sx, sy), 0, WR)
+		_G.set_cell(Vector2i(sx + 1, sy), 0, WR)
+	_mf_col(_B, R1, R0, 368, WR)
+	_mf_col(_B, R1, R0, 382, WR)
+	# 上层区域
+	for x in range(365, 439):
+		_G.set_cell(Vector2i(x, R1), 0, GA)
+		for y in range(R1 + 1, R0):
+			_G.set_cell(Vector2i(x, y), 0, WR)
+	_mf_row(_B, 365, 438, R1 - 2, WR)
+	_mf_col(_B, R1 - 2, R1, 408, WR)
+	_mf_col(_B, R1 - 2, R1, 428, WR)
+	_mf_row(_B, 425, 438, R1 - 3, WR)
+
+	# ── 大厅到两侧的起步台阶 ──
+	for step in range(4):
+		var sy := R0 - step
+		var sx := 355 + step
+		_G.set_cell(Vector2i(sx, sy), 0, WR)
+		_G.set_cell(Vector2i(sx + 1, sy), 0, WR)
+	for step in range(4):
+		var sy := R0 + step
+		var sx := 335 - step
+		_G.set_cell(Vector2i(sx, sy), 0, WR)
+
+# ── 迷宫砖墙绘制辅助方法 ──
+func _mf_rect(layer: TileMapLayer, x0: int, y0: int, x1: int, y1: int, tile: Vector2i) -> void:
+	for x in range(x0, x1 + 1):
+		for y in range(y0, y1 + 1):
+			layer.set_cell(Vector2i(x, y), 0, tile)
+
+func _mf_row(layer: TileMapLayer, x0: int, x1: int, y: int, tile: Vector2i) -> void:
+	for x in range(x0, x1 + 1):
+		layer.set_cell(Vector2i(x, y), 0, tile)
+
+func _mf_col(layer: TileMapLayer, y0: int, y1: int, x: int, tile: Vector2i) -> void:
+	for y in range(y0, y1 + 1):
+		layer.set_cell(Vector2i(x, y), 0, tile)
 
 func _paint_texture_wall_blocker() -> void:
 	var wall_col := 263
@@ -687,10 +760,19 @@ func _draw_rock(pos: Vector2, color: Color) -> void:
 #  地下迷宫入口
 # ══════════════════════════════════════════════════════════════
 func _make_underground_maze_entrance() -> void:
-	# 台阶入口
+	# ── 地面入口标记（灯塔右侧，玩家走台阶下去）──
+	var entry_tag := Label.new()
+	entry_tag.text = "↓ 地下迷宫入口 ↓"
+	entry_tag.position = Vector2(4670, GROUND_Y_PX - 70)
+	entry_tag.add_theme_font_size_override("font_size", 14)
+	entry_tag.add_theme_color_override("font_color", Color("#c0b0ff"))
+	entry_tag.z_index = 10
+	add_child(entry_tag)
+	
+	# 台阶入口区域（不是传送点，而是可视化标记）
 	var stair := Area2D.new()
 	stair.name = "MazeStairEntrance"
-	stair.position = Vector2(4900, GROUND_Y_PX - 30)
+	stair.position = Vector2(4720, GROUND_Y_PX - 20)
 	var mshape := CollisionShape2D.new()
 	var mrect := RectangleShape2D.new()
 	mrect.size = Vector2(80, 60)
@@ -700,76 +782,48 @@ func _make_underground_maze_entrance() -> void:
 	mvis.polygon = PackedVector2Array([
 		Vector2(-40, -20), Vector2(40, -20), Vector2(40, 20), Vector2(-40, 20)
 	])
-	mvis.color = Color("#2a1a3a")
+	mvis.color = Color("#3a2a4a")
+	var mlabel := Label.new()
+	mlabel.text = "走下去"
+	mlabel.position = Vector2(-18, -8)
+	mlabel.add_theme_font_size_override("font_size", 10)
+	mlabel.add_theme_color_override("font_color", Color("#c0b0ff"))
+	mvis.add_child(mlabel)
 	stair.add_child(mvis)
-	var sl := Label.new()
-	sl.text = "↓ 地下迷宫"
-	sl.position = Vector2(-26, -10)
-	sl.add_theme_font_size_override("font_size", 11)
-	sl.add_theme_color_override("font_color", Color("#c0b0ff"))
-	stair.add_child(sl)
-	stair.set_meta("kind", "maze_stairs")
-	stair.set_meta("target_y", UG_GROUND_Y_PX - 30)
-	stair.set_meta("target_x", 5100.0)
-	interactables.append(stair)
+	stair.set_meta("kind", "zone_indicator")
+	add_child(stair)
 
-	# 梯子回地面
-	var ladder := Area2D.new()
-	ladder.name = "MazeLadder"
-	ladder.position = Vector2(5100, UG_GROUND_Y_PX - 40)
-	var lshape := CollisionShape2D.new()
-	var lrect := RectangleShape2D.new()
-	lrect.size = Vector2(40, 120)
-	lshape.shape = lrect
-	ladder.add_child(lshape)
-	var lvis := Polygon2D.new()
-	lvis.polygon = PackedVector2Array([
-		Vector2(-14, -50), Vector2(14, -50), Vector2(14, 50), Vector2(-14, 50)
-	])
-	lvis.color = Color("#5a3040")
-	ladder.add_child(lvis)
-	var ll := Label.new()
-	ll.text = "[E] 爬上去"
-	ll.position = Vector2(-28, -10)
-	ll.add_theme_font_size_override("font_size", 11)
-	ll.add_theme_color_override("font_color", Color("#80ff80"))
-	ladder.add_child(ll)
-	ladder.set_meta("kind", "ladder")
-	ladder.set_meta("target_y", GROUND_Y_PX - 30)
-	ladder.set_meta("target_x", 4950.0)
-	interactables.append(ladder)
-
-	# 岔路A标记（钥匙端 — 左）
+	# 岔路A终点 — 钥匙触发区（下层左上）
 	_maze_fork_a_zone = Area2D.new()
 	_maze_fork_a_zone.name = "MazeForkA"
-	_maze_fork_a_zone.position = Vector2(5000, UG_GROUND_Y_PX - 30)
+	_maze_fork_a_zone.position = Vector2(275 * TILE_SIZE, (UG_GROUND_ROW + 8) * TILE_SIZE - 10)
 	var ash := CollisionShape2D.new()
 	var ar := RectangleShape2D.new()
-	ar.size = Vector2(100, 50)
+	ar.size = Vector2(120, 60)
 	ash.shape = ar
 	_maze_fork_a_zone.add_child(ash)
 	var al := Label.new()
-	al.text = "岔路A →\n钥匙"
-	al.position = Vector2(-28, -16)
-	al.add_theme_font_size_override("font_size", 12)
+	al.text = "钥匙"
+	al.position = Vector2(-10, -8)
+	al.add_theme_font_size_override("font_size", 10)
 	al.add_theme_color_override("font_color", Color("#60ff60"))
 	_maze_fork_a_zone.add_child(al)
 	_maze_fork_a_zone.set_meta("kind", "maze_fork_a")
 	interactables.append(_maze_fork_a_zone)
 
-	# 岔路B标记（宝箱端 — 右）
+	# 岔路B终点 — 宝箱触发区（上层右侧）
 	_maze_fork_b_zone = Area2D.new()
 	_maze_fork_b_zone.name = "MazeForkB"
-	_maze_fork_b_zone.position = Vector2(6000, UG_GROUND_Y_PX - 30)
+	_maze_fork_b_zone.position = Vector2(430 * TILE_SIZE, (UG_GROUND_ROW - 7) * TILE_SIZE - 8)
 	var bsh := CollisionShape2D.new()
 	var br := RectangleShape2D.new()
-	br.size = Vector2(100, 50)
+	br.size = Vector2(120, 60)
 	bsh.shape = br
 	_maze_fork_b_zone.add_child(bsh)
 	var bl := Label.new()
-	bl.text = "← 岔路B\n宝箱(需4钥匙)"
-	bl.position = Vector2(-32, -16)
-	bl.add_theme_font_size_override("font_size", 12)
+	bl.text = "宝箱(需4钥匙)"
+	bl.position = Vector2(-24, -8)
+	bl.add_theme_font_size_override("font_size", 10)
 	bl.add_theme_color_override("font_color", Color("#ffd700"))
 	_maze_fork_b_zone.add_child(bl)
 	_maze_fork_b_zone.set_meta("kind", "maze_fork_b")
@@ -972,8 +1026,6 @@ func nearest_interactable(point: Vector2, max_distance: float = 110.0) -> Node2D
 			"puzzle": priority = 4
 			"npc": priority = 3
 			"anchor": priority = 2
-			"maze_stairs": priority = 3
-			"ladder": priority = 3
 			"collectible": priority = 1
 			"maze_fork_a": priority = 4
 			"maze_fork_b": priority = 4

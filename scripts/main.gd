@@ -470,26 +470,15 @@ func interact() -> void:
 			var target: Vector2 = current_near.get_meta("target", GameData.PLAYER_START) as Vector2
 			player.global_position = target
 			show_toast("回到了地面。")
-		"maze_stairs":
-			var tx: float = current_near.get_meta("target_x", 5200.0)
-			var ty: float = current_near.get_meta("target_y", 4300.0)
-			player.global_position = Vector2(tx, ty)
-			show_toast("走下台阶...进入地下迷宫。用E/W爬梯子返回。", 3.0)
-		"ladder":
-			# 从地下爬回地面（也用E交互）
-			var tx: float = current_near.get_meta("target_x", 5150.0)
-			var ty: float = current_near.get_meta("target_y", 3200.0)
-			player.global_position = Vector2(tx, ty)
-			show_toast("爬回了地面！")
 		"treasure_chest":
 			try_open_treasure_chest(current_near)
 		"zone_indicator":
 			show_toast("关卡区域：%s" % _describe_interactable(current_near))
 		"maze_fork_a":
-			show_toast("岔路A：通往迷宫钥匙。往左走到底。", 2.0)
+			show_toast("岔路A尽头：钥匙3可能就在这里...再往前走走。", 2.0)
 		"maze_fork_b":
 			var keys := get_collected_keys()
-			show_toast("岔路B：宝箱（%d/4钥匙）。往右走到底。" % keys.size(), 2.0)
+			show_toast("岔路B尽头：宝箱（%d/4钥匙）。" % keys.size(), 2.0)
 		_:
 			# 新式谜题实例（PuzzleTextureWall等）自带交互处理
 			if current_near.has_method("_input"):
