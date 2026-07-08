@@ -19,9 +19,18 @@ var monster_hint_cooldown: float = 0.0
 var login_name_input: LineEdit
 var damage_overlay: ColorRect  # red flash on monster hit
 var damage_tween: Tween  # for damage overlay animation
-var key_inventory_panel: Panel  # 钥匙物品栏面板
-var key_slot_bgs: Array[ColorRect] = []  # 4个钥匙槽背景
-var key_slot_icons: Array[Label] = []  # 4个钥匙槽图标
+
+# ── 侧边物品栏 + 拖放系统 ──
+var sidebar: Panel          # 左侧物品栏面板
+var inv_slots: Dictionary = {}  # {item_id: Panel}
+var dragging: bool = false
+var drag_item_id: String = ""
+var drag_preview: Panel
+var drag_mouse_offset: Vector2
+var laser_owned: Dictionary = {"laser_device_1": false, "laser_device_2": false}
+
+# ── 拖放/激光常量 ──
+const LASER_ANGLE_STEP: float = 0.03  # 滚轮旋转步长(rad)
 
 func _ready() -> void:
 	show_login_screen()
@@ -64,6 +73,37 @@ func _update_audio_region() -> void:
 		region = "observatory"
 	AudioManager.set_region(region)
 	AudioManager.set_view(str(state.get("current_view", "normal")))
+
+func _input(event: InputEvent) -> void:
+	if not game_running:
+		return
+	
+	# ── 拖放激光装置 ──
+	if dragging:
+		if event is InputEventMouseMotion:
+			_update_drag_preview(event.global_position)
+			get_viewport().set_input_as_handled()
+		elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
+			_end_drag(event.global_position)
+			get_viewport().set_input_as_handled()
+		return
+	
+	# ── 滚轮旋转激光 ──
+	if event is InputEventMouseButton and (event.button_index == MOUSE_BUTTON_WHEEL_UP or event.button_index == MOUSE_BUTTON_WHEEL_DOWN):
+		# 检查玩家是否在已放置的激光装置附近
+		if player == null:
+			return
+		for vane_idx in [1, 2]:
+			if world.is_laser_placed(vane_idx):
+				var vp: Vector2 = world.get_vane_placement_pos(vane_idx)
+				if player.global_position.distance_to(vp) < 120.0:
+					var delta_a: float = LASER_ANGLE_STEP if event.button_index == MOUSE_BUTTON_WHEEL_UP else -LASER_ANGLE_STEP
+					world.rotate_placed_laser(vane_idx, delta_a)
+					var label := "激光%d角度: %.0f°" % [vane_idx, rad_to_deg(world.get_laser_angle(vane_idx))]
+					show_toast(label, 0.8)
+					autosave_with_laser_angles()
+					get_viewport().set_input_as_handled()
+					return
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not game_running:
@@ -243,6 +283,8 @@ func start_game(new_game: bool) -> void:
 	world = MindscapeWorld.new()
 	add_child(world)
 	world.build(state)
+	# 恢复激光装置状态
+	_restore_laser_state()
 	# 连接新系统信号
 	world.puzzle_completed.connect(on_level_completed)
 	world.hint_updated.connect(func(txt: String): show_toast(txt, 3.0))
@@ -373,34 +415,7 @@ func _make_hud() -> void:
 	damage_overlay.color = Color(1.0, 0.0, 0.0, 0.0)
 	hud.add_child(damage_overlay)
 	
-	# ── 钥匙物品栏 ──
-	key_inventory_panel = Panel.new()
-	key_inventory_panel.position = Vector2(1050, 14)
-	key_inventory_panel.size = Vector2(210, 50)
-	hud.add_child(key_inventory_panel)
-	
-	var key_label := Label.new()
-	key_label.text = "钥匙"
-	key_label.position = Vector2(8, 4)
-	key_label.add_theme_font_size_override("font_size", 13)
-	key_label.add_theme_color_override("font_color", Color("#ffd700"))
-	key_inventory_panel.add_child(key_label)
-	
-	for i in range(4):
-		var slot := ColorRect.new()
-		slot.position = Vector2(10 + i * 48, 22)
-		slot.size = Vector2(38, 22)
-		slot.color = Color("#1a1a2e")
-		key_inventory_panel.add_child(slot)
-		key_slot_bgs.append(slot)
-		# 钥匙图标
-		var icon := Label.new()
-		icon.text = "·"
-		icon.position = Vector2(10 + i * 48 + 14, 23)
-		icon.add_theme_font_size_override("font_size", 14)
-		icon.add_theme_color_override("font_color", Color("#444466"))
-		key_inventory_panel.add_child(icon)
-		key_slot_icons.append(icon)
+	_create_sidebar_inventory()
 
 func _update_hud() -> void:
 	var view: String = str(state.get("current_view", "normal"))
@@ -433,8 +448,8 @@ func _update_hud() -> void:
 		parts.append("[F] 声波探测 — 按下释放回音感知怪物和地形")
 	prompt_label.text = "  ".join(parts)
 	
-	# 更新钥匙物品栏
-	_update_key_inventory()
+	# 更新侧边物品栏
+	_update_inventory_sidebar()
 
 func _get_objective() -> String:
 	var completed: Array = state.get("completed_levels", [])
@@ -479,8 +494,6 @@ func _describe_interactable(node: Node) -> String:
 			return "纪念物"
 		"puzzle":
 			return str(_puzzle_by_id(str(node.get_meta("id", ""))).get("name", "机关"))
-		"teleport":
-			return "传送"
 		"treasure_chest":
 			var keys: Array = state.get("collected_keys", [])
 			if keys.size() >= 4:
@@ -488,6 +501,12 @@ func _describe_interactable(node: Node) -> String:
 			return "★ 宝箱（%d/4钥匙）" % keys.size()
 		"zone_indicator":
 			return "关卡区域"
+		"treasure_spot":
+			if node.has_meta("solved"):
+				return "★ 宝藏已就位！按E开启"
+			return "两条激光交汇之处..."
+		"wind_vane_placement":
+			return "风向标放置区"
 	return "某个东西"
 
 func interact() -> void:
@@ -502,10 +521,6 @@ func interact() -> void:
 			collect_item(current_near)
 		"puzzle":
 			solve_puzzle(current_near)
-		"teleport":
-			var target: Vector2 = current_near.get_meta("target", GameData.PLAYER_START) as Vector2
-			player.global_position = target
-			show_toast("回到了地面。")
 		"treasure_chest":
 			try_open_treasure_chest(current_near)
 		"zone_indicator":
@@ -515,10 +530,359 @@ func interact() -> void:
 		"maze_fork_b":
 			var keys := get_collected_keys()
 			show_toast("岔路B尽头：宝箱（%d/4钥匙）。" % keys.size(), 2.0)
+		"treasure_spot":
+			if current_near.has_meta("solved"):
+				state["finished"] = true
+				state["treasure_unlocked"] = true
+				show_toast("🎆🎆🎆 时间胶囊开启了！！！ 🎆🎆🎆", 6.0)
+				AudioManager.play_sfx("collect")
+				autosave()
+				show_ending()
+			else:
+				show_toast("两束激光需要对到正确角度，交汇在一点...", 3.0)
 		_:
 			# 新式谜题实例（PuzzleTextureWall等）自带交互处理
 			if current_near.has_method("_input"):
 				pass  # 谜题自己处理输入
+
+# ══════════════════════════════════════════════════════════════
+#  侧边物品栏 + 拖放系统
+# ══════════════════════════════════════════════════════════════
+
+const SIDEBAR_W: float = 138.0
+const SLOT_W: float = 118.0
+const SLOT_H: float = 56.0
+
+func _create_sidebar_inventory() -> void:
+	sidebar = Panel.new()
+	sidebar.name = "SidebarInventory"
+	sidebar.position = Vector2(4, 4)                     # 左上角留一点间距
+	sidebar.size = Vector2(SIDEBAR_W, 530)               # 高530
+	sidebar.z_index = 10
+	
+	var sbg := StyleBoxFlat.new()
+	sbg.bg_color = Color("#0a0a18", 0.78)
+	sbg.set_corner_radius_all(6)
+	sidebar.add_theme_stylebox_override("panel", sbg)
+	hud.add_child(sidebar)
+	
+	var pad := 10.0
+	var y := 8.0
+	
+	# 标题
+	var title := Label.new()
+	title.text = "◆ 物品栏 ◆"
+	title.position = Vector2(0, y)
+	title.size = Vector2(SIDEBAR_W, 20)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 14)
+	title.add_theme_color_override("font_color", Color("#ffe8a0"))
+	sidebar.add_child(title)
+	y += 26
+	
+	# 分隔线
+	_add_sidebar_divider(y)
+	y += 6
+	
+	# ── 🔑 钥匙区 ──
+	var key_header := Label.new()
+	key_header.text = "🔑 钥匙"
+	key_header.position = Vector2(pad, y)
+	key_header.add_theme_font_size_override("font_size", 13)
+	key_header.add_theme_color_override("font_color", Color("#ffd700"))
+	sidebar.add_child(key_header)
+	y += 20
+	
+	var key_data := [
+		{"id": "key_1", "name": "宴会厅钥匙", "icon": "🔑", "color": Color("#ffd700")},
+		{"id": "key_2", "name": "游乐园钥匙", "icon": "🔑", "color": Color("#ff6b6b")},
+		{"id": "key_3", "name": "迷宫钥匙",   "icon": "🔑", "color": Color("#4ecdc4")},
+		{"id": "key_4", "name": "天文台钥匙", "icon": "🔑", "color": Color("#a29bfe")},
+	]
+	var cx := (SIDEBAR_W - SLOT_W) / 2.0
+	for i in range(4):
+		var slot := _make_inv_slot(Vector2(cx, y), key_data[i], "key", false)
+		inv_slots[key_data[i]["id"]] = slot
+		sidebar.add_child(slot)
+		y += SLOT_H + 4
+	
+	# 分隔线
+	_add_sidebar_divider(y)
+	y += 6
+	
+	# ── 💡 激光装置区 ──
+	var laser_header := Label.new()
+	laser_header.text = "💡 激光装置"
+	laser_header.position = Vector2(pad, y)
+	laser_header.add_theme_font_size_override("font_size", 13)
+	laser_header.add_theme_color_override("font_color", Color("#88ccff"))
+	sidebar.add_child(laser_header)
+	y += 20
+	
+	var laser_data := [
+		{"id": "laser_device_1", "name": "激光装置 1", "icon": "💡", "color": Color("#ff4444")},
+		{"id": "laser_device_2", "name": "激光装置 2", "icon": "💡", "color": Color("#44aaff")},
+	]
+	for i in range(2):
+		var slot := _make_inv_slot(Vector2(cx, y), laser_data[i], "laser", true)
+		inv_slots[laser_data[i]["id"]] = slot
+		sidebar.add_child(slot)
+		y += SLOT_H + 4
+
+func _add_sidebar_divider(y: float) -> void:
+	var div := ColorRect.new()
+	div.position = Vector2(8, y)
+	div.size = Vector2(SIDEBAR_W - 16, 1)
+	div.color = Color("#3a3a5a")
+	sidebar.add_child(div)
+
+func _make_inv_slot(pos: Vector2, item_data: Dictionary, category: String, draggable: bool) -> Panel:
+	var slot := Panel.new()
+	slot.position = pos
+	slot.size = Vector2(SLOT_W, SLOT_H)
+	slot.set_meta("item_id", item_data["id"])
+	slot.set_meta("draggable", draggable)
+	slot.set_meta("item_data", item_data)  # 存储完整数据供更新用
+	
+	var ss := StyleBoxFlat.new()
+	ss.bg_color = Color("#181825")
+	ss.set_corner_radius_all(6)
+	ss.border_width_left = 2
+	ss.border_width_right = 2
+	ss.border_width_top = 2
+	ss.border_width_bottom = 2
+	ss.border_color = Color("#2a2a40")
+	slot.add_theme_stylebox_override("panel", ss)
+	
+	# 图标 — 初始显示 "?"，获得后才显示 emoji
+	var icon := Label.new()
+	icon.text = "?"
+	icon.position = Vector2(6, 6)
+	icon.size = Vector2(28, 28)
+	icon.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	icon.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	icon.add_theme_font_size_override("font_size", 16)
+	icon.add_theme_color_override("font_color", Color("#444466"))
+	icon.name = "Icon"
+	slot.add_child(icon)
+	
+	# 名称 — 初始显示 "空"
+	var name_label := Label.new()
+	name_label.text = "空"
+	name_label.position = Vector2(38, 6)
+	name_label.size = Vector2(SLOT_W - 44, SLOT_H - 12)
+	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	name_label.add_theme_font_size_override("font_size", 12)
+	name_label.add_theme_color_override("font_color", Color("#444466"))
+	name_label.name = "Name"
+	name_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	slot.add_child(name_label)
+	
+	# 鼠标事件
+	slot.gui_input.connect(_on_slot_gui_input.bind(slot))
+	slot.mouse_entered.connect(func():
+		var st := slot.get_theme_stylebox("panel") as StyleBoxFlat
+		if st: st.border_color = Color("#8888bb")
+	)
+	slot.mouse_exited.connect(func():
+		var st := slot.get_theme_stylebox("panel") as StyleBoxFlat
+		if st: st.border_color = Color("#3a3a5a")
+	)
+	
+	return slot
+
+func _on_slot_gui_input(event: InputEvent, slot: Panel) -> void:
+	if not event is InputEventMouseButton:
+		return
+	if event.button_index != MOUSE_BUTTON_LEFT:
+		return
+	
+	var item_id: String = slot.get_meta("item_id", "")
+	var draggable: bool = slot.get_meta("draggable", false)
+	
+	if event.pressed:
+		if draggable and _can_drag(item_id):
+			_start_drag(item_id, event)
+		else:
+			_show_item_info(item_id)
+		
+func _can_drag(item_id: String) -> bool:
+	match item_id:
+		"laser_device_1": return laser_owned["laser_device_1"] and not state.get("laser_1_placed", false)
+		"laser_device_2": return laser_owned["laser_device_2"] and not state.get("laser_2_placed", false)
+		_: return false
+
+func _show_item_info(item_id: String) -> void:
+	var info := ""
+	match item_id:
+		"key_1": info = "宴会厅钥匙 — 金色的钥匙"
+		"key_2": info = "游乐园钥匙 — 红色的钥匙"
+		"key_3": info = "迷宫钥匙 — 青色的钥匙"
+		"key_4": info = "天文台钥匙 — 紫色的钥匙"
+		"laser_device_1":
+			if not laser_owned["laser_device_1"]: info = "在找不同密室获得"
+			elif state.get("laser_1_placed", false): info = "已放置在风向标1"
+			else: info = "激光装置1 — 拖放到左侧风向标"
+		"laser_device_2":
+			if not laser_owned["laser_device_2"]: info = "在石台拼图获得"
+			elif state.get("laser_2_placed", false): info = "已放置在风向标2"
+			else: info = "激光装置2 — 拖放到右侧风向标"
+	show_toast(info, 2.0)
+
+func _start_drag(item_id: String, event: InputEventMouseButton) -> void:
+	dragging = true
+	drag_item_id = item_id
+	
+	# 创建拖拽预览（稍大一些便于看清）
+	drag_preview = Panel.new()
+	drag_preview.size = Vector2(52, 52)
+	drag_preview.z_index = 1000
+	
+	var ss := StyleBoxFlat.new()
+	ss.bg_color = Color("#ff8844", 0.85)
+	ss.set_corner_radius_all(8)
+	drag_preview.add_theme_stylebox_override("panel", ss)
+	
+	var icon := Label.new()
+	icon.text = "💡"
+	icon.position = Vector2(0, 0)
+	icon.size = Vector2(52, 52)
+	icon.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	icon.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	icon.add_theme_font_size_override("font_size", 18)
+	drag_preview.add_child(icon)
+	
+	hud.add_child(drag_preview)
+	
+	drag_mouse_offset = event.position + sidebar.position + inv_slots[item_id].position
+	_update_drag_preview(event.global_position)
+
+func _update_drag_preview(screen_pos: Vector2) -> void:
+	if not dragging or not is_instance_valid(drag_preview):
+		return
+	drag_preview.position = screen_pos - drag_preview.size / 2.0
+
+func _end_drag(screen_pos: Vector2) -> void:
+	if not dragging:
+		return
+	dragging = false
+	if is_instance_valid(drag_preview):
+		drag_preview.queue_free()
+		drag_preview = null
+	
+	# 转换屏幕坐标到世界坐标，检测风向标
+	var camera := get_viewport().get_camera_2d()
+	if camera == null:
+		return
+	var vs := get_viewport().get_visible_rect().size
+	var zoom := camera.zoom
+	var center := camera.get_screen_center_position()
+	var world_pos: Vector2 = center + (screen_pos - vs / 2.0) * zoom
+	
+	var vane_idx := world.get_nearest_vane_at(world_pos, 90.0)
+	if vane_idx < 1:
+		drag_item_id = ""
+		return
+	
+	var vane_num := 1 if drag_item_id == "laser_device_1" else 2
+	if vane_idx != vane_num:
+		show_toast("这是%s的风向标，请放到正确的风向标上。" % ("左侧" if vane_idx == 1 else "右侧"), 2.0)
+		drag_item_id = ""
+		return
+	
+	# 放置装置
+	var ok := world.place_laser_device(drag_item_id, vane_idx)
+	if ok:
+		if drag_item_id == "laser_device_1":
+			state["laser_1_placed"] = true
+			state["laser_1_angle"] = 0.0
+		else:
+			state["laser_2_placed"] = true
+			state["laser_2_angle"] = 0.0
+		show_toast("激光装置已放置到风向标%d！用鼠标滚轮旋转角度。" % vane_idx, 3.0)
+		AudioManager.play_sfx("collect")
+		_update_inventory_sidebar()
+		autosave()
+	else:
+		show_toast("该风向标已有装置。", 2.0)
+	
+	drag_item_id = ""
+
+func _update_inventory_sidebar() -> void:
+	if inv_slots.is_empty():
+		return
+	var keys: Array = state.get("collected_keys", [])
+	
+	for item_id in inv_slots:
+		var slot: Panel = inv_slots[item_id] as Panel
+		var st: StyleBoxFlat = slot.get_theme_stylebox("panel") as StyleBoxFlat
+		if st == null:
+			continue
+		var icon_lbl: Label = slot.get_node_or_null("Icon") as Label
+		var name_lbl: Label = slot.get_node_or_null("Name") as Label
+		if icon_lbl == null:
+			continue
+		
+		var idata: Dictionary = slot.get_meta("item_data", {})
+		
+		if item_id.begins_with("key_"):
+			if keys.has(item_id):
+				var kd: Dictionary = GameData.KEYS.get(item_id, {}) as Dictionary
+				var kc: Color = kd.get("color", Color.WHITE) as Color
+				st.bg_color = kc.darkened(0.6)
+				st.border_color = kc.lightened(0.3)
+				icon_lbl.add_theme_color_override("font_color", kc)
+				icon_lbl.text = "🔑"
+				if name_lbl:
+					name_lbl.add_theme_color_override("font_color", kc)
+					name_lbl.text = str(kd.get("name", "钥匙"))
+			else:
+				st.bg_color = Color("#181825")
+				st.border_color = Color("#2a2a40")
+				icon_lbl.add_theme_color_override("font_color", Color("#444466"))
+				icon_lbl.text = "?"
+				if name_lbl:
+					name_lbl.add_theme_color_override("font_color", Color("#444466"))
+					name_lbl.text = "空"
+		elif item_id.begins_with("laser_"):
+			var owned: bool = laser_owned.get(item_id, false)
+			match item_id:
+				"laser_device_1": owned = laser_owned["laser_device_1"]
+				"laser_device_2": owned = laser_owned["laser_device_2"]
+			
+			var placed := false
+			if item_id == "laser_device_1":
+				placed = state.get("laser_1_placed", false)
+			elif item_id == "laser_device_2":
+				placed = state.get("laser_2_placed", false)
+			
+			if placed:
+				st.bg_color = Color("#2a4a2a")
+				st.border_color = Color("#44ff44")
+				icon_lbl.add_theme_color_override("font_color", Color("#44ff44"))
+				icon_lbl.text = "💡"
+				if name_lbl:
+					name_lbl.add_theme_color_override("font_color", Color("#44ff44"))
+					name_lbl.text = "已放置"
+				slot.set_meta("tooltip", "已放置")
+			elif owned:
+				var lc: Color = idata.get("color", Color("#ff6644")) as Color
+				st.bg_color = lc.darkened(0.6)
+				st.border_color = lc
+				icon_lbl.add_theme_color_override("font_color", lc)
+				icon_lbl.text = "💡"
+				if name_lbl:
+					name_lbl.add_theme_color_override("font_color", lc)
+					name_lbl.text = str(idata.get("name", "激光装置"))
+			else:
+				st.bg_color = Color("#181825")
+				st.border_color = Color("#2a2a40")
+				icon_lbl.add_theme_color_override("font_color", Color("#444466"))
+				icon_lbl.text = "?"
+				if name_lbl:
+					name_lbl.add_theme_color_override("font_color", Color("#444466"))
+					name_lbl.text = "空"
 
 func talk_to_npc(npc_node: MindscapeNPC) -> void:
 	var data: Dictionary = {}
@@ -589,47 +953,11 @@ func collect_key(key_id: String) -> void:
 	if keys.size() >= 4:
 		show_toast("✨ 四把钥匙全部集齐！去地下迷宫岔路B开启宝箱！", 5.0)
 	
+	_update_inventory_sidebar()
 	autosave()
 
 func get_collected_keys() -> Array:
 	return state.get("collected_keys", [])
-
-func _update_key_inventory() -> void:
-	if key_slot_bgs.is_empty():
-		return
-	var keys: Array = state.get("collected_keys", [])
-	var key_colors: Dictionary = {}
-	for kdata in GameData.KEYS.values():
-		key_colors[kdata.get("source", "")] = kdata.get("color", Color.WHITE)
-	
-	# 按获得顺序对应的来源颜色
-	var source_order := ["banquet_painting", "amusement_lights", "dark_maze", "npc_password"]
-	
-	for i in range(4):
-		if i < keys.size():
-			var key_id: String = keys[i]
-			var idx := -1
-			for j in range(source_order.size()):
-				if GameData.KEYS.get(source_order[j], {}).get("source", "") == source_order[j] and source_order[j] == _key_to_source(key_id):
-					idx = j
-					break
-			# Fallback: just use index
-			if idx < 0:
-				idx = i % source_order.size()
-			var kc: Color = GameData.KEYS.get(key_id, {}).get("color", Color("#ffd700")) as Color
-			key_slot_bgs[i].color = kc.darkened(0.5)
-			key_slot_icons[i].text = "🔑"
-			key_slot_icons[i].add_theme_color_override("font_color", kc)
-		else:
-			key_slot_bgs[i].color = Color("#1a1a2e")
-			key_slot_icons[i].text = "·"
-			key_slot_icons[i].add_theme_color_override("font_color", Color("#444466"))
-
-func _key_to_source(key_id: String) -> String:
-	for k in GameData.KEYS:
-		if k == key_id:
-			return GameData.KEYS[k].get("source", "")
-	return ""
 
 func try_open_treasure_chest(chest_node: Node) -> void:
 	var keys: Array = state.get("collected_keys", [])
@@ -659,11 +987,17 @@ func on_level_completed(level_id: String, reward_id: String = "") -> void:
 		"key_1", "key_2", "key_3", "key_4":
 			collect_key(reward_id)
 		"laser_device_1":
-			state["laser_1_placed"] = false  # 获得装置，待放入风向标
-			show_toast("获得激光装置1！带到左侧风向标使用。", 3.0)
+			laser_owned["laser_device_1"] = true
+			state["laser_1_placed"] = false
+			state["laser_1_angle"] = 0.0
+			show_toast("获得激光装置1！从左侧物品栏拖放到风向标1。", 3.0)
+			_update_inventory_sidebar()
 		"laser_device_2":
+			laser_owned["laser_device_2"] = true
 			state["laser_2_placed"] = false
-			show_toast("获得激光装置2！带到右侧风向标使用。", 3.0)
+			state["laser_2_angle"] = 0.0
+			show_toast("获得激光装置2！从左侧物品栏拖放到风向标2。", 3.0)
+			_update_inventory_sidebar()
 		"stone_door":
 			show_toast("石门打开了！左侧区域现已可通行。", 3.0)
 		"treasure":
@@ -884,6 +1218,32 @@ func show_album() -> void:
 	album.dialog_text = "还没有照片。" if lines.is_empty() else "\n".join(lines)
 	add_child(album)
 	album.popup_centered(Vector2(520, 420))
+
+func autosave_with_laser_angles() -> void:
+	if not game_running:
+		return
+	state["position"] = player.global_position
+	state["laser_1_angle"] = world.get_laser_angle(1)
+	state["laser_2_angle"] = world.get_laser_angle(2)
+	ProfileManager.save_state(state)
+
+func _restore_laser_state() -> void:
+	# 恢复激光装置拥有状态
+	for level in GameData.LEVELS:
+		if state.get("completed_levels", []).has(level["id"]):
+			var reward: String = str(level.get("reward", ""))
+			if reward == "laser_device_1":
+				laser_owned["laser_device_1"] = true
+			elif reward == "laser_device_2":
+				laser_owned["laser_device_2"] = true
+	
+	# 恢复已放置的激光装置
+	if state.get("laser_1_placed", false):
+		world.place_laser_device("laser_device_1", 1)
+		world.set_laser_angle(1, state.get("laser_1_angle", 0.0))
+	if state.get("laser_2_placed", false):
+		world.place_laser_device("laser_device_2", 2)
+		world.set_laser_angle(2, state.get("laser_2_angle", 0.0))
 
 func autosave() -> void:
 	if not game_running:

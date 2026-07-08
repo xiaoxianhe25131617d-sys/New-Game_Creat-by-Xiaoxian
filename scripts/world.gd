@@ -31,6 +31,19 @@ var _maze_wall_rects: Array[ColorRect] = []
 var _maze_fork_a_zone: Area2D
 var _maze_fork_b_zone: Area2D
 
+# 风向标 + 激光联动
+var _wind_vane_nodes: Array[Node2D] = []
+var _vane_placement_zones: Array[Area2D] = []
+var _placed_lasers: Dictionary = {}  # {1: {node, beam}, 2: {node, beam}}
+var _treasure_marker: Area2D
+var _laser_angles: Dictionary = {1: 0.0, 2: 0.0}
+const LASER_BEAM_LENGTH: float = 2000.0
+const LASER_ANGLE_STEP: float = 0.03  # 滚轮旋转步长(rad)
+const ANGLE_TOLERANCE: float = 0.1    # 角度容差(rad)
+# 正确角度（从风向标指向treasure_pos）
+var _correct_angle_1: float = 0.0
+var _correct_angle_2: float = 0.0
+
 # ════════════════════════════════════════════════════════════
 #  TILEMAP CONSTANTS
 # ════════════════════════════════════════════════════════════
@@ -94,6 +107,7 @@ func build(state: Dictionary) -> void:
 	_make_monsters(state)
 	_make_memory_anchors()
 	_make_underground_maze_entrance()
+	_make_wind_vanes()
 
 # ══════════════════════════════════════════════════════════════
 #  BACKGROUND CANVAS + VIEW TINT
@@ -493,34 +507,29 @@ func _paint_underground_maze_walls() -> void:
 	var GF := T_GRASS_FILL  # 填充色
 	var GA := T_GRASS_FILL_ALT  # 替换色
 
-	# ═══════════════════════════════════════════════════════
-	#  地表 → 地下 长阶梯（从行200走到行269）
-	#  入口在地面 x=290-304，2:1 斜度下行
-	# ═══════════════════════════════════════════════════════
-	var stair_x0 := 292
-	var stair_x := stair_x0
-	var stair_rows := R0 - GROUND_ROW  # 69 行
-	for step in range(stair_rows):
-		var sy := GROUND_ROW + step
-		if step > 0 and step % 2 == 0:
-			stair_x += 1  # 每两步右移一格（2:1 斜度）
-		# 2 tile 宽的台阶
-		_G.set_cell(Vector2i(stair_x, sy), 0, WR)
-		_G.set_cell(Vector2i(stair_x + 1, sy), 0, WR)
+	var sy: int   # 循环行坐标复用
+	var sx: int   # 循环列坐标复用
 
-	# 阶梯两侧墙壁（防止摔下去）
-	_mf_col(_B, GROUND_ROW, R0 - 1, stair_x0 - 2, WR)     # 左墙
-	var stair_end_x := stair_x0 + (stair_rows / 2) + 1
+	# ═══════════════════════════════════════════════════════
+	#  地表 → 地下 长阶梯 — 平滑斜坡碰撞体
+	#  入口在地面 x=288，2:1 斜度下行至行269
+	# ═══════════════════════════════════════════════════════
+	var stair_x0 := 288
+	var stair_rows := R0 - GROUND_ROW  # 69 行
+
+	# ── 挖出宽通道（清除地面平台体 — 7格宽，玩家2.1格）──
+	var carve_sx := stair_x0
 	for step in range(stair_rows):
-		var sy := GROUND_ROW + step
-		var sx: int
-		if step == 0:
-			sx = stair_x0
-		elif step % 2 == 1:
-			sx = stair_x0 + (step / 2)
-		else:
-			sx = stair_x0 + (step / 2)
-		_B.set_cell(Vector2i(sx + 2, sy), 0, WR)  # 右墙紧跟台阶
+		sy = GROUND_ROW + step
+		if step > 0 and step % 2 == 0:
+			carve_sx += 1
+		for dx in range(-2, 7):  # 9格宽：为斜坡+墙壁留空间
+			_G.set_cell(Vector2i(carve_sx + dx, sy), -1)
+
+	# ── 构建平滑斜坡（StaticBody2D + CollisionPolygon2D）──
+	_build_ramp_tunnel(stair_x0, GROUND_ROW, stair_x0 + stair_rows / 2, GROUND_ROW + stair_rows, 5)
+
+	# ── 地下迷宫空间（斜坡底端之后的一切）──
 
 	# ── 底部实心大地基 ──
 	_mf_rect(_G, 265, R0 + 1, 440, BOT, WR)
@@ -531,36 +540,18 @@ func _paint_underground_maze_walls() -> void:
 	_mf_col(_B, R1 - 1, R0, 440, WR)
 	_mf_row(_B, 265, 440, R1 - 1, WR)
 
-	# ── 入口走廊 (x:290-304) — 阶梯从地表到此；墙壁在行269留空让玩家通过 ──
-	for step in range(8):
-		var sy := R0 + 13 - step
-		var sx := 293 + step
-		_G.set_cell(Vector2i(sx, sy), 0, WR)
-		_G.set_cell(Vector2i(sx + 1, sy), 0, WR)
-	for y in range(R1 - 1, R0):
-		_G.set_cell(Vector2i(292, y), -1)
-		_G.set_cell(Vector2i(293, y), -1)
-	_mf_col(_B, R1 - 1, R0 - 1, 290, WR)      # 左墙：不到行269，留空给玩家通过
-	_mf_col(_B, R1 - 1, R0 - 1, 304, WR)      # 右墙：不到行269
-
-	# ── 中央大厅 (x:293-350) — 扩展至阶梯着陆点 ──
-	for x in range(293, 351):
+	# ── 斜坡底端 → 大厅（斜坡平滑落地，直接走进大厅）──
+	var ramp_bot_x: int = stair_x0 + stair_rows / 2  # 斜坡底部 x 坐标
+	# 大厅空间：从斜坡底向右挖空，给玩家行走空间
+	for x in range(ramp_bot_x + 1, 351):
 		for y in range(R1 - 1, R0):
 			_G.set_cell(Vector2i(x, y), -1)
-	_mf_row(_B, 293, 350, R1, WR)
-	# 分界柱 x=345-346
-	_mf_col(_B, R1 + 1, R0 - 4, 345, WR)
-	_mf_col(_B, R1 + 1, R0 - 4, 346, WR)
+	_mf_row(_B, ramp_bot_x + 1, 350, R1, WR)  # 天板
 
 	# ── Fork A: 左转下行 → 钥匙 ──
 	_mf_col(_B, R1, R0, 280, WR)
 	_mf_col(_B, R1, R0, 327, WR)
-	# 下行台阶
-	for step in range(7):
-		var sy := R0 + step
-		var sx := 311 + step
-		_G.set_cell(Vector2i(sx, sy), 0, WR)
-		_G.set_cell(Vector2i(sx + 1, sy), 0, WR)
+	_build_ramp_tunnel(311, R0, 311 + 7, R0 + 7, 3, false)  # 下行斜坡
 	_mf_col(_B, R0 + 1, R2 + 2, 308, WR)
 	_mf_col(_B, R0 + 1, R2 + 2, 322, WR)
 	# 下层区域
@@ -571,21 +562,13 @@ func _paint_underground_maze_walls() -> void:
 	_mf_col(_B, R1, R2, 275, WR)
 	_mf_col(_B, R1, R2, 282, WR)
 	_mf_row(_B, 271, 281, R1, WR)
-	for step in range(3):
-		var sy := R2 + step
-		var sx := 278 + step
-		_G.set_cell(Vector2i(sx, sy), 0, WR)
+	_build_ramp_tunnel(278, R2, 278 + 3, R2 + 3, 3, false)
 	_mf_row(_B, 270, 278, R1 - 2, WR)
 
 	# ── Fork B: 右转上行 → 宝箱 ──
 	_mf_col(_B, R1 + 1, R0, 365, WR)
 	_mf_col(_B, R1 + 1, R0, 400, WR)
-	# 上行台阶
-	for step in range(7):
-		var sy := R0 - step
-		var sx := 370 + step
-		_G.set_cell(Vector2i(sx, sy), 0, WR)
-		_G.set_cell(Vector2i(sx + 1, sy), 0, WR)
+	_build_ramp_tunnel(370, R0, 370 + 7, R0 - 7, 3, false)  # 上行斜坡
 	_mf_col(_B, R1, R0, 368, WR)
 	_mf_col(_B, R1, R0, 382, WR)
 	# 上层区域
@@ -598,16 +581,9 @@ func _paint_underground_maze_walls() -> void:
 	_mf_col(_B, R1 - 2, R1, 428, WR)
 	_mf_row(_B, 425, 438, R1 - 3, WR)
 
-	# ── 大厅到两侧的起步台阶 ──
-	for step in range(4):
-		var sy := R0 - step
-		var sx := 355 + step
-		_G.set_cell(Vector2i(sx, sy), 0, WR)
-		_G.set_cell(Vector2i(sx + 1, sy), 0, WR)
-	for step in range(4):
-		var sy := R0 + step
-		var sx := 335 - step
-		_G.set_cell(Vector2i(sx, sy), 0, WR)
+	# ── 大厅到两侧的起步斜坡 ──
+	_build_ramp_tunnel(355, R0, 359, R0 - 4, 3, false)  # 右→Fork B
+	_build_ramp_tunnel(335, R0, 331, R0 + 4, 3, false)  # 左→Fork A
 
 # ── 迷宫砖墙绘制辅助方法 ──
 func _mf_rect(layer: TileMapLayer, x0: int, y0: int, x1: int, y1: int, tile: Vector2i) -> void:
@@ -622,6 +598,89 @@ func _mf_row(layer: TileMapLayer, x0: int, x1: int, y: int, tile: Vector2i) -> v
 func _mf_col(layer: TileMapLayer, y0: int, y1: int, x: int, tile: Vector2i) -> void:
 	for y in range(y0, y1 + 1):
 		layer.set_cell(Vector2i(x, y), 0, tile)
+
+# ════════════════════════════════════════════════════════════
+#  平滑斜坡碰撞体 — 替代 tile 台阶，玩家可自然行走
+# ════════════════════════════════════════════════════════════
+func _build_ramp_tunnel(x0_t: int, y0_t: int, x1_t: int, y1_t: int, w_t: int, add_walls: bool = true) -> void:
+	var px0: float = x0_t * TILE_SIZE       # 斜坡顶端 X
+	var py0: float = y0_t * TILE_SIZE       # 斜坡顶端 Y
+	var px1: float = x1_t * TILE_SIZE       # 斜坡底端 X
+	var py1: float = y1_t * TILE_SIZE       # 斜坡底端 Y
+	var fw: float = w_t * TILE_SIZE         # 地板宽度(px)
+	var ww: float = 2.0 * TILE_SIZE         # 墙壁厚度(px)
+	var wh: float = 6.0 * TILE_SIZE         # 墙壁超出高度(px)
+	
+	# 地板梯形（保留方向：顶端→底端，支持斜向左/斜向右）
+	var tl: Vector2 = Vector2(px0, py0)           # top-left
+	var tr: Vector2 = Vector2(px0 + fw, py0)      # top-right
+	var br: Vector2 = Vector2(px1 + fw, py1)      # bottom-right
+	var bl: Vector2 = Vector2(px1, py1)           # bottom-left
+	
+	var body := StaticBody2D.new()
+	body.name = "RampTunnel_%d_%d" % [x0_t, y0_t]
+	body.collision_layer = 1
+	body.collision_mask = 0
+	body.z_index = -27
+	
+	var fc := CollisionPolygon2D.new()
+	fc.polygon = PackedVector2Array([tl, tr, br, bl])
+	body.add_child(fc)
+	
+	# ── 可选：左右墙壁（主入口需要）──
+	if add_walls:
+		# 左墙：沿 ram 左侧边 (tl→bl) 向外偏移
+		var lw := CollisionPolygon2D.new()
+		lw.polygon = PackedVector2Array([
+			tl + Vector2(-ww, -wh),
+			tl + Vector2(0, -wh),
+			bl + Vector2(0, wh),
+			bl + Vector2(-ww, wh),
+		])
+		body.add_child(lw)
+		
+		# 右墙：沿 ram 右侧边 (tr→br) 向外偏移
+		var rw := CollisionPolygon2D.new()
+		rw.polygon = PackedVector2Array([
+			tr + Vector2(0, -wh),
+			tr + Vector2(ww, -wh),
+			br + Vector2(ww, wh),
+			br + Vector2(0, wh),
+		])
+		body.add_child(rw)
+	
+	add_child(body)
+	
+	# ── 地板视觉 ──
+	var fv := Polygon2D.new()
+	fv.polygon = PackedVector2Array([tl, tr, br, bl])
+	fv.color = Color("#4a3530") if add_walls else Color("#3a2a22")
+	fv.z_index = -29
+	add_child(fv)
+	
+	# ── 墙壁视觉 ──
+	if add_walls:
+		var lwv := Polygon2D.new()
+		lwv.polygon = PackedVector2Array([
+			tl + Vector2(-ww, -wh),
+			tl + Vector2(0, -wh),
+			bl + Vector2(0, wh),
+			bl + Vector2(-ww, wh),
+		])
+		lwv.color = Color("#2a1f1a")
+		lwv.z_index = -28
+		add_child(lwv)
+		
+		var rwv := Polygon2D.new()
+		rwv.polygon = PackedVector2Array([
+			tr + Vector2(0, -wh),
+			tr + Vector2(ww, -wh),
+			br + Vector2(ww, wh),
+			br + Vector2(0, wh),
+		])
+		rwv.color = Color("#2a1f1a")
+		rwv.z_index = -28
+		add_child(rwv)
 
 func _paint_texture_wall_blocker() -> void:
 	var wall_col := 263
@@ -786,67 +845,65 @@ func _draw_rock(pos: Vector2, color: Color) -> void:
 	add_child(rock)
 
 # ══════════════════════════════════════════════════════════════
-#  地下迷宫入口
+#  地下迷宫入口 — 真正可走的石头台阶
 # ══════════════════════════════════════════════════════════════
 func _make_underground_maze_entrance() -> void:
-	# ── 地面入口标记（灯塔右侧，玩家走台阶下去）──
-	# 大号发光箭头引导
-	var arrow_bg := ColorRect.new()
-	arrow_bg.position = Vector2(4620, GROUND_Y_PX - 42)
-	arrow_bg.size = Vector2(160, 38)
-	arrow_bg.color = Color("#3a2a5a", 0.7)
-	arrow_bg.z_index = 5
-	add_child(arrow_bg)
+	# ── 地面门框（石拱门，立在入口上方的草地上）──
+	# 台阶起点在 tile x=288（像素 4608），门框架在左边
+	var gate_tx := 285          # tile坐标，门框左边
+	var gate_x := gate_tx * TILE_SIZE  # 4560 px
+	var gate_y := GROUND_Y_PX          # 门柱底端贴地
 	
+	# 左门柱
+	var pillar_l := Polygon2D.new()
+	pillar_l.polygon = PackedVector2Array([
+		Vector2(0, 0), Vector2(12, 0), Vector2(12, -48), Vector2(0, -48)
+	])
+	pillar_l.position = Vector2(gate_x, gate_y)
+	pillar_l.color = Color("#4a3a3a")
+	pillar_l.z_index = 6
+	add_child(pillar_l)
+	
+	# 右门柱
+	var pillar_r := Polygon2D.new()
+	pillar_r.polygon = PackedVector2Array([
+		Vector2(0, 0), Vector2(12, 0), Vector2(12, -48), Vector2(0, -48)
+	])
+	pillar_r.position = Vector2(gate_x + 44, gate_y)
+	pillar_r.color = Color("#4a3a3a")
+	pillar_r.z_index = 6
+	add_child(pillar_r)
+	
+	# 门楣（架在两根门柱之上）
+	var lintel := Polygon2D.new()
+	lintel.polygon = PackedVector2Array([
+		Vector2(-4, 0), Vector2(60, 0), Vector2(60, 10), Vector2(-4, 10)
+	])
+	lintel.position = Vector2(gate_x, gate_y - 48)
+	lintel.color = Color("#5a4a4a")
+	lintel.z_index = 6
+	add_child(lintel)
+	
+	# ── 入口标签 ──
 	var entry_tag := Label.new()
-	entry_tag.text = "▼ 地下迷宫入口 ▼"
-	entry_tag.position = Vector2(4610, GROUND_Y_PX - 38)
-	entry_tag.add_theme_font_size_override("font_size", 20)
+	entry_tag.text = "▼ 地下迷宫 ▼"
+	entry_tag.position = Vector2(gate_x - 24, gate_y - 72)
+	entry_tag.add_theme_font_size_override("font_size", 14)
 	entry_tag.add_theme_color_override("font_color", Color("#c0b0ff"))
-	entry_tag.z_index = 6
+	entry_tag.z_index = 7
 	add_child(entry_tag)
 	
-	# 发光脉冲提示
+	# ── 发光脉冲 ──
 	var entry_glow := ColorRect.new()
 	entry_glow.name = "MazeEntryGlow"
-	entry_glow.position = Vector2(4620, GROUND_Y_PX - 46)
-	entry_glow.size = Vector2(160, 46)
+	entry_glow.position = Vector2(gate_x - 6, gate_y - 54)
+	entry_glow.size = Vector2(68, 60)
 	entry_glow.color = Color("#c0b0ff", 0.0)
-	entry_glow.z_index = 4
+	entry_glow.z_index = 2
 	add_child(entry_glow)
-	
-	# 入口脉冲动画
 	var glow_tween := create_tween().set_loops()
-	glow_tween.tween_property(entry_glow, "color", Color("#c0b0ff", 0.25), 0.8)
-	glow_tween.tween_property(entry_glow, "color", Color("#c0b0ff", 0.05), 0.8)
-	
-	# 台阶入口区域 — 同时也是一个 ladder/teleport 让玩家轻松下去
-	var stair := Area2D.new()
-	stair.name = "MazeStairEntrance"
-	stair.position = Vector2(4720, GROUND_Y_PX - 20)
-	var mshape := CollisionShape2D.new()
-	var mrect := RectangleShape2D.new()
-	mrect.size = Vector2(90, 70)
-	mshape.shape = mrect
-	stair.add_child(mshape)
-	var mvis := Polygon2D.new()
-	mvis.polygon = PackedVector2Array([
-		Vector2(-45, -25), Vector2(45, -25), Vector2(45, 25), Vector2(-45, 25)
-	])
-	mvis.color = Color("#3a2a4a", 0.5)
-	var mlabel := Label.new()
-	mlabel.text = "走下去"
-	mlabel.position = Vector2(-22, -10)
-	mlabel.add_theme_font_size_override("font_size", 13)
-	mlabel.add_theme_color_override("font_color", Color("#c0b0ff"))
-	mvis.add_child(mlabel)
-	stair.add_child(mvis)
-	# 改为 teleport 类型，方便玩家快速进入
-	stair.set_meta("kind", "teleport")
-	stair.set_meta("target_x", 295 * TILE_SIZE)   # 台阶底部着陆点x
-	stair.set_meta("target_y", (UG_GROUND_ROW) * TILE_SIZE - 30)  # 迷宫入口层y
-	add_child(stair)
-	interactables.append(stair)
+	glow_tween.tween_property(entry_glow, "color", Color("#c0b0ff", 0.2), 1.0)
+	glow_tween.tween_property(entry_glow, "color", Color("#c0b0ff", 0.03), 1.0)
 
 	# 岔路A终点 — 钥匙触发区（下层左上）
 	_maze_fork_a_zone = Area2D.new()
@@ -1250,6 +1307,304 @@ func _notify_monsters_view_changed(view: String) -> void:
 func _get_player() -> Node2D:
 	for node in get_tree().get_nodes_in_group("player"): return node
 	return null
+
+# ══════════════════════════════════════════════════════════════
+#  风向标 + 激光联动系统
+# ══════════════════════════════════════════════════════════════
+
+func _make_wind_vanes() -> void:
+	var data: Dictionary = GameData.LASER_SYSTEM
+	var vane1_pos: Vector2 = data["wind_vane_1"]["pos"] as Vector2
+	var vane2_pos: Vector2 = data["wind_vane_2"]["pos"] as Vector2
+	var treasure: Vector2 = data["treasure_pos"] as Vector2
+	
+	# 计算正确角度
+	_correct_angle_1 = (treasure - vane1_pos).angle()
+	_correct_angle_2 = (treasure - vane2_pos).angle()
+	
+	_make_single_vane(vane1_pos, 1, _correct_angle_1)
+	_make_single_vane(vane2_pos, 2, _correct_angle_2)
+	_make_treasure_spot(treasure)
+
+func _make_single_vane(pos: Vector2, vane_idx: int, hint_angle: float) -> void:
+	var vane := Node2D.new()
+	vane.name = "WindVane_%d" % vane_idx
+	vane.position = pos
+	vane.z_index = 10
+	add_child(vane)
+	_wind_vane_nodes.append(vane)
+	
+	# 基座
+	var base := Polygon2D.new()
+	base.polygon = PackedVector2Array([
+		Vector2(-16, -4), Vector2(16, -4), Vector2(12, 8), Vector2(-12, 8)
+	])
+	base.color = Color("#6a5a4a")
+	vane.add_child(base)
+	
+	# 柱子
+	var pole := ColorRect.new()
+	pole.position = Vector2(-3, -64)
+	pole.size = Vector2(6, 60)
+	pole.color = Color("#8a7a6a")
+	vane.add_child(pole)
+	
+	# 风向标头部（箭头，指向hint_angle方向）
+	var arrow := Polygon2D.new()
+	var arr_len: float = 30.0
+	var arr_w: float = 8.0
+	arrow.polygon = PackedVector2Array([
+		Vector2(0, 0),
+		Vector2(-arr_len * 0.6, -arr_w),
+		Vector2(-arr_len * 0.6, -arr_w * 0.3),
+		Vector2(-arr_len, -arr_w * 0.3),
+		Vector2(-arr_len, arr_w * 0.3),
+		Vector2(-arr_len * 0.6, arr_w * 0.3),
+		Vector2(-arr_len * 0.6, arr_w),
+	])
+	arrow.position = Vector2(0, -68)
+	arrow.rotation = hint_angle  # 指向treasure的初始方向
+	arrow.color = Color("#ff6644")
+	arrow.name = "Arrow"
+	vane.add_child(arrow)
+	
+	# 标签
+	var label := Label.new()
+	label.text = "风向标%d" % vane_idx
+	label.position = Vector2(-30, -96)
+	label.add_theme_font_size_override("font_size", 14)
+	label.add_theme_color_override("font_color", Color("#ffe8a0"))
+	vane.add_child(label)
+	
+	# 放置区域（更大的碰撞区，用于拖放检测）
+	var zone := Area2D.new()
+	zone.name = "VanePlacement_%d" % vane_idx
+	zone.position = pos
+	var zshape := CollisionShape2D.new()
+	var zcircle := CircleShape2D.new()
+	zcircle.radius = 70.0
+	zshape.shape = zcircle
+	zone.add_child(zshape)
+	zone.set_meta("kind", "wind_vane_placement")
+	zone.set_meta("vane_idx", vane_idx)
+	add_child(zone)
+	_vane_placement_zones.append(zone)
+	
+	# 高亮环（呼吸效果，仅当装置已获得但未放置时可见）
+	var glow := Polygon2D.new()
+	glow.name = "GlowRing"
+	var gp := PackedVector2Array()
+	for i in range(24):
+		var a := TAU * i / 24.0
+		gp.append(Vector2(cos(a) * 50, sin(a) * 50))
+	glow.polygon = gp
+	glow.color = Color("#ff6644", 0.0)
+	zone.add_child(glow)
+
+func _make_treasure_spot(pos: Vector2) -> void:
+	_treasure_marker = Area2D.new()
+	_treasure_marker.name = "TreasureSpot"
+	_treasure_marker.position = pos
+	var tshape := CollisionShape2D.new()
+	var tcircle := CircleShape2D.new()
+	tcircle.radius = 40.0
+	tshape.shape = tcircle
+	_treasure_marker.add_child(tshape)
+	
+	# 宝箱标记（初始不可见）
+	var mark := Label.new()
+	mark.name = "TreasureLabel"
+	mark.text = "✨ 宝藏 ✨"
+	mark.position = Vector2(-40, -12)
+	mark.add_theme_font_size_override("font_size", 20)
+	mark.add_theme_color_override("font_color", Color("#ffd700", 0.0))
+	mark.modulate.a = 0.0
+	_treasure_marker.add_child(mark)
+	_treasure_marker.set_meta("kind", "treasure_spot")
+	add_child(_treasure_marker)
+	interactables.append(_treasure_marker)
+
+# ── 放置激光装置（由main.gd拖放调用）──
+func place_laser_device(device_id: String, vane_idx: int) -> bool:
+	var data: Dictionary = GameData.LASER_SYSTEM
+	var vane_key := "wind_vane_%d" % vane_idx
+	if not data.has(vane_key):
+		return false
+	var vane_pos: Vector2 = data[vane_key]["pos"] as Vector2
+	
+	if _placed_lasers.has(vane_idx):
+		return false  # 已经有装置了
+	
+	# 创建激光装置节点（世界空间）
+	var device := Node2D.new()
+	device.name = device_id
+	device.position = vane_pos + Vector2(0, -80)
+	device.z_index = 20
+	
+	var body := Polygon2D.new()
+	# 菱形装置
+	var sz := 12.0
+	body.polygon = PackedVector2Array([
+		Vector2(0, -sz), Vector2(sz, 0), Vector2(0, sz), Vector2(-sz, 0)
+	])
+	var dev_color := Color("#ff4444") if vane_idx == 1 else Color("#44aaff")
+	body.color = dev_color
+	device.add_child(body)
+	
+	var dev_label := Label.new()
+	dev_label.text = "装置%d" % vane_idx
+	dev_label.position = Vector2(-18, -24)
+	dev_label.add_theme_font_size_override("font_size", 11)
+	dev_label.add_theme_color_override("font_color", dev_color.lightened(0.3))
+	device.add_child(dev_label)
+	
+	# 激光束（初始水平）
+	var beam := Line2D.new()
+	beam.name = "LaserBeam"
+	beam.width = 4.0
+	beam.default_color = Color(dev_color.r, dev_color.g, dev_color.b, 0.7)
+	beam.z_index = 15
+	beam.add_point(Vector2.ZERO)
+	beam.add_point(Vector2.ZERO)
+	device.add_child(beam)
+	
+	add_child(device)
+	_placed_lasers[vane_idx] = {"node": device, "beam": beam}
+	_laser_angles[vane_idx] = 0.0
+	
+	# 更新风向标发光
+	_update_vane_glow(vane_idx)
+	_update_laser_beam(vane_idx)
+	
+	return true
+
+func _update_laser_beam(vane_idx: int) -> void:
+	if not _placed_lasers.has(vane_idx):
+		return
+	var beam: Line2D = _placed_lasers[vane_idx]["beam"]
+	var angle: float = _laser_angles.get(vane_idx, 0.0)
+	var end := Vector2(cos(angle), sin(angle)) * LASER_BEAM_LENGTH
+	beam.set_point_position(0, Vector2.ZERO)
+	beam.set_point_position(1, end)
+
+# ── 旋转激光装置 ──
+func rotate_placed_laser(vane_idx: int, delta_angle: float) -> void:
+	if not _placed_lasers.has(vane_idx):
+		return
+	_laser_angles[vane_idx] += delta_angle
+	_update_laser_beam(vane_idx)
+	_check_treasure_alignment()
+
+# ── 设置激光角度（由拖放等直接设定）──
+func set_laser_angle(vane_idx: int, angle: float) -> void:
+	if not _placed_lasers.has(vane_idx):
+		return
+	_laser_angles[vane_idx] = angle
+	_update_laser_beam(vane_idx)
+	_check_treasure_alignment()
+
+func get_laser_angle(vane_idx: int) -> float:
+	return _laser_angles.get(vane_idx, 0.0)
+
+func is_laser_placed(vane_idx: int) -> bool:
+	return _placed_lasers.has(vane_idx)
+
+# ── 检查双激光是否对齐 ──
+func _check_treasure_alignment() -> void:
+	if not _placed_lasers.has(1) or not _placed_lasers.has(2):
+		return
+	
+	var vane1_pos: Vector2 = GameData.LASER_SYSTEM["wind_vane_1"]["pos"] as Vector2
+	var vane2_pos: Vector2 = GameData.LASER_SYSTEM["wind_vane_2"]["pos"] as Vector2
+	var treasure: Vector2 = GameData.LASER_SYSTEM["treasure_pos"] as Vector2
+	
+	# 检查每条光束是否穿过 treasure_pos 附近
+	var a1: float = _laser_angles[1]
+	var a2: float = _laser_angles[2]
+	
+	# 光束1: vane1_pos + t*(cos(a1), sin(a1)) 是否经过treasure
+	var hit1 := _point_on_ray(vane1_pos, a1, treasure, 80.0)
+	var hit2 := _point_on_ray(vane2_pos, a2, treasure, 80.0)
+	
+	var mark: Label = _treasure_marker.get_node_or_null("TreasureLabel") as Label
+	if mark == null:
+		return
+	
+	if hit1 and hit2:
+		mark.modulate.a = 1.0
+		mark.add_theme_color_override("font_color", Color("#ffd700", 1.0))
+		if not _treasure_marker.has_meta("solved"):
+			_treasure_marker.set_meta("solved", true)
+			hint_updated.emit("✨ 两束激光在宝藏位置交汇！去那里看看吧！")
+	else:
+		# 距离越近，标记越亮
+		var d1 := _ray_point_dist(vane1_pos, a1, treasure)
+		var d2 := _ray_point_dist(vane2_pos, a2, treasure)
+		var max_d := maxf(d1, d2)
+		var alpha := clampf(1.0 - max_d / 300.0, 0.0, 0.4)
+		mark.modulate.a = alpha
+		mark.add_theme_color_override("font_color", Color("#ffd700", alpha * 0.6))
+
+func _point_on_ray(origin: Vector2, angle: float, point: Vector2, tolerance: float) -> bool:
+	return _ray_point_dist(origin, angle, point) < tolerance
+
+func _ray_point_dist(origin: Vector2, angle: float, point: Vector2) -> float:
+	var dir := Vector2(cos(angle), sin(angle))
+	var to_point := point - origin
+	var proj := to_point.dot(dir)
+	if proj < 0:
+		return 1e9  # point behind ray
+	var closest := origin + dir * proj
+	return closest.distance_to(point)
+
+# ── 更新风向标发光 ──
+func _update_vane_glow(vane_idx: int) -> void:
+	if vane_idx < 1 or vane_idx > _vane_placement_zones.size():
+		return
+	var zone := _vane_placement_zones[vane_idx - 1]
+	var glow: Polygon2D = zone.get_node_or_null("GlowRing") as Polygon2D
+	if glow == null:
+		return
+	if _placed_lasers.has(vane_idx):
+		# 已放置 → 绿色呼吸
+		var t := create_tween().set_loops()
+		t.tween_property(glow, "color", Color("#44ff44", 0.3), 1.0)
+		t.tween_property(glow, "color", Color("#44ff44", 0.08), 1.0)
+	else:
+		# 未放置 → 橙色呼吸
+		var t := create_tween().set_loops()
+		t.tween_property(glow, "color", Color("#ff6644", 0.35), 1.0)
+		t.tween_property(glow, "color", Color("#ff6644", 0.05), 1.0)
+
+# 设置装置可放置状态（由main根据是否有装置决定是否高亮）
+func set_vane_highlight(vane_idx: int, active: bool) -> void:
+	if vane_idx < 1 or vane_idx > _vane_placement_zones.size():
+		return
+	var zone := _vane_placement_zones[vane_idx - 1]
+	var glow: Polygon2D = zone.get_node_or_null("GlowRing") as Polygon2D
+	if glow == null:
+		return
+	if active:
+		_update_vane_glow(vane_idx)
+	else:
+		glow.color = Color("#ff6644", 0.0)
+
+# ── 获取风向标放置区域的世界位置 ──
+func get_vane_placement_pos(vane_idx: int) -> Vector2:
+	var data: Dictionary = GameData.LASER_SYSTEM
+	var key := "wind_vane_%d" % vane_idx
+	if data.has(key):
+		return data[key]["pos"] as Vector2
+	return Vector2.ZERO
+
+# ── 检测世界坐标是否在风向标放置区域内 ──
+func get_nearest_vane_at(pos: Vector2, max_dist: float = 90.0) -> int:
+	for i in range(_vane_placement_zones.size()):
+		var zone := _vane_placement_zones[i]
+		var dist := pos.distance_to(zone.position)
+		if dist <= max_dist:
+			return i + 1  # vane index (1-based)
+	return -1
 
 func update_treasure_key_count(collected_keys: Array) -> void:
 	pass

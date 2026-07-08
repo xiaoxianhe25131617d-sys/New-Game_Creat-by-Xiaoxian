@@ -266,7 +266,9 @@ static func default_state() -> Dictionary:
 		"lights_solved": false,
 		"npc_subtexts_read": [],
 		"maze_path_chosen": "",
-		"laser_1_placed": false,
-		"laser_2_placed": false,
-		"treasure_unlocked": false,
+	"laser_1_placed": false,
+	"laser_2_placed": false,
+	"laser_1_angle": 0.0,
+	"laser_2_angle": 0.0,
+	"treasure_unlocked": false,
 	}

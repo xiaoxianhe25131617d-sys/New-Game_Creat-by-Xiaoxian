@@ -420,6 +420,8 @@ func _input(event: InputEvent) -> void:
 		return
 
 	# 数字键 1-9 保留
+	if not (event is InputEventKey):
+		return
 	var kn := -1
 	if event.keycode >= KEY_0 and event.keycode <= KEY_9:
 		kn = event.keycode - KEY_0
