@@ -28,7 +28,7 @@ var adhd_speed_mult: float = 1.0   # ADHD速度倍率
 # 视角跳跃倍率
 const VIEW_JUMP_MULT: Dictionary = {
 	"normal": 1.0,
-	"blind": 0.7,      # 盲人模式跳得更低(害怕未知)
+	"blind": 1.0,      # 盲人模式与普通一致，确保可达所有平台
 	"adhd": 1.4,        # ADHD跳得最高
 	"autism": 1.0,
 	"depression": 0.6,  # 抑郁模式跳得最低(沉重)

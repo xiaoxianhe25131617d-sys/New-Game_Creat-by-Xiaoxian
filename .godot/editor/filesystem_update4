@@ -12,3 +12,4 @@ res://scripts/puzzle_nine_grid.gd
 res://scripts/dialogue_box.gd
 res://scripts/monster.gd
 res://scripts/player.gd
+res://scripts/npc.gd

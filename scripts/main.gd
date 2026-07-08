@@ -19,6 +19,9 @@ var monster_hint_cooldown: float = 0.0
 var login_name_input: LineEdit
 var damage_overlay: ColorRect  # red flash on monster hit
 var damage_tween: Tween  # for damage overlay animation
+var key_inventory_panel: Panel  # 钥匙物品栏面板
+var key_slot_bgs: Array[ColorRect] = []  # 4个钥匙槽背景
+var key_slot_icons: Array[Label] = []  # 4个钥匙槽图标
 
 func _ready() -> void:
 	show_login_screen()
@@ -84,10 +87,11 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event.is_action_pressed("view_wheel"):
 		open_view_wheel()
 		get_viewport().set_input_as_handled()
-	elif event.is_action_pressed("quick_blind"):
-		try_switch_view("blind")
-	elif event.is_action_pressed("quick_depression"):
-		try_switch_view("depression")
+	# 快速切换视角已禁用 — 只能通过记忆长椅切换
+	# elif event.is_action_pressed("quick_blind"):
+	# 	try_switch_view("blind")
+	# elif event.is_action_pressed("quick_depression"):
+	# 	try_switch_view("depression")
 
 func show_login_screen() -> void:
 	clear_scene()
@@ -368,6 +372,35 @@ func _make_hud() -> void:
 	damage_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	damage_overlay.color = Color(1.0, 0.0, 0.0, 0.0)
 	hud.add_child(damage_overlay)
+	
+	# ── 钥匙物品栏 ──
+	key_inventory_panel = Panel.new()
+	key_inventory_panel.position = Vector2(1050, 14)
+	key_inventory_panel.size = Vector2(210, 50)
+	hud.add_child(key_inventory_panel)
+	
+	var key_label := Label.new()
+	key_label.text = "钥匙"
+	key_label.position = Vector2(8, 4)
+	key_label.add_theme_font_size_override("font_size", 13)
+	key_label.add_theme_color_override("font_color", Color("#ffd700"))
+	key_inventory_panel.add_child(key_label)
+	
+	for i in range(4):
+		var slot := ColorRect.new()
+		slot.position = Vector2(10 + i * 48, 22)
+		slot.size = Vector2(38, 22)
+		slot.color = Color("#1a1a2e")
+		key_inventory_panel.add_child(slot)
+		key_slot_bgs.append(slot)
+		# 钥匙图标
+		var icon := Label.new()
+		icon.text = "·"
+		icon.position = Vector2(10 + i * 48 + 14, 23)
+		icon.add_theme_font_size_override("font_size", 14)
+		icon.add_theme_color_override("font_color", Color("#444466"))
+		key_inventory_panel.add_child(icon)
+		key_slot_icons.append(icon)
 
 func _update_hud() -> void:
 	var view: String = str(state.get("current_view", "normal"))
@@ -399,6 +432,9 @@ func _update_hud() -> void:
 	if v == "blind":
 		parts.append("[F] 声波探测 — 按下释放回音感知怪物和地形")
 	prompt_label.text = "  ".join(parts)
+	
+	# 更新钥匙物品栏
+	_update_key_inventory()
 
 func _get_objective() -> String:
 	var completed: Array = state.get("completed_levels", [])
@@ -557,6 +593,43 @@ func collect_key(key_id: String) -> void:
 
 func get_collected_keys() -> Array:
 	return state.get("collected_keys", [])
+
+func _update_key_inventory() -> void:
+	if key_slot_bgs.is_empty():
+		return
+	var keys: Array = state.get("collected_keys", [])
+	var key_colors: Dictionary = {}
+	for kdata in GameData.KEYS.values():
+		key_colors[kdata.get("source", "")] = kdata.get("color", Color.WHITE)
+	
+	# 按获得顺序对应的来源颜色
+	var source_order := ["banquet_painting", "amusement_lights", "dark_maze", "npc_password"]
+	
+	for i in range(4):
+		if i < keys.size():
+			var key_id: String = keys[i]
+			var idx := -1
+			for j in range(source_order.size()):
+				if GameData.KEYS.get(source_order[j], {}).get("source", "") == source_order[j] and source_order[j] == _key_to_source(key_id):
+					idx = j
+					break
+			# Fallback: just use index
+			if idx < 0:
+				idx = i % source_order.size()
+			var kc: Color = GameData.KEYS.get(key_id, {}).get("color", Color("#ffd700")) as Color
+			key_slot_bgs[i].color = kc.darkened(0.5)
+			key_slot_icons[i].text = "🔑"
+			key_slot_icons[i].add_theme_color_override("font_color", kc)
+		else:
+			key_slot_bgs[i].color = Color("#1a1a2e")
+			key_slot_icons[i].text = "·"
+			key_slot_icons[i].add_theme_color_override("font_color", Color("#444466"))
+
+func _key_to_source(key_id: String) -> String:
+	for k in GameData.KEYS:
+		if k == key_id:
+			return GameData.KEYS[k].get("source", "")
+	return ""
 
 func try_open_treasure_chest(chest_node: Node) -> void:
 	var keys: Array = state.get("collected_keys", [])

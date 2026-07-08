@@ -493,6 +493,35 @@ func _paint_underground_maze_walls() -> void:
 	var GF := T_GRASS_FILL  # 填充色
 	var GA := T_GRASS_FILL_ALT  # 替换色
 
+	# ═══════════════════════════════════════════════════════
+	#  地表 → 地下 长阶梯（从行200走到行269）
+	#  入口在地面 x=290-304，2:1 斜度下行
+	# ═══════════════════════════════════════════════════════
+	var stair_x0 := 292
+	var stair_x := stair_x0
+	var stair_rows := R0 - GROUND_ROW  # 69 行
+	for step in range(stair_rows):
+		var sy := GROUND_ROW + step
+		if step > 0 and step % 2 == 0:
+			stair_x += 1  # 每两步右移一格（2:1 斜度）
+		# 2 tile 宽的台阶
+		_G.set_cell(Vector2i(stair_x, sy), 0, WR)
+		_G.set_cell(Vector2i(stair_x + 1, sy), 0, WR)
+
+	# 阶梯两侧墙壁（防止摔下去）
+	_mf_col(_B, GROUND_ROW, R0 - 1, stair_x0 - 2, WR)     # 左墙
+	var stair_end_x := stair_x0 + (stair_rows / 2) + 1
+	for step in range(stair_rows):
+		var sy := GROUND_ROW + step
+		var sx: int
+		if step == 0:
+			sx = stair_x0
+		elif step % 2 == 1:
+			sx = stair_x0 + (step / 2)
+		else:
+			sx = stair_x0 + (step / 2)
+		_B.set_cell(Vector2i(sx + 2, sy), 0, WR)  # 右墙紧跟台阶
+
 	# ── 底部实心大地基 ──
 	_mf_rect(_G, 265, R0 + 1, 440, BOT, WR)
 	_mf_rect(_G, 265, R0, 440, R0, GA)
@@ -502,7 +531,7 @@ func _paint_underground_maze_walls() -> void:
 	_mf_col(_B, R1 - 1, R0, 440, WR)
 	_mf_row(_B, 265, 440, R1 - 1, WR)
 
-	# ── 入口斜坡 (x:290-304) ──
+	# ── 入口走廊 (x:290-304) — 阶梯从地表到此；墙壁在行269留空让玩家通过 ──
 	for step in range(8):
 		var sy := R0 + 13 - step
 		var sx := 293 + step
@@ -511,14 +540,14 @@ func _paint_underground_maze_walls() -> void:
 	for y in range(R1 - 1, R0):
 		_G.set_cell(Vector2i(292, y), -1)
 		_G.set_cell(Vector2i(293, y), -1)
-	_mf_col(_B, R1 - 1, R0 + 13, 290, WR)
-	_mf_col(_B, R1 - 1, R0 + 13, 304, WR)
+	_mf_col(_B, R1 - 1, R0 - 1, 290, WR)      # 左墙：不到行269，留空给玩家通过
+	_mf_col(_B, R1 - 1, R0 - 1, 304, WR)      # 右墙：不到行269
 
-	# ── 中央大厅 (x:305-350) ──
-	for x in range(305, 351):
+	# ── 中央大厅 (x:293-350) — 扩展至阶梯着陆点 ──
+	for x in range(293, 351):
 		for y in range(R1 - 1, R0):
 			_G.set_cell(Vector2i(x, y), -1)
-	_mf_row(_B, 305, 350, R1, WR)
+	_mf_row(_B, 293, 350, R1, WR)
 	# 分界柱 x=345-346
 	_mf_col(_B, R1 + 1, R0 - 4, 345, WR)
 	_mf_col(_B, R1 + 1, R0 - 4, 346, WR)
@@ -761,37 +790,63 @@ func _draw_rock(pos: Vector2, color: Color) -> void:
 # ══════════════════════════════════════════════════════════════
 func _make_underground_maze_entrance() -> void:
 	# ── 地面入口标记（灯塔右侧，玩家走台阶下去）──
+	# 大号发光箭头引导
+	var arrow_bg := ColorRect.new()
+	arrow_bg.position = Vector2(4620, GROUND_Y_PX - 42)
+	arrow_bg.size = Vector2(160, 38)
+	arrow_bg.color = Color("#3a2a5a", 0.7)
+	arrow_bg.z_index = 5
+	add_child(arrow_bg)
+	
 	var entry_tag := Label.new()
-	entry_tag.text = "↓ 地下迷宫入口 ↓"
-	entry_tag.position = Vector2(4670, GROUND_Y_PX - 70)
-	entry_tag.add_theme_font_size_override("font_size", 14)
+	entry_tag.text = "▼ 地下迷宫入口 ▼"
+	entry_tag.position = Vector2(4610, GROUND_Y_PX - 38)
+	entry_tag.add_theme_font_size_override("font_size", 20)
 	entry_tag.add_theme_color_override("font_color", Color("#c0b0ff"))
-	entry_tag.z_index = 10
+	entry_tag.z_index = 6
 	add_child(entry_tag)
 	
-	# 台阶入口区域（不是传送点，而是可视化标记）
+	# 发光脉冲提示
+	var entry_glow := ColorRect.new()
+	entry_glow.name = "MazeEntryGlow"
+	entry_glow.position = Vector2(4620, GROUND_Y_PX - 46)
+	entry_glow.size = Vector2(160, 46)
+	entry_glow.color = Color("#c0b0ff", 0.0)
+	entry_glow.z_index = 4
+	add_child(entry_glow)
+	
+	# 入口脉冲动画
+	var glow_tween := create_tween().set_loops()
+	glow_tween.tween_property(entry_glow, "color", Color("#c0b0ff", 0.25), 0.8)
+	glow_tween.tween_property(entry_glow, "color", Color("#c0b0ff", 0.05), 0.8)
+	
+	# 台阶入口区域 — 同时也是一个 ladder/teleport 让玩家轻松下去
 	var stair := Area2D.new()
 	stair.name = "MazeStairEntrance"
 	stair.position = Vector2(4720, GROUND_Y_PX - 20)
 	var mshape := CollisionShape2D.new()
 	var mrect := RectangleShape2D.new()
-	mrect.size = Vector2(80, 60)
+	mrect.size = Vector2(90, 70)
 	mshape.shape = mrect
 	stair.add_child(mshape)
 	var mvis := Polygon2D.new()
 	mvis.polygon = PackedVector2Array([
-		Vector2(-40, -20), Vector2(40, -20), Vector2(40, 20), Vector2(-40, 20)
+		Vector2(-45, -25), Vector2(45, -25), Vector2(45, 25), Vector2(-45, 25)
 	])
-	mvis.color = Color("#3a2a4a")
+	mvis.color = Color("#3a2a4a", 0.5)
 	var mlabel := Label.new()
 	mlabel.text = "走下去"
-	mlabel.position = Vector2(-18, -8)
-	mlabel.add_theme_font_size_override("font_size", 10)
+	mlabel.position = Vector2(-22, -10)
+	mlabel.add_theme_font_size_override("font_size", 13)
 	mlabel.add_theme_color_override("font_color", Color("#c0b0ff"))
 	mvis.add_child(mlabel)
 	stair.add_child(mvis)
-	stair.set_meta("kind", "zone_indicator")
+	# 改为 teleport 类型，方便玩家快速进入
+	stair.set_meta("kind", "teleport")
+	stair.set_meta("target_x", 295 * TILE_SIZE)   # 台阶底部着陆点x
+	stair.set_meta("target_y", (UG_GROUND_ROW) * TILE_SIZE - 30)  # 迷宫入口层y
 	add_child(stair)
+	interactables.append(stair)
 
 	# 岔路A终点 — 钥匙触发区（下层左上）
 	_maze_fork_a_zone = Area2D.new()
@@ -889,11 +944,52 @@ func _add_zone_marker(pos: Vector2, text: String, color: Color) -> void:
 #  NPCs / PUZZLES / COLLECTIBLES
 # ══════════════════════════════════════════════════════════════
 func _make_npcs() -> void:
+	var spawned: Array[Node2D] = []
 	for data in GameData.NPCS:
 		var npc := MindscapeNPC.new()
 		npc.setup(data)
 		add_child(npc)
 		interactables.append(npc)
+		spawned.append(npc)
+	# 反堆叠：推开重叠的NPC
+	_separate_npcs(spawned)
+	# 把NPC从谜题位置推开
+	_push_npcs_away_from_puzzles(spawned)
+
+func _push_npcs_away_from_puzzles(npcs: Array[Node2D]) -> void:
+	# 收集所有谜题位置
+	var puzzle_positions: Array[Vector2] = []
+	for level in GameData.LEVELS:
+		puzzle_positions.append(level["pos"] as Vector2)
+	
+	const MIN_PUZZLE_GAP: float = 200.0
+	for npc in npcs:
+		var np: Vector2 = npc.position
+		for pp in puzzle_positions:
+			var dist := np.distance_to(pp)
+			if dist < MIN_PUZZLE_GAP and dist > 0.01:
+				var push_dir := (np - pp).normalized()
+				var push_dist := MIN_PUZZLE_GAP - dist + 40
+				npc.position += push_dir * push_dist
+				npc.spawn_pos = npc.position  # 更新spawn_pos
+
+func _separate_npcs(npcs: Array[Node2D]) -> void:
+	const MIN_GAP: float = 130.0  # NPC间距 (碰撞半径48*2=96 + 余量)
+	for iteration in range(8):
+		var moved := false
+		for i in range(npcs.size()):
+			for j in range(i + 1, npcs.size()):
+				var a := npcs[i].position
+				var b := npcs[j].position
+				var diff := b - a
+				var dist := diff.length()
+				if dist < MIN_GAP and dist > 0.01:
+					var push := diff.normalized() * (MIN_GAP - dist) * 0.5
+					npcs[i].position -= push
+					npcs[j].position += push
+					moved = true
+		if not moved:
+			break
 
 func _make_puzzles(state: Dictionary) -> void:
 	for level_data in GameData.LEVELS:

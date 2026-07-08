@@ -149,11 +149,11 @@ const NPCS: Array = [
 	{"id": "clown",         "name": "小丑",      "region": "park", "pos": Vector2(7500, 3176),  "portrait": "#ff7d7d"},
 	{"id": "mechanic",      "name": "修理工",    "region": "park", "pos": Vector2(7900, 3176),  "portrait": "#d9be6a"},
 	{"id": "ticket",        "name": "售票员",    "region": "park", "pos": Vector2(8300, 3176),  "portrait": "#78d0b8"},
-	{"id": "npc_cipher_1",  "name": "守卫A",     "region": "observatory", "pos": Vector2(9300, 3176), "portrait": "#94adc6"},
-	{"id": "npc_cipher_2",  "name": "学者B",     "region": "observatory", "pos": Vector2(9600, 3176), "portrait": "#80b2d4"},
-	{"id": "npc_cipher_3",  "name": "工匠C",     "region": "observatory", "pos": Vector2(9900, 3176), "portrait": "#abb0b8"},
-	{"id": "npc_cipher_4",  "name": "旅者D",     "region": "observatory", "pos": Vector2(10200, 3176), "portrait": "#b98b62"},
-	{"id": "npc_cipher_5",  "name": "智者E",     "region": "observatory", "pos": Vector2(10500, 3176), "portrait": "#cba0ff"},
+	{"id": "npc_cipher_1",  "name": "守卫A",     "region": "observatory", "pos": Vector2(9000, 3176), "portrait": "#94adc6"},
+	{"id": "npc_cipher_2",  "name": "学者B",     "region": "observatory", "pos": Vector2(9250, 3176), "portrait": "#80b2d4"},
+	{"id": "npc_cipher_3",  "name": "工匠C",     "region": "observatory", "pos": Vector2(9500, 3176), "portrait": "#abb0b8"},
+	{"id": "npc_cipher_4",  "name": "旅者D",     "region": "observatory", "pos": Vector2(10100, 3176), "portrait": "#b98b62"},
+	{"id": "npc_cipher_5",  "name": "智者E",     "region": "observatory", "pos": Vector2(10350, 3176), "portrait": "#cba0ff"},
 	{"id": "cave_hermit",   "name": "洞穴隐士",  "region": "underground", "pos": Vector2(5100, 4256), "portrait": "#a3ccff"},
 ]
 

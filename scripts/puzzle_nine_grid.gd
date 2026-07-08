@@ -2,9 +2,8 @@ extends Area2D
 class_name PuzzleNineGrid
 # ════════════════════════════════════════════════════════════
 #  石台拼图 (3x3 Sliding Puzzle)
-#  方向键滑动方块到空位
-#  抑郁模式：直接显示正确答案覆盖
-#  保证可解性：随机移动从正确状态出发
+#  鼠标点击方块 → 滑入空位
+#  抑郁模式：全屏大号密码间隔性弹出供记忆
 # ════════════════════════════════════════════════════════════
 
 signal puzzle_completed(reward_id: String)
@@ -32,7 +31,13 @@ const CELL_SIZE := 36
 var grid_container: Node2D
 var tile_nodes: Array = []
 var hint_label: Label
-var answer_overlay: Control
+var fullscreen_overlay: CanvasLayer  # 抑郁模式全屏密码
+var depression_timer: float = 0.0  # 抑郁模式间隔计时
+
+# ── 抑郁模式全屏间隔参数 ──
+const DEPRESSION_SHOW_DURATION: float = 5.0   # 展示 5 秒
+const DEPRESSION_HIDE_DURATION: float = 10.0  # 隐藏 10 秒
+var depression_fullscreen_visible: bool = false
 
 func _ready() -> void:
 	body_entered.connect(_on_body_entered)
@@ -46,6 +51,7 @@ func _ready() -> void:
 	_solvable_shuffle()
 	_make_grid()
 	_make_hint()
+	_make_fullscreen_overlay()
 
 # 保证可解性：从正确状态开始随机移动N次
 func _solvable_shuffle() -> void:
@@ -55,7 +61,6 @@ func _solvable_shuffle() -> void:
 	for _i in range(100):
 		var neighbors = _get_neighbors(gap)
 		if neighbors.is_empty(): break
-		# 尽量避免来回移动
 		var filtered: PackedInt32Array = []
 		for n in neighbors:
 			if n != last_move: filtered.append(n)
@@ -65,9 +70,7 @@ func _solvable_shuffle() -> void:
 		current_layout[pick] = 0
 		last_move = gap
 		gap = pick
-	# 确保不等于正确答案
 	if _is_correct():
-		# 再移一次
 		var n2 := _get_neighbors(gap)
 		if n2.size() > 0:
 			var p: int = n2[0]
@@ -84,10 +87,10 @@ func _get_neighbors(idx: int) -> PackedInt32Array:
 	var result: PackedInt32Array = []
 	var r: int = idx / 3
 	var c: int = idx % 3
-	if r < 2: result.append(idx + 3)  # 下
-	if r > 0: result.append(idx - 3)  # 上
-	if c < 2: result.append(idx + 1)  # 右
-	if c > 0: result.append(idx - 1)  # 左
+	if r < 2: result.append(idx + 3)
+	if r > 0: result.append(idx - 3)
+	if c < 2: result.append(idx + 1)
+	if c > 0: result.append(idx - 1)
 	return result
 
 func _make_grid() -> void:
@@ -122,7 +125,6 @@ func _make_grid() -> void:
 		grid_container.add_child(bg)
 
 	_make_tile_visuals()
-	_answer_overlay_make()
 
 	var title := Label.new()
 	title.text = "[ 石台拼图 ]"
@@ -131,47 +133,83 @@ func _make_grid() -> void:
 	title.add_theme_color_override("font_color", Color("#8ab4d8"))
 	add_child(title)
 
-func _answer_overlay_make() -> void:
-	answer_overlay = Control.new()
-	answer_overlay.visible = false
-	answer_overlay.z_index = 100
-	grid_container.add_child(answer_overlay)
-	var bs := CELL_SIZE * 3 + 12
-	var w := bs / 2.0
-	answer_overlay.position = Vector2(-w, -w)
-	answer_overlay.size = Vector2(bs, bs)
-
-	var bg := ColorRect.new()
-	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	bg.color = Color(0.1, 0.45, 0.3, 0.55)
-	answer_overlay.add_child(bg)
-
+# ═══════════════════════════════════════════════════════
+#  全屏密码展示层（仅抑郁模式使用）
+# ═══════════════════════════════════════════════════════
+func _make_fullscreen_overlay() -> void:
+	fullscreen_overlay = CanvasLayer.new()
+	fullscreen_overlay.name = "FullscreenPassword"
+	fullscreen_overlay.layer = 100
+	fullscreen_overlay.visible = false
+	add_child(fullscreen_overlay)
+	
+	var fade_bg := ColorRect.new()
+	fade_bg.name = "FadeBG"
+	fade_bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	fade_bg.color = Color(0, 0, 0, 0.88)
+	fullscreen_overlay.add_child(fade_bg)
+	
+	# 标题
+	var title := Label.new()
+	title.text = "记住这个排列"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.position = Vector2(290, 30)
+	title.size = Vector2(700, 50)
+	title.add_theme_font_size_override("font_size", 40)
+	title.add_theme_color_override("font_color", Color("#ffd760"))
+	fullscreen_overlay.add_child(title)
+	
+	# 3x3 大号正确答案 (cell=160 铺满屏幕中央)
+	var big_cell := 160.0
+	var big_bs := big_cell * 3 + 20
+	var grid_origin := Vector2((1280 - big_bs) / 2.0, (720 - big_bs) / 2.0 - 30)
+	# 背景框
+	var grid_bg := ColorRect.new()
+	grid_bg.position = grid_origin - Vector2(6, 6)
+	grid_bg.size = Vector2(big_bs + 12, big_bs + 12)
+	grid_bg.color = Color("#2a2220")
+	fullscreen_overlay.add_child(grid_bg)
+	
 	for idx in range(9):
 		var tile_num: int = CORRECT_LAYOUT[idx]
-		if tile_num == 0: continue
 		var gx: int = idx % 3
 		var gy: int = idx / 3
-		var tile := ColorRect.new()
-		tile.position = Vector2(gx * CELL_SIZE - CELL_SIZE/2.0 + 3, gy * CELL_SIZE - CELL_SIZE/2.0 + 3)
-		tile.size = Vector2(CELL_SIZE - 6, CELL_SIZE - 6)
-		tile.color = TILE_COLORS[tile_num]
-		answer_overlay.add_child(tile)
-		var sym := Label.new()
-		sym.text = TILE_SYMBOLS[tile_num]
-		sym.position = Vector2(gx * CELL_SIZE - 4, gy * CELL_SIZE - 6)
-		sym.add_theme_font_size_override("font_size", 14)
-		sym.add_theme_color_override("font_color", Color.BLACK)
-		answer_overlay.add_child(sym)
-
-	var al := Label.new()
-	al.text = "← 正确答案"
-	al.position = Vector2(8, 4)
-	al.add_theme_font_size_override("font_size", 10)
-	al.add_theme_color_override("font_color", Color.WHITE)
-	answer_overlay.add_child(al)
+		var px: float = grid_origin.x + gx * big_cell + 6
+		var py: float = grid_origin.y + gy * big_cell + 6
+		
+		var tile_bg := ColorRect.new()
+		tile_bg.position = Vector2(px, py)
+		tile_bg.size = Vector2(big_cell - 12, big_cell - 12)
+		tile_bg.color = Color("#12101a") if tile_num == 0 else TILE_COLORS[tile_num].lightened(0.25)
+		fullscreen_overlay.add_child(tile_bg)
+		
+		if tile_num != 0:
+			var sym := Label.new()
+			sym.text = TILE_SYMBOLS[tile_num]
+			sym.position = Vector2(px + big_cell/2 - 26, py + big_cell/2 - 26)
+			sym.add_theme_font_size_override("font_size", 48)
+			sym.add_theme_color_override("font_color", Color.WHITE)
+			fullscreen_overlay.add_child(sym)
+		
+		# 位置编号
+		var pos_label := Label.new()
+		pos_label.text = str(idx + 1)
+		pos_label.position = Vector2(px + 8, py + 6)
+		pos_label.add_theme_font_size_override("font_size", 18)
+		pos_label.add_theme_color_override("font_color", Color("#7777aa"))
+		fullscreen_overlay.add_child(pos_label)
+	
+	# 底部提示
+	var hint := Label.new()
+	hint.text = "记忆一段时间后会消失，稍后再次出现"
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.position = Vector2(240, 640)
+	hint.size = Vector2(800, 30)
+	hint.add_theme_font_size_override("font_size", 20)
+	hint.add_theme_color_override("font_color", Color("#9999bb"))
+	fullscreen_overlay.add_child(hint)
 
 func _make_tile_visuals() -> void:
-	# 清除旧的可视
 	for ch in grid_container.get_children():
 		if ch is Polygon2D and ch.z_index >= 1 and ch.z_index <= 3:
 			ch.queue_free()
@@ -211,6 +249,7 @@ func _make_tile_visuals() -> void:
 		tile.color = TILE_COLORS[tile_num]
 		tile.position = Vector2(cx, cy)
 		tile.z_index = 2
+		tile.name = "Tile_%d" % idx
 		grid_container.add_child(tile)
 		tile_nodes.append(tile)
 
@@ -227,7 +266,7 @@ func _make_hint() -> void:
 	hint_label.position = Vector2(-75, 65)
 	hint_label.add_theme_font_size_override("font_size", 13)
 	hint_label.add_theme_color_override("font_color", Color("#ffe8a0"))
-	hint_label.text = "按 [E] 启动，方向键滑动"
+	hint_label.text = "按 [E] 启动拼图"
 	add_child(hint_label)
 
 func _on_body_entered(body: Node2D) -> void:
@@ -238,31 +277,66 @@ func _on_body_exited(body: Node2D) -> void:
 	if body.is_in_group("player"):
 		player_in_range = false
 
+# ═══════════════════════════════════════════════════════
+#  输入处理：鼠标点击滑动方块
+# ═══════════════════════════════════════════════════════
 func _input(event: InputEvent) -> void:
-	if not player_in_range or is_completed: return
+	if not player_in_range or is_completed:
+		return
+	
+	# 启动拼图（E 键）
 	if event.is_action_pressed("interact"):
 		if not challenge_active:
 			_start_challenge()
+		get_viewport().set_input_as_handled()
 		return
-	if not challenge_active: return
-	if event is InputEventKey and event.pressed:
-		var gap_idx: int = current_layout.find(0)
-		var gr: int = gap_idx / 3
-		var gc: int = gap_idx % 3
-		var target_idx: int = -1
-		match event.keycode:
-			KEY_UP, KEY_W:    if gr < 2: target_idx = gap_idx + 3
-			KEY_DOWN, KEY_S:  if gr > 0: target_idx = gap_idx - 3
-			KEY_LEFT, KEY_A:  if gc < 2: target_idx = gap_idx + 1
-			KEY_RIGHT, KEY_D: if gc > 0: target_idx = gap_idx - 1
-		if target_idx >= 0 and current_layout[target_idx] != 0:
-			_slide(target_idx)
+	
+	if not challenge_active:
+		return
+	
+	# ── 鼠标点击滑动方块 ──
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		_handle_mouse_click(event.position)
+		get_viewport().set_input_as_handled()
+
+func _handle_mouse_click(screen_pos: Vector2) -> void:
+	if grid_container == null:
+		return
+	
+	var camera := get_viewport().get_camera_2d()
+	if camera == null:
+		return
+	
+	# 将屏幕坐标转为世界坐标
+	var vs: Vector2 = get_viewport().get_visible_rect().size
+	var zoom: Vector2 = camera.zoom
+	var center: Vector2 = camera.get_screen_center_position()
+	var world_pos: Vector2 = center + (screen_pos - vs / 2.0) * zoom
+	var local_pos := grid_container.to_local(world_pos)
+	
+	var bs := CELL_SIZE * 3 + 12
+	var half := bs / 2.0
+	if local_pos.x < -half or local_pos.x > half or local_pos.y < -half or local_pos.y > half:
+		return
+	
+	var gx := int((local_pos.x + half) / CELL_SIZE)
+	var gy := int((local_pos.y + half) / CELL_SIZE)
+	gx = clampi(gx, 0, 2)
+	gy = clampi(gy, 0, 2)
+	var clicked_idx := gy * 3 + gx
+	
+	var gap_idx := current_layout.find(0)
+	var neighbors := _get_neighbors(gap_idx)
+	if neighbors.has(clicked_idx) and current_layout[clicked_idx] != 0:
+		_slide(clicked_idx)
 
 func _start_challenge() -> void:
 	challenge_active = true
-	hint_label.text = "↑↓←→ 滑动方块"
-	hint_updated.emit("拼图启动！方向键将块滑入空位。抑郁模式看正确答案。")
-	_update_overlay()
+	fullscreen_overlay.visible = false
+	depression_timer = 0.0
+	depression_fullscreen_visible = false
+	hint_label.text = "点击方块滑动到空位"
+	hint_updated.emit("拼图启动！点击方块，把它们滑到正确位置。")
 
 func _slide(from_idx: int) -> void:
 	var gap := current_layout.find(0)
@@ -275,20 +349,40 @@ func _slide(from_idx: int) -> void:
 
 func _complete() -> void:
 	is_completed = true
+	challenge_active = false
+	fullscreen_overlay.visible = false
 	hint_label.text = "✨ 获得激光装置2！"
 	hint_updated.emit("✨ 拼图完成！获得激光装置2！")
-	answer_overlay.visible = false
 	puzzle_completed.emit("laser_device_2")
 
-func _process(_delta: float) -> void:
-	if is_completed or not challenge_active: return
-	_update_overlay()
-
-func _update_overlay() -> void:
-	answer_overlay.visible = (_get_view() == "depression")
-
-func update_on_view_change(_view: String) -> void:
-	_update_overlay()
+# ═══════════════════════════════════════════════════════
+#  抑郁模式：全屏密码间隔展示
+# ═══════════════════════════════════════════════════════
+func _process(delta: float) -> void:
+	if is_completed or not challenge_active:
+		return
+	
+	if _get_view() == "depression":
+		depression_timer += delta
+		
+		if depression_fullscreen_visible:
+			# 正在展示，等够展示时间后隐藏
+			if depression_timer >= DEPRESSION_SHOW_DURATION:
+				fullscreen_overlay.visible = false
+				depression_fullscreen_visible = false
+				depression_timer = 0.0
+		else:
+			# 隐藏中，等够间隔后再次展示
+			if depression_timer >= DEPRESSION_HIDE_DURATION:
+				fullscreen_overlay.visible = true
+				depression_fullscreen_visible = true
+				depression_timer = 0.0
+	else:
+		# 非抑郁模式：确保全屏密码关掉
+		if fullscreen_overlay.visible:
+			fullscreen_overlay.visible = false
+		depression_timer = 0.0
+		depression_fullscreen_visible = false
 
 func _get_view() -> String:
 	for node in get_tree().get_nodes_in_group("world"):
