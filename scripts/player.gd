@@ -20,6 +20,8 @@ var jump_held: bool = false
 var coyote_timer: float = 0.0
 var jump_buffer_timer: float = 0.0
 var was_on_floor: bool = false
+var is_on_ladder: bool = false  # 梯子上（由 main.gd 设置）
+var _drop_cooldown: float = 0.0  # 穿透地板冷却（防止反复触发）
 
 # ADHD 自动行走
 var adhd_auto_dir: float = 0.0     # -1向左, 0停止, 1向右
@@ -46,6 +48,23 @@ const VIEW_SPEED_MULT: Dictionary = {
 @onready var sprite: Sprite2D = $CharacterTexture
 
 func _physics_process(delta: float) -> void:
+	# ── 梯子上：跳过普通物理（由 main.gd 接管位置）──
+	if is_on_ladder:
+		# 仍然允许水平移动（按 A/D 离开梯子）
+		var hdir: float = 0.0
+		if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
+			hdir = -1.0
+		if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT):
+			hdir = 1.0
+		velocity.x = hdir * SPEED * 0.5
+		if hdir != 0:
+			scale.x = signf(hdir)
+		# y 速度归零（由 main.gd 直接控制 y）
+		velocity.y = 0.0
+		move_and_slide()
+		_update_animation(hdir)
+		return
+
 	if is_on_floor():
 		coyote_timer = COYOTE_TIME
 	else:
@@ -55,6 +74,37 @@ func _physics_process(delta: float) -> void:
 	if not is_on_floor():
 		velocity.y += GRAVITY * delta
 		velocity.y = minf(velocity.y, MAX_FALL_SPEED)
+
+	# ── 穿透地板（按 ↓ 从可穿透平台掉下去）──
+	if _drop_cooldown > 0.0:
+		_drop_cooldown -= delta
+		# 掉下去后重新开启碰撞层2
+		var feet_tile_y := floori((global_position.y + 31) / 16.0)
+		if feet_tile_y >= 269:  # 已经掉到主层地板(y=267)以下
+			set_collision_mask_value(2, true)
+			_drop_cooldown = 0.0
+	elif _drop_cooldown <= 0.0:
+		# 确保层2开启
+		set_collision_mask_value(2, true)
+
+	var down_held: bool = Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN) or Input.is_action_pressed("ui_down")
+	if down_held and is_on_floor() and _drop_cooldown <= 0.0:
+		# 检查玩家脚下是否有可穿透地板
+		var world_node := get_tree().get_first_node_in_group("world") as MindscapeWorld
+		if world_node != null:
+			var feet_x := floori(global_position.x / 16.0)
+			var feet_y := floori((global_position.y + 31) / 16.0)
+			# 玩家2tile宽，检测脚下多个位置
+			var on_drop := false
+			for dx in range(-1, 2):
+				if world_node.is_drop_through_tile(Vector2i(feet_x + dx, feet_y)):
+					on_drop = true
+					break
+			if on_drop:
+				# 暂时禁用穿透地板碰撞层
+				set_collision_mask_value(2, false)
+				_drop_cooldown = 0.5  # 500ms 内不再触发
+				velocity.y = 30  # 轻微下推确保脱离地板
 
 	var direction: float = 0.0
 	var spd_mult: float = VIEW_SPEED_MULT.get(current_view, 1.0)
@@ -161,7 +211,7 @@ static func create() -> MindscapePlayer:
 	var player := MindscapePlayer.new()
 	player.name = "Player"
 	player.collision_layer = 1
-	player.collision_mask = 1
+	player.collision_mask = 3  # 层1(普通碰撞) + 层2(可穿透地板)
 	player.z_index = 100
 
 	var shape := CollisionShape2D.new()

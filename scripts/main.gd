@@ -45,9 +45,50 @@ func _process(delta: float) -> void:
 		save_timer = 0.0
 		autosave()
 	current_near = world.nearest_interactable(player.global_position)
+	_update_ladder_climb(delta)
 	_check_monsters()
 	_update_hud()
 	_update_audio_region()
+
+# ═══════════════════════════════════════════════════════
+#  梯子爬行：玩家在梯子内时禁用重力，按 W/↑ 持续上移，按 S/↓ 持续下移
+# ═══════════════════════════════════════════════════════
+func _update_ladder_climb(delta: float) -> void:
+	if player == null or not is_instance_valid(player): return
+	var ladder: Area2D = world.get_ladder_at_point(player.global_position)
+	if ladder == null:
+		player.is_on_ladder = false
+		return
+	
+	# 检测玩家是否想离开梯子（按 A/D）
+	var left_held: bool = Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT)
+	var right_held: bool = Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT)
+	var want_off: bool = left_held or right_held
+	
+	player.is_on_ladder = true
+	
+	if want_off:
+		# 玩家想离开梯子 — 不拉回X，不爬升，让物理系统接管
+		# 只重置速度，让玩家自然滑出梯子区域
+		player.velocity.y = 0.0
+		return
+	
+	# 在梯子上且不想离开 — 正常爬行
+	var lx: float = ladder.get_meta("ladder_x", player.global_position.x)
+	player.global_position.x = lerpf(player.global_position.x, lx, 0.4)
+	player.velocity.y = 0.0
+	
+	var climb_speed: float = 180.0
+	var up_held: bool = Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP) or Input.is_action_pressed("ui_up")
+	var down_held: bool = Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN) or Input.is_action_pressed("ui_down")
+	if up_held and not down_held:
+		player.global_position.y -= climb_speed * delta
+	elif down_held and not up_held:
+		player.global_position.y += climb_speed * delta
+	
+	var top_y: float = ladder.get_meta("ladder_top_y", 0.0)
+	var bot_y: float = ladder.get_meta("ladder_bottom_y", 0.0)
+	player.global_position.y = clampf(player.global_position.y, top_y - 4.0, bot_y + 4.0)
 
 func _update_audio_region() -> void:
 	if player == null:
@@ -499,6 +540,8 @@ func _describe_interactable(node: Node) -> String:
 			if keys.size() >= 4:
 				return "★ 时间胶囊宝箱（已解锁！）"
 			return "★ 宝箱（%d/4钥匙）" % keys.size()
+		"key_chest":
+			return "🔑 钥匙箱（按E拾取）"
 		"zone_indicator":
 			return "关卡区域"
 		"treasure_spot":
@@ -530,6 +573,15 @@ func interact() -> void:
 		"maze_fork_b":
 			var keys := get_collected_keys()
 			show_toast("岔路B尽头：宝箱（%d/4钥匙）。" % keys.size(), 2.0)
+		"key_chest":
+			var key_id: String = current_near.get_meta("key_id", "")
+			if key_id != "":
+				collect_key(key_id)
+				# 拾取后从地图上消失
+				world.remove_interactable(current_near)
+				current_near = null
+			else:
+				show_toast("宝箱是空的...", 2.0)
 		"treasure_spot":
 			if current_near.has_meta("solved"):
 				state["finished"] = true

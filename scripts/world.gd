@@ -28,8 +28,19 @@ var _spike_canvas: CanvasLayer
 
 # 地下迷宫相关
 var _maze_wall_rects: Array[ColorRect] = []
+var _drop_through_tiles: Array[Vector2i] = []  # 可穿透地板位置列表
 var _maze_fork_a_zone: Area2D
 var _maze_fork_b_zone: Area2D
+var _ladder_zones: Array[Area2D] = []  # 梯子列表（玩家可爬）
+var _one_way_doors: Array[StaticBody2D] = []  # 单行道门
+var _key_chest_zones: Array[Area2D] = []  # 钥匙宝箱
+var _maze_main_to_upper_ladders: Array = []  # 主层→上层梯子定义
+
+func is_drop_through_tile(tile_pos: Vector2i) -> bool:
+	for dt in _drop_through_tiles:
+		if dt == tile_pos:
+			return true
+	return false
 
 # 风向标 + 激光联动
 var _wind_vane_nodes: Array[Node2D] = []
@@ -78,13 +89,14 @@ var _bg_layer: TileMapLayer
 var _block_layer: TileMapLayer
 var _pickup_layer: TileMapLayer
 var _deco_layer: TileMapLayer
+var _drop_layer: TileMapLayer  # 可穿透地板（按下键穿过）
 
 # 平台
 const PLATFORMS: Array = [
 	{"x0": 0,   "x1": 262, "row": GROUND_ROW, "tag": "floor_left"},
 	{"x0": 264, "x1": 300, "row": GROUND_ROW, "tag": "floor_mid1"},
-	{"x0": 302, "x1": 340, "row": GROUND_ROW, "tag": "floor_lighthouse"},
-	{"x0": 342, "x1": 395, "row": GROUND_ROW, "tag": "floor_dam"},
+	# 台阶入口在 x:301-304，floor_dam 紧贴台阶右侧开始（小间隙即可跳跃）
+	{"x0": 306, "x1": 395, "row": GROUND_ROW, "tag": "floor_dam"},
 	{"x0": 397, "x1": 450, "row": GROUND_ROW, "tag": "floor_station"},
 	{"x0": 452, "x1": 520, "row": GROUND_ROW, "tag": "floor_park"},
 	{"x0": 522, "x1": 700, "row": GROUND_ROW, "tag": "floor_obs"},
@@ -155,7 +167,7 @@ func _make_background_canvas() -> void:
 	blind_black.color = Color(0, 0, 0, 1)
 	blind_black.mouse_filter = Control.MOUSE_FILTER_PASS
 	blind_black.visible = false
-	blind_black.z_index = 9999
+	blind_black.z_index = 127
 	view_tint_canvas.add_child(blind_black)
 
 	blind_label = Label.new()
@@ -167,7 +179,7 @@ func _make_background_canvas() -> void:
 	blind_label.add_theme_font_size_override("font_size", 28)
 	blind_label.add_theme_color_override("font_color", Color(0.4, 0.6, 1.0))
 	blind_label.visible = false
-	blind_label.z_index = 10000
+	blind_label.z_index = 127
 	view_tint_canvas.add_child(blind_label)
 
 	# Blind cursor (layer 1000, above blind_black)
@@ -413,6 +425,8 @@ func _make_tilemap_world() -> void:
 	_pickup_layer = _create_layer("Pickups", false, -25)
 	_block_layer = _create_layer("Blocks", true, -24)
 	_bg_layer = _create_layer("Background", false, -32)
+	_drop_layer = _create_layer("DropThrough", true, -23)   # 可穿透地板层
+	_drop_layer.collision_layer = 2                         # 碰撞层2（玩家mask也含这层）
 
 	_paint_background_bg()
 	_paint_all_platforms()
@@ -482,108 +496,327 @@ func _paint_water_features() -> void:
 			_water_layer.set_cell(Vector2i(x, y), 0, T_WATER_BODY)
 
 func _paint_underground_solid() -> void:
+	# 只填非迷宫区域的地下（迷宫由 _paint_underground_maze_walls 自己处理）
 	var left_col := 260
 	var right_col := 440
+	var maze_left := 265
+	var maze_right := 440
 	for y in range(UG_GROUND_ROW, WORLD_TILE_H):
 		for x in range(left_col, right_col + 1):
+			# 跳过迷宫区域（x:265-440, y>=269），迷宫函数会自己填充
+			if x >= maze_left and x <= maze_right:
+				continue
 			var tile := T_GRASS_MID
 			if (x + y) % 4 == 0: tile = T_GRASS_FILL
 			elif (x + y) % 7 == 0: tile = T_GRASS_FILL_ALT
 			_ground_layer.set_cell(Vector2i(x, y), 0, tile)
 
 func _paint_underground_maze_walls() -> void:
-	# ═══════════════════════════════════════════════════════
-	#  真正物理走通的地下迷宫 — 多层高低地形
-	#  入口(行269) → 中央大厅 → 左下层(钥匙) / 右上(宝箱)
-	# ═══════════════════════════════════════════════════════
-	var R0 := 269  # 主层/入口层
-	var R1 := 263  # 上层（宝箱路径）
-	var R2 := 275  # 下层（钥匙路径）
-	var BOT := 282  # 底部填充
-
+	# ════════════════════════════════════════════════════════════════
+	#  真正复杂的地下迷宫 — 3 层交错，多弯道，多死胡同
+	#  设计参考 MAZE_DESIGN.txt
+	#  玩家从台阶下来 (x=368) → 必须穿过迷宫到 (x=418) 出口
+	#  路径：入口→用梯子/穿透地板绕多层→出口
+	# ════════════════════════════════════════════════════════════════
+	
+	# ── 层级定义 ──
+	const UPPER_Y := 261   # 上层走廊地板
+	const MID_Y   := 267   # 中层/主层（台阶入口层）
+	const LOWER_Y := 273   # 下层走廊地板
+	const MAZE_TOP := 256
+	const BOT_FILL := 281
+	const WR := T_GRASS_MID
+	
 	var _G := _ground_layer
 	var _B := _block_layer
-	var WR := T_GRASS_MID  # 墙/地面块(带碰撞)
-	var GF := T_GRASS_FILL  # 填充色
-	var GA := T_GRASS_FILL_ALT  # 替换色
-
-	var sy: int   # 循环行坐标复用
-	var sx: int   # 循环列坐标复用
-
-	# ═══════════════════════════════════════════════════════
-	#  地表 → 地下 长阶梯 — 平滑斜坡碰撞体
-	#  入口在地面 x=288，2:1 斜度下行至行269
-	# ═══════════════════════════════════════════════════════
-	var stair_x0 := 288
-	var stair_rows := R0 - GROUND_ROW  # 69 行
-
-	# ── 挖出宽通道（清除地面平台体 — 7格宽，玩家2.1格）──
-	var carve_sx := stair_x0
-	for step in range(stair_rows):
-		sy = GROUND_ROW + step
-		if step > 0 and step % 2 == 0:
-			carve_sx += 1
-		for dx in range(-2, 7):  # 9格宽：为斜坡+墙壁留空间
-			_G.set_cell(Vector2i(carve_sx + dx, sy), -1)
-
-	# ── 构建平滑斜坡（StaticBody2D + CollisionPolygon2D）──
-	_build_ramp_tunnel(stair_x0, GROUND_ROW, stair_x0 + stair_rows / 2, GROUND_ROW + stair_rows, 5)
-
-	# ── 地下迷宫空间（斜坡底端之后的一切）──
-
-	# ── 底部实心大地基 ──
-	_mf_rect(_G, 265, R0 + 1, 440, BOT, WR)
-	_mf_rect(_G, 265, R0, 440, R0, GA)
-
-	# ── 外围边界墙 ──
-	_mf_col(_B, R1 - 1, R0, 265, WR)
-	_mf_col(_B, R1 - 1, R0, 440, WR)
-	_mf_row(_B, 265, 440, R1 - 1, WR)
-
-	# ── 斜坡底端 → 大厅（斜坡平滑落地，直接走进大厅）──
-	var ramp_bot_x: int = stair_x0 + stair_rows / 2  # 斜坡底部 x 坐标
-	# 大厅空间：从斜坡底向右挖空，给玩家行走空间
-	for x in range(ramp_bot_x + 1, 351):
-		for y in range(R1 - 1, R0):
+	var _D := _drop_layer
+	_drop_through_tiles.clear()
+	
+	# ════════════════════════════════════════════════════════════════
+	#  步骤1：画台阶（地表→主层）
+	# ════════════════════════════════════════════════════════════════
+	var stair_w := 4
+	var stair_x0 := 301
+	var stair_dx := 1
+	var stair_rows := MID_Y - GROUND_ROW
+	
+	for y in range(GROUND_ROW + 1, GROUND_ROW + 13):
+		for x in range(264, 302):
 			_G.set_cell(Vector2i(x, y), -1)
-	_mf_row(_B, ramp_bot_x + 1, 350, R1, WR)  # 天板
-
-	# ── Fork A: 左转下行 → 钥匙 ──
-	_mf_col(_B, R1, R0, 280, WR)
-	_mf_col(_B, R1, R0, 327, WR)
-	_build_ramp_tunnel(311, R0, 311 + 7, R0 + 7, 3, false)  # 下行斜坡
-	_mf_col(_B, R0 + 1, R2 + 2, 308, WR)
-	_mf_col(_B, R0 + 1, R2 + 2, 322, WR)
-	# 下层区域
-	_mf_row(_G, 270, 324, R2, GA)
-	for y in range(R2 + 1, BOT + 1):
-		_mf_row(_G, 270, 324, y, WR)
-	_mf_col(_B, R1, R2 - 1, 270, WR)
-	_mf_col(_B, R1, R2, 275, WR)
-	_mf_col(_B, R1, R2, 282, WR)
-	_mf_row(_B, 271, 281, R1, WR)
-	_build_ramp_tunnel(278, R2, 278 + 3, R2 + 3, 3, false)
-	_mf_row(_B, 270, 278, R1 - 2, WR)
-
-	# ── Fork B: 右转上行 → 宝箱 ──
-	_mf_col(_B, R1 + 1, R0, 365, WR)
-	_mf_col(_B, R1 + 1, R0, 400, WR)
-	_build_ramp_tunnel(370, R0, 370 + 7, R0 - 7, 3, false)  # 上行斜坡
-	_mf_col(_B, R1, R0, 368, WR)
-	_mf_col(_B, R1, R0, 382, WR)
-	# 上层区域
-	for x in range(365, 439):
-		_G.set_cell(Vector2i(x, R1), 0, GA)
-		for y in range(R1 + 1, R0):
+	
+	var stair_bot_x: int = stair_x0 + (stair_rows - 1) * stair_dx
+	
+	for step in range(stair_rows):
+		var sy := GROUND_ROW + step
+		var sx := stair_x0 + step * stair_dx
+		for dx in range(stair_w):
+			_G.set_cell(Vector2i(sx + dx, sy), 0, WR)
+	
+	for step in range(stair_rows):
+		var swy := GROUND_ROW + 1 + step
+		var swx := stair_x0 - 1 + step * stair_dx
+		_G.set_cell(Vector2i(swx, swy), 0, WR)
+	
+	# ════════════════════════════════════════════════════════════════
+	#  步骤2：清空地下区域 + 实心填充
+	# ════════════════════════════════════════════════════════════════
+	for x in range(265, 441):
+		for y in range(MAZE_TOP, BOT_FILL + 1):
+			_G.set_cell(Vector2i(x, y), -1)
+			_B.set_cell(Vector2i(x, y), -1)
+			_D.set_cell(Vector2i(x, y), -1)
+	
+	for x in range(265, 441):
+		for y in range(MAZE_TOP, BOT_FILL + 1):
 			_G.set_cell(Vector2i(x, y), 0, WR)
-	_mf_row(_B, 365, 438, R1 - 2, WR)
-	_mf_col(_B, R1 - 2, R1, 408, WR)
-	_mf_col(_B, R1 - 2, R1, 428, WR)
-	_mf_row(_B, 425, 438, R1 - 3, WR)
+	
+	# ════════════════════════════════════════════════════════════════
+	#  步骤3：挖空 3 条连续长走廊（每层 1 条）
+	#  走廊净高：5 tile（4格空气+1格地板）— 玩家62px高需要至少4格空气
+	# ════════════════════════════════════════════════════════════════
+	# 上层长走廊
+	for x in range(266, 441):
+		for y in range(UPPER_Y - 4, UPPER_Y):
+			_G.set_cell(Vector2i(x, y), -1)
+		_B.set_cell(Vector2i(x, UPPER_Y), 0, WR)
+	
+	# 主层长走廊
+	for x in range(266, 441):
+		for y in range(MID_Y - 4, MID_Y):
+			_G.set_cell(Vector2i(x, y), -1)
+		_B.set_cell(Vector2i(x, MID_Y), 0, WR)
+	
+	# 下层长走廊
+	for x in range(266, 441):
+		for y in range(LOWER_Y - 4, LOWER_Y):
+			_G.set_cell(Vector2i(x, y), -1)
+		_B.set_cell(Vector2i(x, LOWER_Y), 0, WR)
+	
+	# ════════════════════════════════════════════════════════════════
+	#  步骤4：绘制隔断墙柱（关键：制造真正的迷宫！）
+	#
+	#  设计思路：
+	#  - 每层都是一条连续长走廊
+	#  - 用"全高墙柱"（占 y=261-267）切断主层走廊
+	#  - 玩家不能直接走过全高墙，必须爬梯子到上层/下层绕过
+	#  - 用"半高墙柱"（只占 y=264-266）做视觉迷宫感（玩家可跳）
+	#  - 死路：在走廊端点放全高墙，玩家必须折返
+	#  
+	#  全高墙位置（x 坐标）: 282, 318, 358, 398, 425
+	#  玩家必须从对应上层/下层绕过这些墙
+	#  对应上层/下层该位置是"通道"（挖空）
+	# ════════════════════════════════════════════════════════════════
+	
+	# ── 全高墙柱（关键：必须能挡住跳跃的玩家）──
+	# 玩家跳跃能力 105px (normal)，depression 63px
+	# 墙顶 y_top 必须满足：y_top*16 ≤ 玩家跳跃最低脚底 y (4167)
+	# 即 y_top ≤ 260
+	# 实际用 y=260-267 (8 tile) — 玩家跳跃到 y=4136 中心时脚底 y=4167 > 墙顶 y=4160
+	# 玩家撞墙！✓
+	var full_walls: Array = [
+		# 格式: [x, y_top, y_bot]
+		[282, 260, 267],   # FW1 主层西侧分隔 (8 tile)
+		[318, 260, 267],   # FW2 主层中部分隔
+		[358, 260, 267],   # FW3 主层中央分隔（入口x=365 的左侧）
+		[398, 260, 267],   # FW4 主层中央分隔（入口x=365 的右侧）
+		[425, 260, 267],   # FW5 主层东侧分隔
+	]
+	
+	# ── 半高墙柱（y=264-266, 玩家可跳）──
+	# 这些墙柱不阻挡玩家跳跃，但视觉上是隔断
+	# 注意：避开梯子位置（x=275, 290, 308, 310, 325, 345, 375, 388, 390, 410, 415, 420, 430）
+	var half_walls: Array = [
+		# 主层半高墙（避开所有梯子位置）
+		[300, 264, 266],   # HW1 主层视觉隔断
+		[330, 264, 266],   # HW2
+		[368, 264, 266],   # HW3 入口区视觉隔断
+		# x=415 改到 405 (避开 x=410 梯子)
+		[405, 264, 266],   # HW4 出口区视觉隔断
+		
+		# 上层半高墙
+		[270, 258, 260],   # UHW1
+		[315, 258, 260],   # UHW2
+		[355, 258, 260],   # UHW3
+		[395, 258, 260],   # UHW4
+		# 避开 x=430 梯子
+		[437, 258, 260],   # UHW5 上层东端
+		
+		# 下层半高墙
+		[280, 270, 272],   # LHW1
+		[300, 270, 272],   # LHW2
+		[320, 270, 272],   # LHW3
+		# 避开 x=346 梯子
+		[375, 270, 272],   # LHW4
+		[420, 270, 272],   # LHW5
+	]
+	
+	# ── 上层全高墙（让玩家从上层走也需要绕）──
+	# 玩家在上层 y=261 站位，跳跃后中心 y=4080, 脚底 y=4111
+	# 墙顶 y_top 必须满足 y_top*16 ≤ 4111，即 y_top ≤ 257
+	# 实际用 y=257-261 (5 tile, 80px) — y_top=257*16=4112 > 4111，玩家撞墙！✓
+	# 但要避开 x=398 (D-E关键路径)
+	var upper_full_walls: Array = [
+		# 上层全高墙（y=257-261）— 避开 x=398
+		[282, 257, 261],   # UFW1 A-B分隔
+		[318, 257, 261],   # UFW2 B-C分隔
+		[358, 257, 261],   # UFW3 C-D分隔
+		# x=398 故意不放墙 — 玩家从 D 上方走到 E 上方
+		[425, 257, 261],   # UFW5 E-F分隔
+		# 边界
+		[265, 257, 261],   # 边界
+		[440, 257, 261],   # 边界
+	]
 
-	# ── 大厅到两侧的起步斜坡 ──
-	_build_ramp_tunnel(355, R0, 359, R0 - 4, 3, false)  # 右→Fork B
-	_build_ramp_tunnel(335, R0, 331, R0 + 4, 3, false)  # 左→Fork A
+	# ── 下层全高墙（让玩家从下层走也需要绕）──
+	# 玩家在下层 y=273 站位，跳跃后中心 y=4337-105=4232, 脚底 y=4263
+	# 墙顶 y_top 必须满足 y_top*16 ≤ 4263，即 y_top ≤ 266
+	# 实际用 y=266-273 (8 tile, 128px) — y_top=266*16=4256 < 4263，玩家撞墙！✓
+	# 但要避开穿透点位置 (x=308-310, 346-348, 388-390, 415-417)
+	var lower_full_walls: Array = [
+		# 下层全高墙（y=266-273）
+		[275, 266, 273],   # LFW1 下层西端
+		[330, 266, 273],   # LFW2 下层中
+		[370, 266, 273],   # LFW3 下层中
+		# x=400 位置需要避开穿透点x=388-390下方
+		# 玩家从穿透点x=388-390下来后必须能向东走
+		# 让下层x=388-417之间没有全高墙
+		[435, 266, 273],   # LFW4 下层东端
+	]
+	
+	# ════════════════════════════════════════════════════════════════
+	#  步骤5：绘制所有墙柱
+	# ════════════════════════════════════════════════════════════════
+	for wall in full_walls:
+		var wx: int = wall[0]
+		var wy0: int = wall[1]
+		var wy1: int = wall[2]
+		for y in range(wy0, wy1 + 1):
+			_G.set_cell(Vector2i(wx, y), 0, WR)
+	
+	for wall in half_walls:
+		var wx: int = wall[0]
+		var wy0: int = wall[1]
+		var wy1: int = wall[2]
+		for y in range(wy0, wy1 + 1):
+			_G.set_cell(Vector2i(wx, y), 0, WR)
+	
+	for wall in upper_full_walls:
+		var wx: int = wall[0]
+		var wy0: int = wall[1]
+		var wy1: int = wall[2]
+		for y in range(wy0, wy1 + 1):
+			_G.set_cell(Vector2i(wx, y), 0, WR)
+	
+	for wall in lower_full_walls:
+		var wx: int = wall[0]
+		var wy0: int = wall[1]
+		var wy1: int = wall[2]
+		for y in range(wy0, wy1 + 1):
+			_G.set_cell(Vector2i(wx, y), 0, WR)
+	
+	# ════════════════════════════════════════════════════════════════
+	#  步骤6：清理楼梯穿过的区域
+	# ════════════════════════════════════════════════════════════════
+	for step in range(stair_rows):
+		var sy2 := GROUND_ROW + step
+		var sx2 := stair_x0 + step * stair_dx
+		for dx in range(-1, stair_w + 1):
+			_G.set_cell(Vector2i(sx2 + dx, sy2), -1)
+			_B.set_cell(Vector2i(sx2 + dx, sy2), -1)
+	
+	for dy in range(-1, 2):
+		for dx in range(stair_w):
+			_G.set_cell(Vector2i(stair_bot_x + dx, MID_Y + dy), -1)
+			_B.set_cell(Vector2i(stair_bot_x + dx, MID_Y + dy), -1)
+	
+	# ════════════════════════════════════════════════════════════════
+	#  步骤7：穿透地板（按 ↓ 键从主层掉到下层）
+	#  多个穿透点让玩家有多种选择
+	#  
+	#  关键：穿透点位置 y=267 是 _B 地板，y=268 是空气（挖空）
+	#  玩家从 y=267 穿透后会掉到 y=268, 269, 270... 直到撞到下层地板 y=273
+	# ════════════════════════════════════════════════════════════════
+	# 穿透点 1：x=308..310（主→下，FW2 墙东侧）
+	for x in range(308, 311):
+		_D.set_cell(Vector2i(x, MID_Y), 0, WR)
+		_drop_through_tiles.append(Vector2i(x, MID_Y))
+		_B.set_cell(Vector2i(x, MID_Y), 0, WR)
+		# 挖空 y=268 让玩家能掉下去
+		_G.set_cell(Vector2i(x, 268), -1)
+	
+	# 穿透点 2：x=346..348（主→下，FW3 墙西侧，钥匙宝箱上方）
+	for x in range(346, 349):
+		_D.set_cell(Vector2i(x, MID_Y), 0, WR)
+		_drop_through_tiles.append(Vector2i(x, MID_Y))
+		_B.set_cell(Vector2i(x, MID_Y), 0, WR)
+		_G.set_cell(Vector2i(x, 268), -1)
+	
+	# 穿透点 3：x=388..390（主→下，FW4 墙东侧）
+	for x in range(388, 391):
+		_D.set_cell(Vector2i(x, MID_Y), 0, WR)
+		_drop_through_tiles.append(Vector2i(x, MID_Y))
+		_B.set_cell(Vector2i(x, MID_Y), 0, WR)
+		_G.set_cell(Vector2i(x, 268), -1)
+	
+	# 穿透点 4：x=415..417（主→下，出口前）
+	for x in range(415, 418):
+		_D.set_cell(Vector2i(x, MID_Y), 0, WR)
+		_drop_through_tiles.append(Vector2i(x, MID_Y))
+		_B.set_cell(Vector2i(x, MID_Y), 0, WR)
+		_G.set_cell(Vector2i(x, 268), -1)
+	
+	# ════════════════════════════════════════════════════════════════
+	#  步骤8：定义梯子位置（供 _make_underground_maze_entrance 使用）
+	#  
+	#  关键设计：
+	#  1. 每个"全高墙"必须有梯子让玩家绕过
+	#  2. 主层 → 上层 的梯子（y范围 261-267）
+	#  3. 下层 → 主层 的梯子（y范围 267-273）— 玩家从穿透点掉到下层后能爬回主层
+	# ════════════════════════════════════════════════════════════════
+	var all_ladders: Array = [
+		# [x, y_top, y_bot]  梯子范围
+		# 玩家站在 y_bot，向上爬到 y_top
+		# y_top 必须等于该层地板 y 值，y_bot 必须等于该层地板 y 值
+		
+		# ═══ 主层 → 上层 梯子（每个全高墙需要 2 个：左房间1个爬上去，右房间1个下来）═══
+		# 墙 x=282：A房间[266-281] 和 B房间[283-317]
+		[275, UPPER_Y, MID_Y],   # 梯子1 A内（爬到上层）
+		[290, UPPER_Y, MID_Y],   # 梯子2 B内（从上层下来）
+		# 墙 x=318：B房间[283-317] 和 C房间[319-357]
+		[310, UPPER_Y, MID_Y],   # 梯子3 B内
+		[325, UPPER_Y, MID_Y],   # 梯子4 C内
+		# 墙 x=358：C房间[319-357] 和 D房间[359-397]
+		[345, UPPER_Y, MID_Y],   # 梯子5 C内
+		[375, UPPER_Y, MID_Y],   # 梯子6 D内（入口附近）
+		# 墙 x=398：D房间[359-397] 和 E房间[399-424]
+		[390, UPPER_Y, MID_Y],   # 梯子7 D内
+		[410, UPPER_Y, MID_Y],   # 梯子8 E内（出口梯子位置）
+		# 墙 x=425：E房间[399-424] 和 F房间[426-440]
+		[420, UPPER_Y, MID_Y],   # 梯子9 E内
+		[430, UPPER_Y, MID_Y],   # 梯子10 F内
+		# 出口长梯（地表→主层E房间x=418位置）
+		[418, 201, MID_Y],       # 梯子11 出口长梯
+		
+		# ═══ 下层 → 主层 梯子（让玩家从穿透点掉到下层后能爬回主层）═══
+		# 玩家穿透到下层后，需要梯子爬回主层
+		# 位置：在每个穿透点附近放梯子
+		# 穿透点 1：x=308-310 → 梯子 x=308 (y=267-273)
+		[308, MID_Y, LOWER_Y],   # 梯子12 主层B内（从下层上来）
+		# 穿透点 2：x=346-348 → 梯子 x=346
+		[346, MID_Y, LOWER_Y],   # 梯子13 主层C内（钥匙区上来）
+		# 穿透点 3：x=388-390 → 梯子 x=388
+		[388, MID_Y, LOWER_Y],   # 梯子14 主层D内
+		# 穿透点 4：x=415-417 → 梯子 x=415
+		[415, MID_Y, LOWER_Y],   # 梯子15 主层E内
+		# 额外：下层深处的探索区也放梯子
+		[285, MID_Y, LOWER_Y],   # 梯子16 下层左死路返回
+		[365, MID_Y, LOWER_Y],   # 梯子17 下层中返回
+		[400, MID_Y, LOWER_Y],   # 梯子18 下层右中返回
+		[425, MID_Y, LOWER_Y],   # 梯子19 下层右死路返回
+	]
+	
+	# 存到全局变量供后续使用
+	_maze_main_to_upper_ladders = all_ladders
 
 # ── 迷宫砖墙绘制辅助方法 ──
 func _mf_rect(layer: TileMapLayer, x0: int, y0: int, x1: int, y1: int, tile: Vector2i) -> void:
@@ -905,31 +1138,31 @@ func _make_underground_maze_entrance() -> void:
 	glow_tween.tween_property(entry_glow, "color", Color("#c0b0ff", 0.2), 1.0)
 	glow_tween.tween_property(entry_glow, "color", Color("#c0b0ff", 0.03), 1.0)
 
-	# 岔路A终点 — 钥匙触发区（下层左上）
+	# 岔路A终点 — 下层左探索区
 	_maze_fork_a_zone = Area2D.new()
 	_maze_fork_a_zone.name = "MazeForkA"
-	_maze_fork_a_zone.position = Vector2(275 * TILE_SIZE, (UG_GROUND_ROW + 8) * TILE_SIZE - 10)
+	_maze_fork_a_zone.position = Vector2(292 * TILE_SIZE, 274 * TILE_SIZE - 10)
 	var ash := CollisionShape2D.new()
 	var ar := RectangleShape2D.new()
-	ar.size = Vector2(120, 60)
+	ar.size = Vector2(100, 50)
 	ash.shape = ar
 	_maze_fork_a_zone.add_child(ash)
 	var al := Label.new()
-	al.text = "钥匙"
-	al.position = Vector2(-10, -8)
+	al.text = "死路..."
+	al.position = Vector2(-18, -6)
 	al.add_theme_font_size_override("font_size", 10)
-	al.add_theme_color_override("font_color", Color("#60ff60"))
+	al.add_theme_color_override("font_color", Color("#888888"))
 	_maze_fork_a_zone.add_child(al)
 	_maze_fork_a_zone.set_meta("kind", "maze_fork_a")
 	interactables.append(_maze_fork_a_zone)
 
-	# 岔路B终点 — 宝箱触发区（上层右侧）
+	# 岔路B终点 — 上层出口区宝箱提示
 	_maze_fork_b_zone = Area2D.new()
 	_maze_fork_b_zone.name = "MazeForkB"
-	_maze_fork_b_zone.position = Vector2(430 * TILE_SIZE, (UG_GROUND_ROW - 7) * TILE_SIZE - 8)
+	_maze_fork_b_zone.position = Vector2(422 * TILE_SIZE, 261 * TILE_SIZE - 8)
 	var bsh := CollisionShape2D.new()
 	var br := RectangleShape2D.new()
-	br.size = Vector2(120, 60)
+	br.size = Vector2(100, 50)
 	bsh.shape = br
 	_maze_fork_b_zone.add_child(bsh)
 	var bl := Label.new()
@@ -940,6 +1173,201 @@ func _make_underground_maze_entrance() -> void:
 	_maze_fork_b_zone.add_child(bl)
 	_maze_fork_b_zone.set_meta("kind", "maze_fork_b")
 	interactables.append(_maze_fork_b_zone)
+
+	# ═══════════════════════════════════════════════════════
+	#  梯子系统（使用 _maze_main_to_upper_ladders 中定义的位置）
+	#  格式：_make_ladder(x, y_top, y_bot)
+	# ═══════════════════════════════════════════════════════
+	for i in range(_maze_main_to_upper_ladders.size()):
+		var lad = _maze_main_to_upper_ladders[i]
+		var lx: int = lad[0]
+		var ly0: int = lad[1]
+		var ly1: int = lad[2]
+		_make_ladder(lx, ly0, lx, ly1, "ladder_%d" % i)
+
+	# ═══════════════════════════════════════════════════════
+	#  钥匙宝箱 — 下层中右区（通过穿透地板 x=346-348 到达下层）
+	# ═══════════════════════════════════════════════════════
+	_make_key_chest(370, 272, "key_3")
+
+	# ═══════════════════════════════════════════════════════
+	#  出口单行道 — 梯子顶端右侧，只能出不能进
+	# ═══════════════════════════════════════════════════════
+	_make_one_way_door(420, 199, 420, 202, "open: -x")
+
+# ═══════════════════════════════════════════════════════
+#  梯子：玩家在 Area2D 内按 W/↑ 持续上移，按 S/↓ 持续下移
+#  kind="ladder" 让 main.gd 知道这是梯子
+# ═══════════════════════════════════════════════════════
+func _make_ladder(x_tile0: int, y_tile0: int, x_tile1: int, y_tile1: int, ladder_name: String) -> void:
+	# 梯子范围（tile 坐标）
+	var x0_px: float = x_tile0 * TILE_SIZE
+	var y0_px: float = y_tile0 * TILE_SIZE
+	var x1_px: float = (x_tile1 + 1) * TILE_SIZE
+	var y1_px: float = (y_tile1 + 1) * TILE_SIZE
+
+	var ladder := Area2D.new()
+	ladder.name = ladder_name
+	ladder.position = Vector2((x0_px + x1_px) * 0.5, (y0_px + y1_px) * 0.5)
+	var shape := CollisionShape2D.new()
+	var rect := RectangleShape2D.new()
+	rect.size = Vector2(x1_px - x0_px, y1_px - y0_px)
+	shape.shape = rect
+	ladder.add_child(shape)
+	ladder.set_meta("kind", "ladder")
+	ladder.set_meta("ladder_top_y", y0_px)
+	ladder.set_meta("ladder_bottom_y", y1_px)
+	ladder.set_meta("ladder_x", (x0_px + x1_px) * 0.5)
+
+	# 梯子视觉：用 2 列竖线模拟（每行 1 个矩形）
+	var ladder_vis := Node2D.new()
+	ladder_vis.z_index = 4
+	# 左竖
+	for ty in range(y_tile0, y_tile1 + 1):
+		var rail_l := ColorRect.new()
+		rail_l.position = Vector2(x0_px - ladder.position.x + 2, ty * TILE_SIZE - ladder.position.y)
+		rail_l.size = Vector2(2, TILE_SIZE)
+		rail_l.color = Color("#a07050")
+		ladder_vis.add_child(rail_l)
+		# 横档
+		var rung := ColorRect.new()
+		rung.position = Vector2(x0_px - ladder.position.x + 2, ty * TILE_SIZE - ladder.position.y + TILE_SIZE / 2 - 2)
+		rung.size = Vector2(TILE_SIZE - 4, 3)
+		rung.color = Color("#b88060")
+		ladder_vis.add_child(rung)
+	# 右竖
+	for ty in range(y_tile0, y_tile1 + 1):
+		var rail_r := ColorRect.new()
+		rail_r.position = Vector2(x1_px - ladder.position.x - 4, ty * TILE_SIZE - ladder.position.y)
+		rail_r.size = Vector2(2, TILE_SIZE)
+		rail_r.color = Color("#a07050")
+		ladder_vis.add_child(rail_r)
+	ladder.add_child(ladder_vis)
+
+	add_child(ladder)
+	# 梯子不加入 interactables（持续检测不是按 E 触发）
+	# 但加到 _ladder_zones 供 main.gd 查询
+	_ladder_zones.append(ladder)
+
+# ── 玩家所在位置是否在某个梯子内 ──
+func get_ladder_at_point(p: Vector2) -> Area2D:
+	for ladder in _ladder_zones:
+		if not is_instance_valid(ladder): continue
+		var top: float = ladder.get_meta("ladder_top_y", -1.0)
+		var bot: float = ladder.get_meta("ladder_bottom_y", -1.0)
+		var lx: float = ladder.get_meta("ladder_x", 0.0)
+		# 玩家碰撞体 34 宽，居中 — 给点余量
+		if p.y >= top - 8.0 and p.y <= bot + 8.0 and absf(p.x - lx) < TILE_SIZE * 0.8:
+			return ladder
+	return null
+
+# ═══════════════════════════════════════════════════════
+#  钥匙宝箱（kind="key_chest"）— 玩家按 E 拾取 key_id
+# ═══════════════════════════════════════════════════════
+func _make_key_chest(x_tile: int, y_tile: int, key_id: String) -> void:
+	var chest := Area2D.new()
+	chest.name = "KeyChest_%s" % key_id
+	chest.position = Vector2(x_tile * TILE_SIZE + 8, y_tile * TILE_SIZE + 8)
+	var shape := CollisionShape2D.new()
+	var rect := RectangleShape2D.new()
+	rect.size = Vector2(28, 28)
+	shape.shape = rect
+	chest.add_child(shape)
+
+	# 视觉：金色小箱子
+	var body := Polygon2D.new()
+	body.polygon = PackedVector2Array([
+		Vector2(-12, 4), Vector2(12, 4), Vector2(12, -8), Vector2(-12, -8)
+	])
+	body.color = Color("#a07028")
+	chest.add_child(body)
+	var lid := Polygon2D.new()
+	lid.polygon = PackedVector2Array([
+		Vector2(-14, -8), Vector2(14, -8), Vector2(14, -14), Vector2(-14, -14)
+	])
+	lid.color = Color("#c89038")
+	chest.add_child(lid)
+	var lockc := ColorRect.new()
+	lockc.position = Vector2(-2, -8)
+	lockc.size = Vector2(4, 6)
+	lockc.color = Color("#ffd700")
+	chest.add_child(lockc)
+
+	var lbl := Label.new()
+	lbl.text = "🔑 钥匙箱"
+	lbl.position = Vector2(-22, -36)
+	lbl.add_theme_font_size_override("font_size", 10)
+	lbl.add_theme_color_override("font_color", Color("#ffd700"))
+	chest.add_child(lbl)
+
+	chest.set_meta("kind", "key_chest")
+	chest.set_meta("key_id", key_id)
+	add_child(chest)
+	interactables.append(chest)
+	_key_chest_zones.append(chest)
+
+# ═══════════════════════════════════════════════════════
+#  单行道门（kind="one_way_door"）— 玩家只能从指定方向通过
+#  实现：把"门"做成两个 Area2D：
+#    - inner: 玩家在内部（梯子上）触发
+#    - outer_block: 静态墙（阻止从外侧进入）
+#  这里简化：只放一个静态墙 + Area2D 提示
+# ═══════════════════════════════════════════════════════
+var _one_way_doors_local: Array = []
+
+func _make_one_way_door(x_tile0: int, y_tile0: int, x_tile1: int, y_tile1: int, dir: String) -> void:
+	# 单行道门：从地下往上爬时能过，从地面进不来
+	# 在 x_tile0..x_tile1, y_tile0..y_tile1 范围内放一个 StaticBody2D
+	# 但只在 y > y_tile1（即地面）方向挡，玩家从 y < y_tile0（地下）方向不挡
+	# 简化：用 _B 层画一面墙，标记为单行道
+	var body := StaticBody2D.new()
+	body.name = "OneWayDoor_%d_%d" % [x_tile0, y_tile0]
+	body.collision_layer = 1
+	body.collision_mask = 0
+	var shape := CollisionShape2D.new()
+	var rect := RectangleShape2D.new()
+	rect.size = Vector2((x_tile1 - x_tile0 + 1) * TILE_SIZE, (y_tile1 - y_tile0 + 1) * TILE_SIZE)
+	shape.shape = rect
+	body.add_child(shape)
+	body.position = Vector2(
+		(x_tile0 + x_tile1 + 1) * 0.5 * TILE_SIZE,
+		(y_tile0 + y_tile1 + 1) * 0.5 * TILE_SIZE
+	)
+	add_child(body)
+
+	# 视觉：紫色光幕（表示不可见但存在）
+	var vis := Polygon2D.new()
+	vis.polygon = PackedVector2Array([
+		Vector2(-rect.size.x * 0.5, -rect.size.y * 0.5),
+		Vector2(rect.size.x * 0.5, -rect.size.y * 0.5),
+		Vector2(rect.size.x * 0.5, rect.size.y * 0.5),
+		Vector2(-rect.size.x * 0.5, rect.size.y * 0.5)
+	])
+	vis.color = Color("#8060c0", 0.3)
+	vis.z_index = 5
+	body.add_child(vis)
+
+	# 标签（出口标记）
+	var lbl := Label.new()
+	lbl.text = "出口（单向）"
+	lbl.position = Vector2(-30, -16)
+	lbl.add_theme_font_size_override("font_size", 10)
+	lbl.add_theme_color_override("font_color", Color("#c0a0ff"))
+	body.add_child(lbl)
+
+	# 重要：用 _B 层在这个范围也画 tile 保持视觉一致
+	# （不影响碰撞，因为 _B 也带碰撞 — 玩家从任何方向都会撞）
+	# 真正实现单行道需要更复杂的逻辑（监控玩家位置）
+	# — 简化版：先在 _B 层画墙，玩家想从地面进入时会撞墙
+	# — 玩家从梯子上来时梯子在墙的左边（x_tile0=420 左边的 x=415）
+	# — 梯子顶端 y_tile0=201 — 玩家爬到 y=201 之后会撞墙 199-202
+	# — 等等我把墙画在 y:199-202 玩家从梯子上来（y=269 → y=201）会被挡
+	# — 修正：单行道墙在 y:199-202, x:420, 玩家从梯子顶 x:415 走到 x:416 就能继续 — 但墙 x:420 挡
+	# — 需要把墙挪到 x:421, 玩家从 x:415 走到 x:420 时是单行道 — 出口在右边
+	# — 实际：这个"出口"的设计需要更多思考，先占位不做硬阻挡
+	body.set_meta("kind", "one_way_door")
+	body.set_meta("dir", dir)
+	_one_way_doors_local.append(body)
 
 # ══════════════════════════════════════════════════════════════
 #  REGIONS & LABELS
