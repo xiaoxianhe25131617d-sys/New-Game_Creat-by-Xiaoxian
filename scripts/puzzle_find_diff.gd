@@ -2,11 +2,10 @@ extends Area2D
 class_name PuzzleFindDifference
 
 # ════════════════════════════════════════════════════════════
-#  找不同密室 — v3
-#  5个视角按钮（普通 / A / D / Z / 盲），每个视角看到全部5个物体，状态不同。
-#  每个物体有2个视角状态一致 = 正确答案，玩家需要对比各个视角的显示来推理。
+#  找不同密室 — v4
+#  通过记忆长椅切换视角，不同视角看到5个物体的状态不同。
+#  每个物体有2个视角状态一致 = 正确答案，玩家需要去记忆长椅对比推理。
 #  只有普通视角能点击切换物体状态。
-#  没有任何单题正确提示。
 # ════════════════════════════════════════════════════════════
 
 signal puzzle_completed(reward_id: String)
@@ -69,7 +68,7 @@ const OBJ_POS: Array[Vector2] = [
 var player_in_range: bool = false
 var is_completed: bool = false
 var room_open: bool = false
-var selected_perspective: int = 0  # 当前选中的视角索引
+var current_view: String = "normal"  # 由记忆长椅同步的全局视角
 var object_states: Array[int] = []  # 玩家在普通视角设置的状态, -1=未设置
 
 # ── UI 节点 ──
@@ -77,7 +76,7 @@ var room_overlay: CanvasLayer = null
 var progress_label: Label = null
 var mode_hint_label: Label = null
 var exterior_label: Label = null
-var perspective_btns: Array[Button] = []
+var view_label: Label = null  # 显示当前视角的标签
 var obj_zones: Array[Control] = []
 var obj_visuals: Array[Control] = []
 var obj_state_labels: Array[Label] = []
@@ -213,8 +212,13 @@ func _make_room_ui() -> void:
 	desc.add_theme_color_override("font_color", Color("#998877"))
 	panel.add_child(desc)
 
-	# ── 5个视角按钮 ──
-	_make_perspective_btns(panel)
+	# 当前视角标签
+	view_label = Label.new()
+	view_label.position = Vector2(20, 64)
+	view_label.add_theme_font_size_override("font_size", 13)
+	view_label.add_theme_color_override("font_color", Color("#88cc88"))
+	view_label.text = "当前视角: 普通 — 点击物体切换状态"
+	panel.add_child(view_label)
 
 	# ── 5个物体 ──
 	_make_objects(panel)
@@ -252,76 +256,20 @@ func _make_room_ui() -> void:
 
 
 # ════════════════════════════════════════════════════════════
-#  视角按钮行
+#  视角标签辅助
 # ════════════════════════════════════════════════════════════
 
-func _make_perspective_btns(panel: Panel) -> void:
-	perspective_btns.clear()
-	var btn_w := 68
-	var btn_h := 32
-	var start_x := 20.0
-	var gap := 10.0
-	# 一行排5个按钮，上面带标签
-	var lbl := Label.new()
-	lbl.text = "切换观察视角："
-	lbl.position = Vector2(start_x, 56)
-	lbl.add_theme_font_size_override("font_size", 12)
-	lbl.add_theme_color_override("font_color", Color("#998877"))
-	panel.add_child(lbl)
+func _get_view_label() -> String:
+	for p in PERSPECTIVES:
+		if str(p["id"]) == current_view:
+			return str(p["label"])
+	return current_view
 
-	for i in range(PERSPECTIVES.size()):
-		var p := PERSPECTIVES[i]
-		var btn := Button.new()
-		btn.name = "PerspBtn_" + p["id"]
-		btn.position = Vector2(start_x + i * (btn_w + gap), 76)
-		btn.size = Vector2(btn_w, btn_h)
-		btn.text = p["label"]
-		btn.add_theme_font_size_override("font_size", 13)
-		btn.pressed.connect(_on_perspective_btn.bind(i))
-
-		var s := StyleBoxFlat.new()
-		s.set_corner_radius_all(6)
-		s.bg_color = Color("#3a3028")
-		s.border_width_left = 2; s.border_width_right = 2
-		s.border_width_top = 2; s.border_width_bottom = 2
-		s.border_color = Color("#5a4a3a")
-		btn.add_theme_stylebox_override("normal", s)
-
-		var sh := StyleBoxFlat.new()
-		sh.set_corner_radius_all(6)
-		sh.bg_color = Color("#4a3a30")
-		sh.border_width_left = 2; sh.border_width_right = 2
-		sh.border_width_top = 2; sh.border_width_bottom = 2
-		sh.border_color = Color("#8a7a6a")
-		btn.add_theme_stylebox_override("hover", sh)
-
-		btn.add_theme_color_override("font_color", p["color"])
-		btn.add_theme_color_override("font_hover_color", p["color"])
-		panel.add_child(btn)
-		perspective_btns.append(btn)
-
-	_refresh_perspective_btn_highlight()
-
-
-func _refresh_perspective_btn_highlight() -> void:
-	for i in range(perspective_btns.size()):
-		var btn := perspective_btns[i]
-		if not is_instance_valid(btn):
-			continue
-		var p := PERSPECTIVES[i]
-		var s := StyleBoxFlat.new()
-		s.set_corner_radius_all(6)
-		if i == selected_perspective:
-			s.bg_color = Color("#5a5040")
-			s.border_width_left = 2; s.border_width_right = 2
-			s.border_width_top = 2; s.border_width_bottom = 2
-			s.border_color = p["color"]
-		else:
-			s.bg_color = Color("#3a3028")
-			s.border_width_left = 2; s.border_width_right = 2
-			s.border_width_top = 2; s.border_width_bottom = 2
-			s.border_color = Color("#5a4a3a")
-		btn.add_theme_stylebox_override("normal", s)
+func _get_view_color() -> Color:
+	for p in PERSPECTIVES:
+		if str(p["id"]) == current_view:
+			return p["color"]
+	return Color.WHITE
 
 
 # ════════════════════════════════════════════════════════════
@@ -432,10 +380,11 @@ func _make_one_object(panel: Panel, idx: int) -> void:
 	var zone := ColorRect.new()
 	zone.position = bp + Vector2(0, 2)
 	zone.size = Vector2(ow, 120)
+	zone.mouse_filter = Control.MOUSE_FILTER_STOP
 	zone.color = Color(1, 1, 1, 0.001)
 	zone.gui_input.connect(_on_obj_input.bind(idx))
 	zone.mouse_entered.connect(func():
-		if not is_completed and PERSPECTIVES[selected_perspective]["id"] == "normal":
+		if not is_completed and current_view == "normal":
 			zone.color = Color(1, 0.84, 0.3, 0.12)
 	)
 	zone.mouse_exited.connect(func():
@@ -487,9 +436,9 @@ func _make_one_object(panel: Panel, idx: int) -> void:
 # ════════════════════════════════════════════════════════════
 
 func _get_display_state(idx: int) -> int:
-	# 返回物体idx在当前选中视角下应该显示的状态
+	# 返回物体idx在当前全局视角下应该显示的状态
 	var obj: Dictionary = OBJECTS[idx]
-	var persp_id: String = PERSPECTIVES[selected_perspective]["id"]
+	var persp_id: String = current_view
 	if persp_id == "normal":
 		# 普通视角：显示玩家设置的状态，未设置则显示原始普通视角状态
 		if object_states[idx] >= 0:
@@ -778,10 +727,14 @@ func _open_room() -> void:
 	room_overlay.visible = true
 	_freeze_player(true)
 	room_toggled.emit(true)
-	selected_perspective = 0
-	_refresh_perspective_btn_highlight()
+	# 从玩家读取当前全局视角
+	var player: Node = get_tree().get_first_node_in_group("player")
+	if player != null and "current_view" in player:
+		current_view = str(player.current_view)
+	else:
+		current_view = "normal"
 	_refresh_all()
-	_update_mode_hint()
+	_update_view_label()
 	_update_progress()
 
 
@@ -801,13 +754,6 @@ func _on_shade_input(event: InputEvent) -> void:
 		_close_room()
 
 
-func _on_perspective_btn(idx: int) -> void:
-	selected_perspective = idx
-	_refresh_perspective_btn_highlight()
-	_refresh_all()
-	_update_mode_hint()
-
-
 func _on_obj_input(event: InputEvent, idx: int) -> void:
 	if not event is InputEventMouseButton or not event.pressed:
 		return
@@ -816,9 +762,8 @@ func _on_obj_input(event: InputEvent, idx: int) -> void:
 	if is_completed:
 		return
 
-	var persp_id: String = PERSPECTIVES[selected_perspective]["id"]
-	if persp_id != "normal":
-		_show_locked_hint(persp_id)
+	if current_view != "normal":
+		_show_locked_hint()
 		return
 
 	if object_states[idx] < 0:
@@ -835,18 +780,15 @@ func _on_obj_input(event: InputEvent, idx: int) -> void:
 		_on_complete()
 
 
-func _show_locked_hint(persp_id: String) -> void:
+func _show_locked_hint() -> void:
 	if not is_instance_valid(mode_hint_label):
 		return
-	for p in PERSPECTIVES:
-		if p["id"] == persp_id:
-			mode_hint_label.text = "⚠ %s视角只能观察，请切换到普通视角操作" % p["label"]
-			break
+	mode_hint_label.text = "⚠ 当前为%s视角，只能观察。请去记忆长椅切换到普通视角再操作" % _get_view_label()
 	mode_hint_label.add_theme_color_override("font_color", Color("#ff8866"))
 	var t := create_tween()
 	t.tween_callback(func():
 		if is_instance_valid(mode_hint_label):
-			_update_mode_hint()
+			_update_view_label()
 	).set_delay(1.8)
 
 
@@ -871,7 +813,7 @@ func _refresh_state_text(idx: int) -> void:
 	if not is_instance_valid(lbl):
 		return
 	var obj := OBJECTS[idx]
-	# 显示当前选中视角看到的状态名
+	# 显示当前视角看到的状态名
 	var state := _get_display_state(idx)
 	if state >= 0:
 		lbl.text = obj["states"][state]
@@ -879,16 +821,15 @@ func _refresh_state_text(idx: int) -> void:
 		lbl.text = "未设置"
 
 
-func _update_mode_hint() -> void:
-	if not is_instance_valid(mode_hint_label):
+func _update_view_label() -> void:
+	if not is_instance_valid(view_label):
 		return
-	var p := PERSPECTIVES[selected_perspective]
-	if p["id"] == "normal":
-		mode_hint_label.text = "✓ 普通视角 — 点击物体切换状态"
-		mode_hint_label.add_theme_color_override("font_color", Color("#88cc88"))
+	if current_view == "normal":
+		view_label.text = "当前视角: 普通 — 点击物体切换状态"
+		view_label.add_theme_color_override("font_color", Color("#88cc88"))
 	else:
-		mode_hint_label.text = "👁 %s视角 — 查看该视角下的物体状态，切回普通视角操作" % p["label"]
-		mode_hint_label.add_theme_color_override("font_color", p["color"])
+		view_label.text = "当前视角: %s — 只能观察，请去记忆长椅切换到普通视角" % _get_view_label()
+		view_label.add_theme_color_override("font_color", Color("#ff8866"))
 
 
 func _update_progress() -> void:
@@ -926,8 +867,11 @@ func _freeze_player(freeze: bool) -> void:
 			node.controls_enabled = not freeze
 
 
-func update_on_view_change(_view: String) -> void:
-	pass  # 这个谜题自己管理视角切换
+func update_on_view_change(view: String) -> void:
+	current_view = view
+	if room_open:
+		_refresh_all()
+		_update_view_label()
 
 
 func is_solved() -> bool:
