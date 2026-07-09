@@ -1,406 +1,732 @@
 extends Area2D
 class_name PuzzleBanquetPainting
+
 # ════════════════════════════════════════════════════════════
-#  宴会厅油画 (Banquet Hall Painting)
-#  位置：(5800, 3100) — 风向标1右侧
-#  规则：
-#    抑郁/自闭模式下：同时按住 4+ 个键（手掌按键盘）→ 揭示舞蹈序列
-#    普通模式：按 E 观察油画
-#    记住序列 → 踩地面按钮按顺序通关
-#  产出：钥匙1
+#  油画舞步 — 画中小人教跳舞
+#  6个箭头按钮用画面指示舞步（不用ABCD文字）
+#  同时按下对应方向键来跳每一步
 # ════════════════════════════════════════════════════════════
 
 signal puzzle_completed(key_id: String)
 signal hint_updated(text: String)
+signal room_toggled(open: bool)
 
-var player_in_range: bool = false
-var is_completed: bool = false
+# ── 6种舞步：箭头画面指示 + 对应按键 ──
+const DANCE_MOVES: Array[Dictionary] = [
+	{"id": "right",  "label": "右移", "arrow": "→",  "keys": [KEY_RIGHT],              "color": Color("#ff6644")},
+	{"id": "left",   "label": "左移", "arrow": "←",  "keys": [KEY_LEFT],               "color": Color("#44aaff")},
+	{"id": "jump",   "label": "跳跃", "arrow": "↑",  "keys": [KEY_UP],                 "color": Color("#44ff66")},
+	{"id": "squat",  "label": "下蹲", "arrow": "↓",  "keys": [KEY_DOWN],               "color": Color("#ffaa44")},
+	{"id": "diag_r", "label": "右跳", "arrow": "↗",  "keys": [KEY_UP, KEY_RIGHT],      "color": Color("#ff44aa")},
+	{"id": "diag_l", "label": "左跳", "arrow": "↖",  "keys": [KEY_UP, KEY_LEFT],       "color": Color("#aa44ff")},
+]
 
-# 舞蹈序列配置
-@export var dance_sequence: Array[String] = ["A", "C", "B", "D", "A", "B"]
-var sequence_memorized: bool = false
-var current_input_index: int = 0
+const SEQUENCE_LEN := 5
 
-# 多键手势追踪
-var _held_keys: Array[int] = []
-const MULTIKEY_REQUIRED: int = 4
+# ── 状态 ──
+var player_in_range := false
+var is_completed := false
+var room_open := false
+var current_view := "normal"
 
-# 当前视角模式（由 main.gd 通过 update_on_view_change 同步）
-var current_view: String = "normal"
+var dance_seq: Array[int] = []   # 随机生成的舞步序列（DANCE_MOVES 索引）
+var cur_step := 0                # 当前第几步（0-based）
 
-# 地面按钮
-var buttons: Dictionary = {}
-const BUTTON_POSITIONS: Dictionary = {
-	"A": Vector2(-60, 100),
-	"B": Vector2(-20, 100),
-	"C": Vector2(20, 100),
-	"D": Vector2(60, 100),
+# 多键检测
+var _held: Array[int] = []       # 当前按住的键
+var _step_solved := false        # 当前步是否已判定
+var _solve_timer := 0.0          # 解决后的短暂庆祝计时
+
+# ── UI ──
+var overlay: CanvasLayer = null
+var paint_canvas: Control = null       # 油画布（画小人用）
+var step_label: Label = null           # 提示当前该按什么
+var progress_dots: Array[ColorRect] = []
+var move_btns: Array[Control] = []    # 6个箭头按钮
+
+# 小人动画
+var pose_name := "idle"
+var pose_time := 0.0
+var figure_center := Vector2(90, 70)  # 小人在画布上的中心位置
+
+
+# ════════════════════════════════════════════════════════════
+#  小人关节姿势定义（相对 figure_center）
+# ════════════════════════════════════════════════════════════
+
+const POSES: Dictionary = {
+	"idle": {
+		"head": Vector2(0, -43),
+		"neck": Vector2(0, -33),
+		"hip": Vector2(0, 8),
+		"shld_l": Vector2(-13, -26),
+		"shld_r": Vector2(13, -26),
+		"elb_l": Vector2(-20, -10),
+		"elb_r": Vector2(20, -10),
+		"hand_l": Vector2(-16, 5),
+		"hand_r": Vector2(16, 5),
+		"hip_l": Vector2(-7, 8),
+		"hip_r": Vector2(7, 8),
+		"knee_l": Vector2(-9, 28),
+		"knee_r": Vector2(9, 28),
+		"foot_l": Vector2(-9, 48),
+		"foot_r": Vector2(9, 48),
+	},
+	"right": {
+		"head": Vector2(6, -43),
+		"neck": Vector2(6, -33),
+		"hip": Vector2(4, 8),
+		"shld_l": Vector2(-10, -26),
+		"shld_r": Vector2(18, -26),
+		"elb_l": Vector2(-16, -14),
+		"elb_r": Vector2(26, -8),
+		"hand_l": Vector2(-12, -2),
+		"hand_r": Vector2(32, 8),
+		"hip_l": Vector2(-4, 8),
+		"hip_r": Vector2(10, 8),
+		"knee_l": Vector2(-6, 26),
+		"knee_r": Vector2(14, 30),
+		"foot_l": Vector2(-6, 44),
+		"foot_r": Vector2(16, 50),
+	},
+	"left": {
+		"head": Vector2(-6, -43),
+		"neck": Vector2(-6, -33),
+		"hip": Vector2(-4, 8),
+		"shld_l": Vector2(-18, -26),
+		"shld_r": Vector2(10, -26),
+		"elb_l": Vector2(-26, -8),
+		"elb_r": Vector2(16, -14),
+		"hand_l": Vector2(-32, 8),
+		"hand_r": Vector2(12, -2),
+		"hip_l": Vector2(-10, 8),
+		"hip_r": Vector2(4, 8),
+		"knee_l": Vector2(-14, 30),
+		"knee_r": Vector2(6, 26),
+		"foot_l": Vector2(-16, 50),
+		"foot_r": Vector2(6, 44),
+	},
+	"jump": {
+		"head": Vector2(0, -56),
+		"neck": Vector2(0, -46),
+		"hip": Vector2(0, -5),
+		"shld_l": Vector2(-15, -40),
+		"shld_r": Vector2(15, -40),
+		"elb_l": Vector2(-22, -56),
+		"elb_r": Vector2(22, -56),
+		"hand_l": Vector2(-18, -70),
+		"hand_r": Vector2(18, -70),
+		"hip_l": Vector2(-7, -5),
+		"hip_r": Vector2(7, -5),
+		"knee_l": Vector2(-10, 10),
+		"knee_r": Vector2(10, 10),
+		"foot_l": Vector2(-12, 24),
+		"foot_r": Vector2(12, 24),
+	},
+	"squat": {
+		"head": Vector2(0, -43),
+		"neck": Vector2(0, -33),
+		"hip": Vector2(0, 16),
+		"shld_l": Vector2(-13, -26),
+		"shld_r": Vector2(13, -26),
+		"elb_l": Vector2(-24, -10),
+		"elb_r": Vector2(24, -10),
+		"hand_l": Vector2(-28, 8),
+		"hand_r": Vector2(28, 8),
+		"hip_l": Vector2(-7, 16),
+		"hip_r": Vector2(7, 16),
+		"knee_l": Vector2(-14, 34),
+		"knee_r": Vector2(14, 34),
+		"foot_l": Vector2(-15, 44),
+		"foot_r": Vector2(15, 44),
+	},
+	"diag_r": {
+		"head": Vector2(6, -52),
+		"neck": Vector2(6, -42),
+		"hip": Vector2(4, -2),
+		"shld_l": Vector2(-8, -34),
+		"shld_r": Vector2(18, -36),
+		"elb_l": Vector2(-14, -44),
+		"elb_r": Vector2(28, -18),
+		"hand_l": Vector2(-18, -54),
+		"hand_r": Vector2(36, -4),
+		"hip_l": Vector2(-2, -2),
+		"hip_r": Vector2(10, -2),
+		"knee_l": Vector2(2, 16),
+		"knee_r": Vector2(18, 20),
+		"foot_l": Vector2(4, 34),
+		"foot_r": Vector2(24, 40),
+	},
+	"diag_l": {
+		"head": Vector2(-6, -52),
+		"neck": Vector2(-6, -42),
+		"hip": Vector2(-4, -2),
+		"shld_l": Vector2(-18, -36),
+		"shld_r": Vector2(8, -34),
+		"elb_l": Vector2(-28, -18),
+		"elb_r": Vector2(14, -44),
+		"hand_l": Vector2(-36, -4),
+		"hand_r": Vector2(18, -54),
+		"hip_l": Vector2(-10, -2),
+		"hip_r": Vector2(2, -2),
+		"knee_l": Vector2(-18, 20),
+		"knee_r": Vector2(-2, 16),
+		"foot_l": Vector2(-24, 40),
+		"foot_r": Vector2(-4, 34),
+	},
 }
 
-const DANCER_OFFSETS: Dictionary = {
-	"A": Vector2(-45, -35),
-	"B": Vector2(-15, -30),
-	"C": Vector2(15, -28),
-	"D": Vector2(45, -33),
-}
 
-var painting_visual: CanvasItem
-var dancer_nodes: Dictionary = {}
-var button_nodes: Dictionary = {}
-var multi_key_progress: ProgressBar
+# ════════════════════════════════════════════════════════════
+#  _ready
+# ════════════════════════════════════════════════════════════
 
 func _ready() -> void:
-	# 加入 interactable 组，以便接收视角切换通知
 	add_to_group("interactable")
-	# 渲染在 TileMap 上层
 	z_index = 10
 
 	body_entered.connect(_on_body_entered)
 	body_exited.connect(_on_body_exited)
+
+	# 碰撞形状
 	var shape := CollisionShape2D.new()
 	var rect := RectangleShape2D.new()
-	rect.size = Vector2(260, 200)
+	rect.size = Vector2(220, 180)
 	shape.shape = rect
 	shape.position = Vector2(0, -10)
 	add_child(shape)
-	_make_painting_room()
-	_make_floor_buttons()
-	_make_multi_key_hint()
-	# 延迟获取初始视角
+
+	# 世界中的油画建筑外观
+	_make_world_appearance()
+
+	# overlay
+	_make_overlay()
+
 	call_deferred("_sync_initial_view")
 
-func _make_painting_room() -> void:
-	# 宴会厅建筑
+
+# ════════════════════════════════════════════════════════════
+#  世界中的建筑外观
+# ════════════════════════════════════════════════════════════
+
+func _make_world_appearance() -> void:
 	var hall := Polygon2D.new()
-	var size := Vector2(200, 160)
 	hall.polygon = PackedVector2Array([
-		Vector2(0, 0), Vector2(size.x, 0),
-		Vector2(size.x, size.y), Vector2(0, size.y)
+		Vector2(0, 0), Vector2(160, 0),
+		Vector2(160, 130), Vector2(0, 130)
 	])
-	hall.color = Color("#9a8068")
-	hall.offset = -size / 2.0
+	hall.color = Color("#8a7060")
+	hall.offset = Vector2(-80, -100)
 	add_child(hall)
 
-	# 油画框
+	# 画框
 	var frame := ColorRect.new()
-	frame.position = Vector2(-70, -65)
-	frame.size = Vector2(140, 85)
-	frame.color = Color("#6a5040")
+	frame.position = Vector2(-60, -75)
+	frame.size = Vector2(120, 90)
+	frame.color = Color("#5a4030")
 	add_child(frame)
 
-	# 油画布面
-	var canvas := ColorRect.new()
-	canvas.position = Vector2(-64, -59)
-	canvas.size = Vector2(128, 73)
-	canvas.color = Color("#e8d8c8")
-	canvas.name = "PaintingCanvas"
-	add_child(canvas)
-	painting_visual = canvas
+	var canvas_bg := ColorRect.new()
+	canvas_bg.position = Vector2(-54, -69)
+	canvas_bg.size = Vector2(108, 78)
+	canvas_bg.color = Color("#e8d8c8")
+	add_child(canvas_bg)
 
-	# 舞者标记
-	for key in DANCER_OFFSETS.keys():
-		var dancer := Polygon2D.new()
-		var dp := PackedVector2Array()
-		for i in range(6):
-			var a: float = TAU * i / 6.0
-			dp.append(DANCER_OFFSETS[key] + Vector2(cos(a) * 6, sin(a) * 6))
-		dancer.polygon = dp
-		dancer.color = Color.TRANSPARENT
-		canvas.add_child(dancer)
-		dancer_nodes[key] = dancer
+	# 小人预览
+	var preview := Control.new()
+	preview.position = Vector2(-54, -69)
+	preview.size = Vector2(108, 78)
+	preview.draw.connect(_on_preview_draw.bind(preview))
+	# 简单旋转动画
+	var pt := create_tween().set_loops()
+	pt.tween_callback(func():
+		if is_instance_valid(preview) and not room_open:
+			pose_time += 0.016
+			pose_name = "idle"
+			if fmod(pose_time, 2.0) < 1.0:
+				pose_name = "jump"
+			preview.queue_redraw()
+	).set_delay(0.016)
+	add_child(preview)
 
-	# 标题
 	var title := Label.new()
-	title.text = "[ 宴会厅油画 ]"
-	title.position = Vector2(-55, -95)
-	title.add_theme_font_size_override("font_size", 16)
+	title.text = " 油画"
+	title.position = Vector2(-30, -88)
+	title.add_theme_font_size_override("font_size", 14)
 	title.add_theme_color_override("font_color", Color("#d4c4a4"))
 	add_child(title)
 
-	# 提示文字
+
+func _on_preview_draw(cv: Control) -> void:
+	_draw_stick(cv, "idle" if fmod(pose_time, 2.0) < 1.0 else "jump", Vector2(54, 45), 0.7)
+
+
+# ════════════════════════════════════════════════════════════
+#  Overlay（全屏 UI）
+# ════════════════════════════════════════════════════════════
+
+func _make_overlay() -> void:
+	overlay = CanvasLayer.new()
+	overlay.layer = 10
+	overlay.visible = false
+	add_child(overlay)
+
+	# 半透明背景
+	var bg := ColorRect.new()
+	bg.size = Vector2(1152, 648)
+	bg.color = Color(0, 0, 0, 0.55)
+	overlay.add_child(bg)
+
+	# 主面板
+	var panel := Panel.new()
+	panel.position = Vector2(276, 74)
+	panel.size = Vector2(600, 500)
+	var ps := StyleBoxFlat.new()
+	ps.set_corner_radius_all(12)
+	ps.bg_color = Color("#2a2218")
+	ps.border_width_left = 3; ps.border_width_right = 3
+	ps.border_width_top = 3; ps.border_width_bottom = 3
+	ps.border_color = Color("#6a5040")
+	panel.add_theme_stylebox_override("panel", ps)
+	overlay.add_child(panel)
+
+	# 标题
+	var ttl := Label.new()
+	ttl.text = "🖼 油画 — 跟着小人学跳舞！"
+	ttl.position = Vector2(18, 14)
+	ttl.add_theme_font_size_override("font_size", 18)
+	ttl.add_theme_color_override("font_color", Color("#d4c4a4"))
+	panel.add_child(ttl)
+
+	# ── 画框 ──
+	var frame_outer := ColorRect.new()
+	frame_outer.position = Vector2(18, 44)
+	frame_outer.size = Vector2(200, 140)
+	frame_outer.color = Color("#4a3020")
+	panel.add_child(frame_outer)
+
+	var frame_inner := ColorRect.new()
+	frame_inner.position = Vector2(24, 50)
+	frame_inner.size = Vector2(188, 128)
+	frame_inner.color = Color("#6a4a30")
+	panel.add_child(frame_inner)
+
+	paint_canvas = Control.new()
+	paint_canvas.position = Vector2(28, 54)
+	paint_canvas.size = Vector2(180, 120)
+	paint_canvas.draw.connect(_on_paint_draw)
+	panel.add_child(paint_canvas)
+
+	# 画布背景色
+	var cb := ColorRect.new()
+	cb.position = Vector2(0, 0)
+	cb.size = Vector2(180, 120)
+	cb.color = Color("#f0e4d4")
+	paint_canvas.add_child(cb)
+
+	# ── 当前指令 ──
+	step_label = Label.new()
+	step_label.position = Vector2(18, 192)
+	step_label.size = Vector2(564, 28)
+	step_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	step_label.add_theme_font_size_override("font_size", 18)
+	step_label.add_theme_color_override("font_color", Color("#ffe8a0"))
+	step_label.text = "按 E 开始跳舞！"
+	panel.add_child(step_label)
+
+	# ── 6个箭头按钮 ──
+	_make_arrow_buttons(panel)
+
+	# ── 进度点 ──
+	progress_dots.clear()
+	for i in range(SEQUENCE_LEN):
+		var dot := ColorRect.new()
+		dot.position = Vector2(250 + i * 28, 418)
+		dot.size = Vector2(16, 16)
+		dot.color = Color("#4a3a30")
+		panel.add_child(dot)
+		progress_dots.append(dot)
+
+	# ── 提示 ──
 	var hint := Label.new()
 	hint.name = "HintLabel"
-	hint.text = "走近油画…"
-	hint.position = Vector2(-80, 95)
+	hint.position = Vector2(18, 450)
 	hint.add_theme_font_size_override("font_size", 13)
-	hint.add_theme_color_override("font_color", Color("#ffe8a0"))
-	add_child(hint)
+	hint.add_theme_color_override("font_color", Color("#887766"))
+	hint.text = "按下对应方向键，同时按多键做组合舞步！按 E 关闭"
+	panel.add_child(hint)
 
-func _make_floor_buttons() -> void:
-	for key in BUTTON_POSITIONS.keys():
-		var btn := Area2D.new()
-		btn.name = "Btn_" + str(key)
-		btn.position = BUTTON_POSITIONS[key]
-		btn.z_index = 10
-		add_child(btn)
+	# 关闭按钮
+	var close := Button.new()
+	close.text = "✕ 关闭"
+	close.position = Vector2(530, 12)
+	close.size = Vector2(56, 28)
+	close.add_theme_font_size_override("font_size", 13)
+	close.pressed.connect(_close_room)
+	panel.add_child(close)
 
-		var shape := CollisionShape2D.new()
-		var circle := CircleShape2D.new()
-		circle.radius = 24  # 足够大，容易踩到
-		shape.shape = circle
-		btn.add_child(shape)
 
-		# 地面方砖底座 — 让按钮看起来是放在地上的
-		var floor_plate := ColorRect.new()
-		floor_plate.position = Vector2(-22, -22)
-		floor_plate.size = Vector2(44, 44)
-		floor_plate.color = Color("#4a4038")
-		btn.add_child(floor_plate)
+func _on_paint_draw() -> void:
+	_draw_stick(paint_canvas, pose_name, figure_center, 0.9)
+	# 地面线
+	paint_canvas.draw_line(Vector2(10, 100) + Vector2(0, -46) + figure_center,
+		Vector2(170, 100) + Vector2(0, -46) + figure_center, Color("#ccbbaa"), 1.0)
 
-		# 地砖边框
-		var plate_border := ColorRect.new()
-		plate_border.position = Vector2(-24, -24)
-		plate_border.size = Vector2(48, 48)
-		plate_border.color = Color("#706050", 0.5)
-		btn.add_child(plate_border)
 
-		# 按钮圆形底座
-		var base := Polygon2D.new()
-		var bp := PackedVector2Array()
-		for i in range(20):
-			var a: float = TAU * i / 20.0
-			bp.append(Vector2(cos(a) * 17, sin(a) * 17))
-		base.polygon = bp
-		base.color = Color("#605040")
-		btn.add_child(base)
+# ════════════════════════════════════════════════════════════
+#  画小人
+# ════════════════════════════════════════════════════════════
 
-		# 按钮发光圈（未激活时暗色）
-		var visual := Polygon2D.new()
-		var vp := PackedVector2Array()
-		for i in range(12):
-			var a: float = TAU * i / 12.0
-			vp.append(Vector2(cos(a) * 12, sin(a) * 12))
-		visual.polygon = vp
-		visual.color = Color("#8a7a5a")
-		btn.add_child(visual)
+func _draw_stick(cv: Control, pn: String, center: Vector2, scl: float) -> void:
+	var body := Color("#3a3028")
+	var head_c := Color("#5a4a38")
+	var joint_c := Color("#ffaa66", 0.5)
 
-		var label := Label.new()
-		label.text = key
-		label.position = Vector2(-5, -8)
-		label.add_theme_font_size_override("font_size", 16)
-		label.add_theme_color_override("font_color", Color("#fff8e0"))
-		btn.add_child(label)
+	var p: Dictionary = POSES.get(pn, POSES["idle"])
 
-		buttons[key] = btn
-		button_nodes[key] = visual
+	for key in ["head"]:
+		cv.draw_circle(center + p[key] * scl, 8.0 * scl, head_c)
+		cv.draw_arc(center + p[key] * scl, 7.0 * scl, 0, TAU, 16, body, 1.5 * scl)
 
-func _make_multi_key_hint() -> void:
-	# 多键手势进度条（仅在抑郁/自闭模式下显示）
-	multi_key_progress = ProgressBar.new()
-	multi_key_progress.name = "MultiKeyProgress"
-	multi_key_progress.position = Vector2(-60, -105)
-	multi_key_progress.size = Vector2(120, 8)
-	multi_key_progress.max_value = MULTIKEY_REQUIRED
-	multi_key_progress.value = 0
-	multi_key_progress.show_percentage = false
-	# 用 theme override 确保进度条可见
-	multi_key_progress.add_theme_color_override("font_color", Color.WHITE)
-	multi_key_progress.add_theme_color_override("font_outline_color", Color.BLACK)
-	var fg_style := StyleBoxFlat.new()
-	fg_style.bg_color = Color("#ff6600")
-	var bg_style := StyleBoxFlat.new()
-	bg_style.bg_color = Color("#333333")
-	multi_key_progress.add_theme_stylebox_override("fill", fg_style)
-	multi_key_progress.add_theme_stylebox_override("background", bg_style)
-	multi_key_progress.visible = false
-	add_child(multi_key_progress)
+	# Body
+	cv.draw_line(center + p["neck"] * scl, center + p["hip"] * scl, body, 2.5 * scl)
+	# Shoulder line
+	cv.draw_line(center + p["shld_l"] * scl, center + p["shld_r"] * scl, body, 2.0 * scl)
 
-	# 多键提示标签
-	var mk_label := Label.new()
-	mk_label.name = "MultiKeyLabel"
-	mk_label.text = "把手放键盘上…"
-	mk_label.position = Vector2(-60, -120)
-	mk_label.add_theme_font_size_override("font_size", 10)
-	mk_label.add_theme_color_override("font_color", Color("#ffaa44"))
-	mk_label.visible = false
-	add_child(mk_label)
+	# Left arm
+	cv.draw_line(center + p["shld_l"] * scl, center + p["elb_l"] * scl, body, 2.0 * scl)
+	cv.draw_line(center + p["elb_l"] * scl, center + p["hand_l"] * scl, body, 2.0 * scl)
+	# Right arm
+	cv.draw_line(center + p["shld_r"] * scl, center + p["elb_r"] * scl, body, 2.0 * scl)
+	cv.draw_line(center + p["elb_r"] * scl, center + p["hand_r"] * scl, body, 2.0 * scl)
+
+	# Left leg
+	cv.draw_line(center + p["hip_l"] * scl, center + p["knee_l"] * scl, body, 2.5 * scl)
+	cv.draw_line(center + p["knee_l"] * scl, center + p["foot_l"] * scl, body, 2.5 * scl)
+	# Right leg
+	cv.draw_line(center + p["hip_r"] * scl, center + p["knee_r"] * scl, body, 2.5 * scl)
+	cv.draw_line(center + p["knee_r"] * scl, center + p["foot_r"] * scl, body, 2.5 * scl)
+
+	# Joint dots
+	for k in ["elb_l", "elb_r", "knee_l", "knee_r"]:
+		cv.draw_circle(center + p[k] * scl, 3.0 * scl, joint_c)
+
+
+# ════════════════════════════════════════════════════════════
+#  6个箭头按钮 — 画面指示，画箭头不用文字
+# ════════════════════════════════════════════════════════════
+
+func _make_arrow_buttons(panel: Panel) -> void:
+	move_btns.clear()
+	var btn_w := 88.0
+	var btn_h := 68.0
+	var start_x := 18.0
+	var start_y := 228.0
+	var gap_x := 10.0
+	var gap_y := 8.0
+
+	for i in range(DANCE_MOVES.size()):
+		var dm := DANCE_MOVES[i]
+		var col := i % 3
+		var row := i / 3
+		var bx := start_x + col * (btn_w + gap_x)
+		var by := start_y + row * (btn_h + gap_y)
+
+		var btn := Control.new()
+		btn.position = Vector2(bx, by)
+		btn.size = Vector2(btn_w, btn_h)
+		btn.mouse_filter = Control.MOUSE_FILTER_IGNORE  # 不拦截键盘事件
+		btn.draw.connect(_on_btn_draw.bind(btn, i))
+		panel.add_child(btn)
+		move_btns.append(btn)
+
+		# 按钮底部小标签
+		var lbl := Label.new()
+		lbl.text = str(dm["label"])
+		lbl.position = Vector2(0, btn_h - 16)
+		lbl.size = Vector2(btn_w, 14)
+		lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		lbl.add_theme_font_size_override("font_size", 10)
+		lbl.add_theme_color_override("font_color", Color("#998877"))
+		btn.add_child(lbl)
+
+
+func _on_btn_draw(btn: Control, idx: int) -> void:
+	if idx >= DANCE_MOVES.size():
+		return
+	var dm := DANCE_MOVES[idx]
+	var w := btn.size.x
+	var h := btn.size.y
+	var is_active := room_open and cur_step < dance_seq.size() and dance_seq[cur_step] == idx
+	var btn_color: Color = dm["color"]
+	var bg := Color("#3a3028")
+	var border := Color("#5a4a3a")
+
+	if is_active:
+		bg = btn_color.darkened(0.7)
+		border = btn_color
+		border.a = 0.8
+
+	# 背景
+	btn.draw_rect(Rect2(Vector2.ZERO, btn.size), bg)
+	# 边框
+	btn.draw_rect(Rect2(Vector2(1, 1), btn.size - Vector2(2, 2)), border, false, 2.0)
+	# 圆角效果（用4个小弧线模拟）
+	btn.draw_arc(Vector2(4, 4), 4, PI, 1.5 * PI, 6, border, 2.0)
+	btn.draw_arc(Vector2(w - 4, 4), 4, 1.5 * PI, TAU, 6, border, 2.0)
+	btn.draw_arc(Vector2(4, h - 4), 4, 0.5 * PI, PI, 6, border, 2.0)
+	btn.draw_arc(Vector2(w - 4, h - 4), 4, 0, 0.5 * PI, 6, border, 2.0)
+	# 发光效果
+	if is_active:
+		btn.draw_rect(Rect2(Vector2(0, 0), btn.size), btn_color, false, 3.0)
+
+	# 大箭头
+	var arrow_text := str(dm["arrow"])
+	var arr_lbl := Label.new()
+	arr_lbl.text = arrow_text
+	arr_lbl.add_theme_font_size_override("font_size", 28)
+	arr_lbl.add_theme_color_override("font_color", btn_color if not is_active else Color.WHITE)
+	arr_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	arr_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	arr_lbl.position = Vector2(0, 2)
+	arr_lbl.size = Vector2(w, h - 16)
+	# We'll use draw_string via a simpler approach
+	var font_size := 28
+	# Draw centered text
+	var tx := (w - font_size * 0.6 * float(len(arrow_text))) / 2.0
+	var ty := (h - 16 - font_size) / 2.0 + 4
+	btn.draw_string(ThemeDB.fallback_font, Vector2(tx, ty), arrow_text,
+		HORIZONTAL_ALIGNMENT_CENTER, -1, font_size, btn_color if not is_active else Color.WHITE)
+
+	# 小按键提示
+	var key_hint := _get_key_hint(idx)
+	btn.draw_string(ThemeDB.fallback_font, Vector2(4, h - 30), key_hint,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color("#887766"))
+
+
+func _get_key_hint(idx: int) -> String:
+	var keys: Array = DANCE_MOVES[idx]["keys"]
+	var parts: Array[String] = []
+	for k in keys:
+		match k:
+			KEY_UP:    parts.append("↑")
+			KEY_DOWN:  parts.append("↓")
+			KEY_LEFT:  parts.append("←")
+			KEY_RIGHT: parts.append("→")
+	if parts.size() == 1:
+		return str(parts[0])
+	return str(parts[0]) + "+" + str(parts[1])
+
+
+# ════════════════════════════════════════════════════════════
+#  玩家进入/离开
+# ════════════════════════════════════════════════════════════
+
+func _on_body_entered(body: Node2D) -> void:
+	if body.is_in_group("player"):
+		player_in_range = true
+
+func _on_body_exited(body: Node2D) -> void:
+	if body.is_in_group("player"):
+		player_in_range = false
+		_held.clear()
+
+
+# ════════════════════════════════════════════════════════════
+#  交互
+# ════════════════════════════════════════════════════════════
+
+func _input(event: InputEvent) -> void:
+	if not player_in_range or is_completed:
+		return
+
+	# E 键开关房间
+	if event.is_action_pressed("interact"):
+		if room_open:
+			_close_room()
+		else:
+			_open_room()
+		return
+
+	# 只在房间打开且进行中处理按键
+	if not room_open:
+		return
+
+	if event is InputEventKey:
+		if event.pressed and not event.echo:
+			if not _held.has(event.keycode):
+				_held.append(event.keycode)
+			_check_dance_input()
+		elif not event.pressed:
+			_held.erase(event.keycode)
+
+
+func _check_dance_input() -> void:
+	if _step_solved:
+		return
+	if cur_step >= dance_seq.size():
+		return
+
+	var expected: Array = DANCE_MOVES[dance_seq[cur_step]]["keys"]
+	# 按住键必须恰好包含所需键（不多不少）
+	var expected_sorted := expected.duplicate()
+	expected_sorted.sort()
+	var held_sorted := _held.duplicate()
+	held_sorted.sort()
+
+	if expected_sorted == held_sorted:
+		_step_solved = true
+		_solve_timer = 0.0
+		step_label.text = "✓ 正确！太棒了！"
+		step_label.add_theme_color_override("font_color", Color("#88ff88"))
+		hint_updated.emit("✓ 舞步 %d/%d 完成！" % [cur_step + 1, SEQUENCE_LEN])
+
+
+# ════════════════════════════════════════════════════════════
+#  _process
+# ════════════════════════════════════════════════════════════
+
+func _process(delta: float) -> void:
+	if not room_open or is_completed:
+		return
+
+	# 小人姿势动画
+	pose_time += delta
+	if _step_solved:
+		# 解决后跳一小段动画
+		var move_idx := dance_seq[cur_step] if cur_step < dance_seq.size() else 0
+		var move_id: String = DANCE_MOVES[move_idx]["id"]
+		pose_name = move_id
+		_solve_timer += delta
+		if _solve_timer > 0.8:
+			_step_solved = false
+			_solve_timer = 0.0
+			pose_name = "idle"
+			cur_step += 1
+			_held.clear()
+			_update_progress()
+			if cur_step >= dance_seq.size():
+				_on_complete()
+			else:
+				_show_current_step()
+	else:
+		# 正常呼吸动画
+		pose_name = "idle"
+		if fmod(pose_time, 3.0) < 0.3:
+			pose_name = "jump"
+
+	paint_canvas.queue_redraw()
+	for btn in move_btns:
+		if is_instance_valid(btn):
+			btn.queue_redraw()
+
+
+# ════════════════════════════════════════════════════════════
+#  房间开关
+# ════════════════════════════════════════════════════════════
+
+func _open_room() -> void:
+	room_open = true
+	overlay.visible = true
+	_freeze_player(true)
+	room_toggled.emit(true)
+	# 同步视角
+	var player := _get_player()
+	if player != null and "current_view" in player:
+		current_view = str(player.current_view)
+	# 开始跳舞
+	_start_dance()
+
+
+func _close_room() -> void:
+	room_open = false
+	overlay.visible = false
+	_freeze_player(false)
+	room_toggled.emit(false)
+	_held.clear()
+	_step_solved = false
+
+
+func _start_dance() -> void:
+	# 生成随机舞步序列
+	dance_seq.clear()
+	for _i in range(SEQUENCE_LEN):
+		dance_seq.append(randi() % DANCE_MOVES.size())
+	cur_step = 0
+	_held.clear()
+	_step_solved = false
+	pose_name = "idle"
+	pose_time = 0.0
+	_update_progress()
+	_show_current_step()
+	hint_updated.emit("跟着小人学跳舞！按下箭头键来做动作")
+
+
+func _show_current_step() -> void:
+	if cur_step >= dance_seq.size():
+		return
+	var dm := DANCE_MOVES[dance_seq[cur_step]]
+	step_label.text = "第 %d 步 — 同时按下:  %s" % [cur_step + 1, _get_key_hint(dance_seq[cur_step])]
+	step_label.add_theme_color_override("font_color", dm["color"])
+	for i in range(move_btns.size()):
+		move_btns[i].queue_redraw()
+
+
+func _update_progress() -> void:
+	for i in range(SEQUENCE_LEN):
+		if i < progress_dots.size():
+			if i < cur_step:
+				progress_dots[i].color = Color("#88ff88")
+			elif i == cur_step and cur_step < SEQUENCE_LEN:
+				progress_dots[i].color = Color("#ffaa44")
+			else:
+				progress_dots[i].color = Color("#4a3a30")
+
+
+# ════════════════════════════════════════════════════════════
+#  完成
+# ════════════════════════════════════════════════════════════
+
+func _on_complete() -> void:
+	is_completed = true
+	step_label.text = "✨ 舞步完成！获得宴会厅钥匙！"
+	step_label.add_theme_color_override("font_color", Color("#ffd700"))
+	hint_updated.emit("✨ 你获得了钥匙1！")
+	pose_name = "jump"
+
+	var hlb: Label = get_node_or_null("HintLabel") as Label
+	if is_instance_valid(hlb):
+		hlb.text = "✓ 已完成 — 钥匙1已获取"
+
+	# 2秒后自动关闭
+	get_tree().create_timer(2.0).timeout.connect(func():
+		if room_open:
+			_close_room()
+	)
+	puzzle_completed.emit("key_1")
+
+
+# ════════════════════════════════════════════════════════════
+#  视角同步（记忆长椅）
+# ════════════════════════════════════════════════════════════
+
+func update_on_view_change(view: String) -> void:
+	current_view = view
 
 func _sync_initial_view() -> void:
 	var main = get_tree().get_first_node_in_group("main")
 	if main and main.has_method("get_view"):
 		update_on_view_change(main.get_view())
 
-# 外部通知视角变化
-func update_on_view_change(view: String) -> void:
-	current_view = view
-	var is_special: bool = (view == "depression" or view == "autism")
-	var mk_label: Label = get_node_or_null("MultiKeyLabel") as Label
-	if is_instance_valid(mk_label):
-		mk_label.visible = is_special and player_in_range and not is_completed and not sequence_memorized
-	if is_instance_valid(multi_key_progress):
-		multi_key_progress.visible = is_special and player_in_range and not is_completed and not sequence_memorized
-	_update_hint()
 
-func _on_body_entered(body: Node2D) -> void:
-	if body.is_in_group("player"):
-		player_in_range = true
-		var is_special: bool = (current_view == "depression" or current_view == "autism")
-		var mk_label: Label = get_node_or_null("MultiKeyLabel") as Label
-		if is_instance_valid(mk_label):
-			mk_label.visible = is_special and not is_completed and not sequence_memorized
-		if is_instance_valid(multi_key_progress):
-			multi_key_progress.visible = is_special and not is_completed and not sequence_memorized
-		_update_hint()
+# ════════════════════════════════════════════════════════════
+#  辅助
+# ════════════════════════════════════════════════════════════
 
-func _on_body_exited(body: Node2D) -> void:
-	if body.is_in_group("player"):
-		player_in_range = false
-		_held_keys.clear()
-		var mk_label: Label = get_node_or_null("MultiKeyLabel") as Label
-		if is_instance_valid(mk_label):
-			mk_label.visible = false
-		if is_instance_valid(multi_key_progress):
-			multi_key_progress.visible = false
-
-func _input(event: InputEvent) -> void:
-	if not player_in_range or is_completed:
-		return
-
-	# ── 多键手势（抑郁/自闭模式） ──
-	var is_special: bool = (current_view == "depression" or current_view == "autism")
-	if is_special and not sequence_memorized:
-		if event is InputEventKey:
-			if event.pressed and not event.echo:
-				if not _held_keys.has(event.keycode):
-					_held_keys.append(event.keycode)
-			elif not event.pressed:
-				_held_keys.erase(event.keycode)
-
-			var count: int = _held_keys.size()
-			if is_instance_valid(multi_key_progress):
-				multi_key_progress.value = count
-			var mk_label: Label = get_node_or_null("MultiKeyLabel") as Label
-			if is_instance_valid(mk_label):
-				mk_label.text = "按住 %d/%d 个键…" % [count, MULTIKEY_REQUIRED]
-
-			if count >= MULTIKEY_REQUIRED:
-				_start_observing()
-				_held_keys.clear()
-				return
-
-	# ── 普通模式 / 已记住序列 — E 键交互 ──
-	if event.is_action_pressed("interact"):
-		if not sequence_memorized:
-			if not is_special:
-				_start_observing()
-			else:
-				hint_updated.emit("把手放在键盘上，同时按住多个键来感受舞者的振动…")
-		else:
-			hint_updated.emit("已经记住了序列！去踩地面的按钮吧。")
-
-func _start_observing() -> void:
-	hint_updated.emit("观察油画中舞者的舞蹈顺序…")
-	_get_hint_label().text = "观察舞蹈中…"
-	# 隐藏多键提示
-	var mk_label: Label = get_node_or_null("MultiKeyLabel") as Label
-	if is_instance_valid(mk_label):
-		mk_label.visible = false
-	if is_instance_valid(multi_key_progress):
-		multi_key_progress.visible = false
-	_play_dance_animation()
-
-func _play_dance_animation() -> void:
-	for i in range(dance_sequence.size()):
-		var step_key: String = dance_sequence[i]
-		var delay: float = float(i) * 1.2
-		get_tree().create_timer(delay).timeout.connect(func():
-			_highlight_dancer(step_key)
-		)
-
-	get_tree().create_timer(float(dance_sequence.size()) * 1.2 + 0.5).timeout.connect(func():
-		if not sequence_memorized:
-			sequence_memorized = true
-			hint_updated.emit("舞蹈序列：%s → 去踩地面按钮！" % str(dance_sequence))
-			_get_hint_label().text = "序列: %s" % str(dance_sequence)
-			# 点亮所有地面按钮
-			for key in button_nodes.keys():
-				if is_instance_valid(button_nodes[key]):
-					var t := create_tween()
-					t.tween_property(button_nodes[key], "color", Color("#ffaa00"), 0.3)
-	)
-
-func _highlight_dancer(key: String) -> void:
-	if not is_instance_valid(dancer_nodes.get(key)):
-		return
-	var dancer: Polygon2D = dancer_nodes[key]
-	var tween := create_tween()
-	tween.tween_property(dancer, "color", Color("#ff44aa"), 0.2)
-	tween.tween_property(dancer, "color", Color.TRANSPARENT, 0.4)
-
-	# 同时闪烁对应地面按钮
-	if is_instance_valid(button_nodes.get(key)):
-		var btn_vis: Polygon2D = button_nodes[key]
-		var bt := create_tween()
-		bt.tween_property(btn_vis, "color", Color("#ffd700"), 0.2)
-		bt.tween_property(btn_vis, "color", Color("#c0a060"), 0.4)
-
-func _process(_delta: float) -> void:
-	if not player_in_range or is_completed or not sequence_memorized:
-		return
-	var player: Node2D = _get_player()
-	if player == null:
-		return
-
-	for key in buttons.keys():
-		var btn: Area2D = buttons[key]
-		if btn.get_overlapping_bodies().has(player):
-			_on_button_pressed(key)
-
-var pressed_cooldown: Dictionary = {}
-
-func _on_button_pressed(key: String) -> void:
-	if pressed_cooldown.get(key, 0.0) > Time.get_ticks_msec():
-		return
-	pressed_cooldown[key] = Time.get_ticks_msec() + 500
-
-	var expected: String = dance_sequence[current_input_index]
-
-	if key == expected:
-		current_input_index += 1
-		hint_updated.emit("✓ 按钮%s正确！(%d/%d)" % [key, current_input_index, dance_sequence.size()])
-		_get_hint_label().text = "%s ✓ (%d/%d)" % [key, current_input_index, dance_sequence.size()]
-		_flash_button(key, Color("#80e080"))
-
-		if current_input_index >= dance_sequence.size():
-			_complete_puzzle()
-	else:
-		current_input_index = 0
-		hint_updated.emit("✗ 顺序错误！从头再来。")
-		_get_hint_label().text = "✗ 错误! 重来"
-		_flash_button(key, Color("#e08080"))
-
-func _flash_button(key: String, flash_color: Color) -> void:
-	if not is_instance_valid(button_nodes.get(key)):
-		return
-	var vis: Polygon2D = button_nodes[key]
-	var tween := create_tween()
-	tween.tween_property(vis, "color", flash_color, 0.12)
-	tween.tween_property(vis, "color", Color("#ffaa00"), 0.3)
-
-func _complete_puzzle() -> void:
-	is_completed = true
-	_get_hint_label().text = "✨ 获得钥匙1（宴会厅钥匙）！"
-	hint_updated.emit("✨ 你获得了钥匙1！")
-	puzzle_completed.emit("key_1")
-
-	var tween := create_tween()
-	tween.tween_property(painting_visual, "color", Color("#ffd700"), 0.5)
-
-func _update_hint() -> void:
-	var lbl: Label = _get_hint_label()
-	if is_completed:
-		lbl.text = "✓ 已完成 — 钥匙1已获取"
-	elif sequence_memorized:
-		lbl.text = "踩按钮! (%d/%d)" % [current_input_index, dance_sequence.size()]
-	else:
-		var is_special: bool = (current_view == "depression" or current_view == "autism")
-		if is_special:
-			lbl.text = "同时按住 4+ 个键感受画中振动"
-		else:
-			lbl.text = "按 [E] 观察油画（抑郁/自闭视角揭示秘密）"
-
-func _get_hint_label() -> Label:
-	return get_node_or_null("HintLabel") as Label
+func _freeze_player(freeze: bool) -> void:
+	for node in get_tree().get_nodes_in_group("player"):
+		if "controls_enabled" in node:
+			node.controls_enabled = not freeze
 
 func _get_player() -> Node2D:
 	for node in get_tree().get_nodes_in_group("player"):
