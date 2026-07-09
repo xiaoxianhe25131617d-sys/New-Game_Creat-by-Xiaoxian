@@ -1595,7 +1595,7 @@ func _make_memory_anchors() -> void:
 		"plaza": Vector2(3400, 3170), "forest": Vector2(4800, 3170),
 		"lighthouse": Vector2(4900, 3170), "dam": Vector2(6200, 3170),
 		"station": Vector2(6900, 3170), "park": Vector2(7900, 3170),
-		"observatory": Vector2(9800, 3170), "underground": Vector2(5350, UG_GROUND_Y_PX - 25),
+		"observatory": Vector2(10600, 3170), "underground": Vector2(5350, UG_GROUND_Y_PX - 25),
 	}
 	for key in GameData.REGIONS.keys():
 		if key == "spawn": continue

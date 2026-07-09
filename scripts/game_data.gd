@@ -149,11 +149,11 @@ const NPCS: Array = [
 	{"id": "clown",         "name": "小丑",      "region": "park", "pos": Vector2(7500, 3176),  "portrait": "#ff7d7d"},
 	{"id": "mechanic",      "name": "修理工",    "region": "park", "pos": Vector2(7900, 3176),  "portrait": "#d9be6a"},
 	{"id": "ticket",        "name": "售票员",    "region": "park", "pos": Vector2(8300, 3176),  "portrait": "#78d0b8"},
-	{"id": "npc_cipher_1",  "name": "守卫A",     "region": "observatory", "pos": Vector2(9000, 3176), "portrait": "#94adc6"},
-	{"id": "npc_cipher_2",  "name": "学者B",     "region": "observatory", "pos": Vector2(9250, 3176), "portrait": "#80b2d4"},
-	{"id": "npc_cipher_3",  "name": "工匠C",     "region": "observatory", "pos": Vector2(9500, 3176), "portrait": "#abb0b8"},
-	{"id": "npc_cipher_4",  "name": "旅者D",     "region": "observatory", "pos": Vector2(10100, 3176), "portrait": "#b98b62"},
-	{"id": "npc_cipher_5",  "name": "智者E",     "region": "observatory", "pos": Vector2(10350, 3176), "portrait": "#cba0ff"},
+	{"id": "npc_cipher_1",  "name": "站台守卫",  "region": "observatory", "pos": Vector2(9000, 3176), "portrait": "#94adc6"},
+	{"id": "npc_cipher_2",  "name": "读书人",    "region": "observatory", "pos": Vector2(9250, 3176), "portrait": "#80b2d4"},
+	{"id": "npc_cipher_3",  "name": "工匠",      "region": "observatory", "pos": Vector2(9500, 3176), "portrait": "#abb0b8"},
+	{"id": "npc_cipher_4",  "name": "旅人",      "region": "observatory", "pos": Vector2(10100, 3176), "portrait": "#b98b62"},
+	{"id": "npc_cipher_5",  "name": "老者",      "region": "observatory", "pos": Vector2(10350, 3176), "portrait": "#cba0ff"},
 	{"id": "cave_hermit",   "name": "洞穴隐士",  "region": "underground", "pos": Vector2(5100, 4256), "portrait": "#a3ccff"},
 ]
 
@@ -207,19 +207,19 @@ const DIALOGUES: Dictionary = {
 		{"expr": "happy", "text": "四把钥匙集齐了？地下深处宝箱在等你。"},
 	],
 	"npc_cipher_1": [
-		{"expr": "neutral", "text": "我守护这个地方已经很久了。", "subtext": "我其实很想休息"},
+		{"expr": "neutral", "text": "我守在这里很久了。", "subtext": "第一个位置，像门一样"},
 	],
 	"npc_cipher_2": [
-		{"expr": "neutral", "text": "知识就是力量。", "subtext": "但我害怕力量被滥用"},
+		{"expr": "neutral", "text": "知识有时是负担。", "subtext": "第二个人，梦总是一对"},
 	],
 	"npc_cipher_3": [
-		{"expr": "neutral", "text": "工具应该服务于人。", "subtext": "可人们总是被工具驱使"},
+		{"expr": "neutral", "text": "工具比人更诚实。", "subtext": "第三道裂痕最危险"},
 	],
 	"npc_cipher_4": [
-		{"expr": "neutral", "text": "旅途的意义在于过程。", "subtext": "想找个可以停留的地方"},
+		{"expr": "neutral", "text": "旅途没有终点。", "subtext": "第四个倒影无人认领"},
 	],
 	"npc_cipher_5": [
-		{"expr": "neutral", "text": "智慧来自于倾听。", "subtext": "没人真正听我说过话"},
+		{"expr": "neutral", "text": "倾听是最难的修行。", "subtext": "第五根手指，沾满墨迹"},
 	],
 	"cave_hermit": [
 		{"expr": "thinking", "text": "迷宫深处有两条路。一条通向钥匙，一条通向宝藏。"},

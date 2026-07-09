@@ -536,7 +536,7 @@ func _describe_interactable(node: Node) -> String:
 	if node is PuzzleFindDifference: return "[关卡2] 找不同密室 — 视角找差异"
 	if node is PuzzleBanquetPainting: return "[关卡3] 宴会厅油画 — 舞蹈序列"
 	if node is PuzzleAmusementLights: return "[关卡4] 游乐园灯板 — 音频+速度"
-	if node is PuzzleNPCPassword:    return "[关卡5] NPC密码台 — 潜台词解码"
+	if node is PuzzleNPCPassword:    return "[关卡5] NPC密码台 — 石台铭文"
 	if node is PuzzleDarkMaze:       return "[关卡6] 黑暗迷宫 — 听觉导航"
 	
 	match node.get_meta("kind", ""):
