@@ -376,10 +376,17 @@ func _make_one_object(panel: Panel, idx: int) -> void:
 	nl.add_theme_color_override("font_color", Color("#ccaa88"))
 	panel.add_child(nl)
 
-	# 可点击区域
+	# 物体绘制容器（不拦截鼠标，让点击穿透到zone）
+	var vis := Control.new()
+	vis.position = bp + Vector2(0, 6)
+	vis.size = Vector2(ow, 110)
+	vis.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(vis)
+
+	# 可点击区域（整个物体卡片，从名称到状态文字都覆盖）
 	var zone := ColorRect.new()
-	zone.position = bp + Vector2(0, 2)
-	zone.size = Vector2(ow, 120)
+	zone.position = bp + Vector2(-4, -18)
+	zone.size = Vector2(ow + 8, 158)
 	zone.mouse_filter = Control.MOUSE_FILTER_STOP
 	zone.color = Color(1, 1, 1, 0.001)
 	zone.gui_input.connect(_on_obj_input.bind(idx))
@@ -392,12 +399,6 @@ func _make_one_object(panel: Panel, idx: int) -> void:
 	)
 	panel.add_child(zone)
 	obj_zones.append(zone)
-
-	# 物体绘制容器
-	var vis := Control.new()
-	vis.position = bp + Vector2(0, 6)
-	vis.size = Vector2(ow, 110)
-	panel.add_child(vis)
 	obj_visuals.append(vis)
 
 	# 视角小标签行
