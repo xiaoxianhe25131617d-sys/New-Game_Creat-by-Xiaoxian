@@ -76,11 +76,15 @@ func _physics_process(delta: float) -> void:
 		velocity.y = minf(velocity.y, MAX_FALL_SPEED)
 
 	# ── 穿透地板（按 ↓ 从可穿透平台掉下去）──
+	# 关键：玩家**踩在** drop tile 上时，drop tile 在物理层2（独立 tileset）
+	# 玩家 mask 同时启用 layer 1+2，所以能站在 drop tile 上
+	# 当玩家按下 S/Down/Ui_Down 时，临时关闭 mask bit 2 → drop tile 对玩家透明 → 玩家掉下去
+	# 掉到下层 (y>=269) 之后重新开启 mask bit 2
 	if _drop_cooldown > 0.0:
 		_drop_cooldown -= delta
-		# 掉下去后重新开启碰撞层2
+		# 掉下去后重新开启碰撞层2（当玩家 y 已掉到主层地面以下）
 		var feet_tile_y := floori((global_position.y + 31) / 16.0)
-		if feet_tile_y >= 269:  # 已经掉到主层地板(y=267)以下
+		if feet_tile_y >= 269:  # 已经掉到主层地板(y=268)以下
 			set_collision_mask_value(2, true)
 			_drop_cooldown = 0.0
 	elif _drop_cooldown <= 0.0:
@@ -88,6 +92,7 @@ func _physics_process(delta: float) -> void:
 		set_collision_mask_value(2, true)
 
 	var down_held: bool = Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN) or Input.is_action_pressed("ui_down")
+	# 也支持 jump（S）+drop 组合 — 但 jump 优先级更高
 	if down_held and is_on_floor() and _drop_cooldown <= 0.0:
 		# 检查玩家脚下是否有可穿透地板
 		var world_node := get_tree().get_first_node_in_group("world") as MindscapeWorld
@@ -95,13 +100,17 @@ func _physics_process(delta: float) -> void:
 			var feet_x := floori(global_position.x / 16.0)
 			var feet_y := floori((global_position.y + 31) / 16.0)
 			# 玩家2tile宽，检测脚下多个位置
+			# 同时检测 feet_y 和 feet_y+1（浮点精度可能导致差1行）
 			var on_drop := false
 			for dx in range(-1, 2):
 				if world_node.is_drop_through_tile(Vector2i(feet_x + dx, feet_y)):
 					on_drop = true
 					break
+				if world_node.is_drop_through_tile(Vector2i(feet_x + dx, feet_y + 1)):
+					on_drop = true
+					break
 			if on_drop:
-				# 暂时禁用穿透地板碰撞层
+				# 暂时禁用穿透地板碰撞层 → drop tile 对玩家透明
 				set_collision_mask_value(2, false)
 				_drop_cooldown = 0.5  # 500ms 内不再触发
 				velocity.y = 30  # 轻微下推确保脱离地板

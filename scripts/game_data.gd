@@ -47,10 +47,10 @@ const LEVELS: Array = [
 		"region": "forest",
 		"pos": Vector2(5000, 3170),
 		"type": "find_diff",
-		"prereq": "texture_wall",
+		"prereq": "",
 		"reward": "laser_device_1",
-		"hint": "密室里有4处细节差异，ADHD+抑郁视角各能看到不同的隐藏内容。",
-		"view_hint": "ADHD视角+抑郁视角各能发现2处差异。",
+		"hint": "密室内5个物体各有3种状态。不同视角看到不同样子，正确状态是两视角一致的那个。",
+		"view_hint": "ADHD/抑郁/自闭视角分别看到物体不同状态，找到两两一致的正确状态。",
 	},
 	{
 		"id": "banquet_painting",
@@ -58,7 +58,7 @@ const LEVELS: Array = [
 		"region": "forest",
 		"pos": Vector2(5800, 3100),
 		"type": "dance_sequence",
-		"prereq": "texture_wall",
+		"prereq": "",
 		"reward": "key_1",
 		"hint": "油画中的小人在跳舞！记住他们的舞步顺序...",
 		"view_hint": "自闭症/抑郁模式看清舞蹈序列。",
@@ -125,9 +125,9 @@ const KEYS: Dictionary = {
 const LASER_SYSTEM: Dictionary = {
 	"laser_device_1": {"name": "激光装置1", "source": "find_difference"},
 	"laser_device_2": {"name": "激光装置2", "source": "nine_grid"},
-	"wind_vane_1":   {"name": "风向标1",   "pos": Vector2(4200, 2900), "direction": Vector2(1, 0.3)},
-	"wind_vane_2":   {"name": "风向标2",   "pos": Vector2(7200, 2900), "direction": Vector2(-1, 0.3)},
-	"treasure_pos":  Vector2(5600, 2700),
+	"wind_vane_1":   {"name": "风向标1",   "pos": Vector2(4200, 3040), "direction": Vector2(1, 0.3)},
+	"wind_vane_2":   {"name": "风向标2",   "pos": Vector2(7200, 3040), "direction": Vector2(-1, 0.3)},
+	"treasure_pos":  Vector2(5600, 2900),
 }
 
 # ════════════════════════════════════════════════════════════

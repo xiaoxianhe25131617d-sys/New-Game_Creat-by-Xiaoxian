@@ -19,6 +19,7 @@ var monster_hint_cooldown: float = 0.0
 var login_name_input: LineEdit
 var damage_overlay: ColorRect  # red flash on monster hit
 var damage_tween: Tween  # for damage overlay animation
+var _ladder_space_was_held: bool = false  # 梯子跳跃：检测 Space 刚按下的边沿
 
 # ── 侧边物品栏 + 拖放系统 ──
 var sidebar: Panel          # 左侧物品栏面板
@@ -59,25 +60,38 @@ func _update_ladder_climb(delta: float) -> void:
 	if ladder == null:
 		player.is_on_ladder = false
 		return
-	
+
+	# 跳跃：按 Space 时直接脱离梯子，赋予向上速度（沿用玩家 JUMP_VELOCITY）
+	var space_just: bool = Input.is_action_just_pressed("jump") or (Input.is_key_pressed(KEY_SPACE) and not _ladder_space_was_held)
+	_ladder_space_was_held = Input.is_key_pressed(KEY_SPACE)
+	if space_just:
+		player.is_on_ladder = false
+		player.velocity.y = -580.0  # JUMP_VELOCITY，玩家视角倍率后由下次物理 tick 接管
+		# 不在梯子区域内，水平方向由玩家自己输入决定（这里先清零）
+		player.velocity.x = 0.0
+		# 给一个轻微横向推力，让玩家朝面对的方向飞
+		var face: float = 1.0 if player.scale.x >= 0.0 else -1.0
+		player.velocity.x = 120.0 * face
+		return
+
 	# 检测玩家是否想离开梯子（按 A/D）
 	var left_held: bool = Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT)
 	var right_held: bool = Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT)
 	var want_off: bool = left_held or right_held
-	
+
 	player.is_on_ladder = true
-	
+
 	if want_off:
 		# 玩家想离开梯子 — 不拉回X，不爬升，让物理系统接管
 		# 只重置速度，让玩家自然滑出梯子区域
 		player.velocity.y = 0.0
 		return
-	
+
 	# 在梯子上且不想离开 — 正常爬行
 	var lx: float = ladder.get_meta("ladder_x", player.global_position.x)
 	player.global_position.x = lerpf(player.global_position.x, lx, 0.4)
 	player.velocity.y = 0.0
-	
+
 	var climb_speed: float = 180.0
 	var up_held: bool = Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP) or Input.is_action_pressed("ui_up")
 	var down_held: bool = Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN) or Input.is_action_pressed("ui_down")
@@ -85,7 +99,7 @@ func _update_ladder_climb(delta: float) -> void:
 		player.global_position.y -= climb_speed * delta
 	elif down_held and not up_held:
 		player.global_position.y += climb_speed * delta
-	
+
 	var top_y: float = ladder.get_meta("ladder_top_y", 0.0)
 	var bot_y: float = ladder.get_meta("ladder_bottom_y", 0.0)
 	player.global_position.y = clampf(player.global_position.y, top_y - 4.0, bot_y + 4.0)
@@ -864,7 +878,12 @@ func _end_drag(screen_pos: Vector2) -> void:
 func _update_inventory_sidebar() -> void:
 	if inv_slots.is_empty():
 		return
-	var keys: Array = state.get("collected_keys", [])
+	# ── 修复：确保 collected_keys 是普通 Array（不依赖类型推断）──
+	var raw_keys = state.get("collected_keys", [])
+	var keys: Array = []
+	if raw_keys is Array:
+		for k in raw_keys:
+			keys.append(str(k))
 	
 	for item_id in inv_slots:
 		var slot: Panel = inv_slots[item_id] as Panel
@@ -879,7 +898,7 @@ func _update_inventory_sidebar() -> void:
 		var idata: Dictionary = slot.get_meta("item_data", {})
 		
 		if item_id.begins_with("key_"):
-			if keys.has(item_id):
+			if keys.has(str(item_id)):
 				var kd: Dictionary = GameData.KEYS.get(item_id, {}) as Dictionary
 				var kc: Color = kd.get("color", Color.WHITE) as Color
 				st.bg_color = kc.darkened(0.6)
@@ -987,9 +1006,16 @@ func collect_item(node: Node) -> void:
 # ══════════════ 新系统：钥匙收集 + 宝箱 ══════════════
 
 func collect_key(key_id: String) -> void:
-	if state.get("collected_keys", []).has(key_id):
+	# ── 修复：先确保 collected_keys 是普通 Array（不依赖类型推断）──
+	var raw_keys = state.get("collected_keys", [])
+	var keys: Array = []
+	if raw_keys is Array:
+		for k in raw_keys:
+			keys.append(str(k))
+	if keys.has(key_id):
+		# 已获得，仍刷新一次物品栏（防御性，避免之前漏刷新）
+		_update_inventory_sidebar()
 		return
-	var keys: Array = state.get("collected_keys", [])
 	keys.append(key_id)
 	state["collected_keys"] = keys
 	
@@ -1009,7 +1035,13 @@ func collect_key(key_id: String) -> void:
 	autosave()
 
 func get_collected_keys() -> Array:
-	return state.get("collected_keys", [])
+	# ── 修复：返回普通 Array（避免 typed array 导致下游代码出错）──
+	var raw = state.get("collected_keys", [])
+	var out: Array = []
+	if raw is Array:
+		for k in raw:
+			out.append(str(k))
+	return out
 
 func try_open_treasure_chest(chest_node: Node) -> void:
 	var keys: Array = state.get("collected_keys", [])
@@ -1219,6 +1251,9 @@ func open_view_wheel() -> void:
 			wheel_root = null
 	)
 	wheel_root.add_child(close_btn)
+
+func get_view() -> String:
+	return str(state.get("current_view", "normal"))
 
 func try_switch_view(view: String) -> void:
 	if not state.get("unlocked_views", []).has(view):

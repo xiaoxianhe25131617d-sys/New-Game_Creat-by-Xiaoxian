@@ -447,7 +447,7 @@ func _complete_puzzle() -> void:
 	_disable_player(false)
 	hint_label.text = "四块石头全部凹陷！石门颤动..."
 	hint_updated.emit("石门上所有凸起的石块都沉入墙中——门缓缓打开了！")
-	puzzle_completed.emit()
+	puzzle_completed.emit("stone_door")
 	_tween_celebration()
 
 
