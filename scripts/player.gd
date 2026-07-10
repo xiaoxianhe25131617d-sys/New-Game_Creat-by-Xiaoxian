@@ -47,6 +47,11 @@ const VIEW_SPEED_MULT: Dictionary = {
 @onready var aura: Line2D = $Aura
 @onready var sprite: Sprite2D = $CharacterTexture
 
+# 园丁精灵图帧数组 (2行3列: r0=idle左/中/右, r1=walk左/中/右)
+var gardener_frames: Array[Texture2D] = []
+var gardener_frame_idx: float = 1.0  # 默认中间帧
+var gardener_use_sprite: bool = false
+
 func _physics_process(delta: float) -> void:
 	# ── 梯子上：跳过普通物理（由 main.gd 接管位置）──
 	if is_on_ladder:
@@ -183,12 +188,41 @@ func _physics_process(delta: float) -> void:
 func _update_animation(dir: float) -> void:
 	if sprite == null:
 		return
-	if abs(velocity.x) < 5.0 and is_on_floor():
-		sprite.scale.y = lerp(sprite.scale.y, 0.72 + sin(Time.get_ticks_msec() * 0.004) * 0.02, 0.1)
+	if gardener_use_sprite and gardener_frames.size() >= 6:
+		# 园丁帧动画 — 前后方向有明显区别
+		# Row 0: idle (左/中/右), Row 1: walk (左/中/右)
+		var scale_v: float = 0.2
+		var is_moving: bool = abs(velocity.x) >= 5.0 and is_on_floor()
+		
+		if not is_moving:
+			# 站立 — 中间帧
+			var tex := gardener_frames[1]  # idle row, center col
+			sprite.texture = tex
+			sprite.scale = Vector2(scale_v, scale_v)
+			sprite.position = Vector2(0, -30)
+		elif dir > 0:
+			# 向前（右）— 右腿跨前 — 用右侧行走帧 + 弹跳感
+			gardener_frame_idx += abs(velocity.x) * 0.005
+			var col := 2  # 右侧行走
+			var tex := gardener_frames[1 * 3 + col]  # walk row, right col
+			sprite.texture = tex
+			sprite.scale = Vector2(scale_v, scale_v + sin(gardener_frame_idx * 5.0) * 0.015)
+			sprite.position = Vector2(0, -30 + sin(gardener_frame_idx * 5.0) * 2.0)
+		else:
+			# 向后（左）— 左腿跨后 — 用左侧行走帧 + 轻微拖步感
+			gardener_frame_idx += abs(velocity.x) * 0.003
+			var tex := gardener_frames[1 * 3 + 0]  # walk row, left col
+			sprite.texture = tex
+			sprite.scale = Vector2(-scale_v, scale_v + sin(gardener_frame_idx * 3.0) * 0.008)
+			sprite.position = Vector2(0, -30 + sin(gardener_frame_idx * 3.0) * 1.0)
 	else:
-		sprite.scale.y = lerp(sprite.scale.y, 0.72, 0.2)
-	if dir != 0:
-		sprite.scale.x = abs(sprite.scale.x) * signf(dir)
+		# 原有SVG动画
+		if abs(velocity.x) < 5.0 and is_on_floor():
+			sprite.scale.y = lerp(sprite.scale.y, 0.72 + sin(Time.get_ticks_msec() * 0.004) * 0.02, 0.1)
+		else:
+			sprite.scale.y = lerp(sprite.scale.y, 0.72, 0.2)
+		if dir != 0:
+			sprite.scale.x = abs(sprite.scale.x) * signf(dir)
 
 func use_special() -> void:
 	if current_view == "adhd":
@@ -239,11 +273,30 @@ static func create() -> MindscapePlayer:
 
 	var sprite := Sprite2D.new()
 	sprite.name = "CharacterTexture"
-	var player_tex := load("res://assets/characters/player.svg")
-	if player_tex != null:
-		sprite.texture = player_tex
-	sprite.scale = Vector2(0.72, 0.72)
-	sprite.position = Vector2(0, -12)
+
+	# 尝试加载园丁精灵图
+	var gardener_loaded := false
+	var gardener_tex: Array[Texture2D] = []
+	for row in range(2):
+		for col in range(3):
+			var path := "res://assets/characters/gardener_r%d_c%d.png" % [row, col]
+			var tex := load(path)
+			if tex != null:
+				gardener_tex.append(tex)
+
+	if gardener_tex.size() >= 6:
+		gardener_loaded = true
+		sprite.texture = gardener_tex[1]  # r0_c1: idle center
+		sprite.scale = Vector2(0.2, 0.2)
+		sprite.position = Vector2(0, -30)
+		player.gardener_frames = gardener_tex
+		player.gardener_use_sprite = true
+	else:
+		var player_tex := load("res://assets/characters/player.svg")
+		if player_tex != null:
+			sprite.texture = player_tex
+		sprite.scale = Vector2(0.72, 0.72)
+		sprite.position = Vector2(0, -12)
 	player.add_child(sprite)
 
 	var aura := Line2D.new()

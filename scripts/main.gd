@@ -587,6 +587,8 @@ func interact() -> void:
 		"maze_fork_b":
 			var keys := get_collected_keys()
 			show_toast("岔路B尽头：宝箱（%d/4钥匙）。" % keys.size(), 2.0)
+		"maze_gate":
+			open_maze_gate()
 		"key_chest":
 			var key_id: String = current_near.get_meta("key_id", "")
 			if key_id != "":
@@ -622,7 +624,7 @@ const SLOT_H: float = 56.0
 func _create_sidebar_inventory() -> void:
 	sidebar = Panel.new()
 	sidebar.name = "SidebarInventory"
-	sidebar.position = Vector2(4, 4)                     # 左上角留一点间距
+	sidebar.position = Vector2(4, 160)                   # 左下角
 	sidebar.size = Vector2(SIDEBAR_W, 530)               # 高530
 	sidebar.z_index = 10
 	
@@ -1042,6 +1044,30 @@ func get_collected_keys() -> Array:
 		for k in raw:
 			out.append(str(k))
 	return out
+
+func open_maze_gate() -> void:
+	# 开启迷宫门洞
+	if state.get("maze_gate_opened", false):
+		return
+	state["maze_gate_opened"] = true
+	
+	# 移除门板和标签
+	var root := get_tree().current_scene if get_tree().current_scene else self
+	_remove_named_child(root, "MazeDoor")
+	_remove_named_child(root, "MazeDoorLabel")
+	
+	# 移除门洞交互区域
+	if current_near != null and current_near.get_meta("kind", "") == "maze_gate":
+		world.remove_interactable(current_near)
+		current_near = null
+	
+	show_toast("门洞开启了...可以进入迷宫区域。", 3.0)
+	AudioManager.play_sfx("collect")
+
+func _remove_named_child(parent: Node, child_name: String) -> void:
+	var node := parent.get_node_or_null(child_name)
+	if node != null:
+		node.queue_free()
 
 func try_open_treasure_chest(chest_node: Node) -> void:
 	var keys: Array = state.get("collected_keys", [])
