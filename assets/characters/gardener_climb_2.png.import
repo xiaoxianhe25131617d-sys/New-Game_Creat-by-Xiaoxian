@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bfdr7e72hbbcw"
-path="res://.godot/imported/gardener_r0_c2.png-4d5ce3cf96ef8b19073f57a67b05cc31.ctex"
+uid="uid://6de28c6aa40"
+path="res://.godot/imported/gardener_climb_2.png-323b6826fb48f8bab4c2b125ec5e54e3.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/characters/gardener_r0_c2.png"
-dest_files=["res://.godot/imported/gardener_r0_c2.png-4d5ce3cf96ef8b19073f57a67b05cc31.ctex"]
+source_file="res://assets/characters/gardener_climb_2.png"
+dest_files=["res://.godot/imported/gardener_climb_2.png-323b6826fb48f8bab4c2b125ec5e54e3.ctex"]
 
 [params]
 

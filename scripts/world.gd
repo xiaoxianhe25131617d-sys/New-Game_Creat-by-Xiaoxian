@@ -108,9 +108,7 @@ var _drop_tileset: TileSet     # _drop_layer 专用 tileset，物理层号为2
 # 平台
 const PLATFORMS: Array = [
 	{"x0": 0,   "x1": 262, "row": GROUND_ROW, "tag": "floor_left"},
-	{"x0": 264, "x1": 300, "row": GROUND_ROW, "tag": "floor_mid1"},
-	# 台阶入口在 x:301-319, 6 级台阶 + 38-tile 自由落体段
-	# 自由落体段 x:320-327, floor_dam 从 x=328 开始（紧贴 + 1-tile 间隙）
+	{"x0": 264, "x1": 327, "row": GROUND_ROW, "tag": "floor_mid1"},
 	{"x0": 328, "x1": 395, "row": GROUND_ROW, "tag": "floor_dam"},
 	{"x0": 397, "x1": 450, "row": GROUND_ROW, "tag": "floor_station"},
 	{"x0": 452, "x1": 520, "row": GROUND_ROW, "tag": "floor_park"},
@@ -577,8 +575,9 @@ func _paint_underground_maze_walls() -> void:
 			_D.set_cell(Vector2i(x, y), -1)
 			_deco_layer.set_cell(Vector2i(x, y), -1)
 
-	# 2. 全部用石板路瓦片填实（用 T_GRASS_FILL 作为通用实心 tile）
-	for y in range(TOP_Y, FLOOR_Y + 1):
+	# 2. 填实 UNDERGROUND 区域（从 GROUND_ROW+1 开始，不覆盖地表）
+	#    地表 y=200 由 _paint_platform 控制，避免视觉错位
+	for y in range(TOP_Y + 1, FLOOR_Y + 1):
 		for x in range(MAZE_X0, MAZE_X1 + 1):
 			var tile := T_GRASS_FILL
 			if (x + y) % 5 == 0: tile = T_GRASS_FILL_ALT
@@ -663,13 +662,21 @@ func _paint_texture_wall_blocker() -> void:
 			_block_layer.set_cell(Vector2i(wall_col + dx, y), 0, T_GRASS_MID)
 			_texture_wall_blocks.append(Vector2i(wall_col + dx, y))
 
-	# ── 藤蔓纹理墙视觉 ──
+	# ── 藤蔓纹理墙视觉（贴齐瓦片位置） ──
+	# 墙覆盖 col 260-266（留边距），row 180-201
+	var wall_vis_left := 260.0 * TILE_SIZE
+	var wall_vis_right := 266.0 * TILE_SIZE
+	var wall_vis_top := (GROUND_ROW - 20) * TILE_SIZE
+	var wall_vis_bot := (GROUND_ROW + 1) * TILE_SIZE
+	var wall_vis_w := wall_vis_right - wall_vis_left   # 96 px
+	var wall_vis_h := wall_vis_bot - wall_vis_top        # 336 px
+
 	var wall_sprite := Sprite2D.new()
 	wall_sprite.name = "TexWallVine"
 	wall_sprite.texture = VINE_WALL_TEX
-	wall_sprite.centered = true
-	wall_sprite.position = Vector2(wall_col * TILE_SIZE + 24, GROUND_Y_PX - 20)
-	wall_sprite.scale = Vector2(0.42, 0.42)
+	wall_sprite.centered = false
+	wall_sprite.position = Vector2(wall_vis_left, wall_vis_top)
+	wall_sprite.scale = Vector2(wall_vis_w / float(VINE_WALL_TEX.get_width()), wall_vis_h / float(VINE_WALL_TEX.get_height()))
 	wall_sprite.z_index = 3
 	wall_sprite.texture_filter = TEXTURE_FILTER_LINEAR
 	add_child(wall_sprite)
@@ -687,10 +694,9 @@ func remove_texture_wall_blocker() -> void:
 	for pos in _texture_wall_blocks:
 		_block_layer.set_cell(pos, -1)
 	_texture_wall_blocks.clear()
-	# 移除藤蔓墙视觉
+	# 保留藤蔓墙视觉（只移除碰撞，墙还在）
 	if _texture_wall_visual != null:
-		_texture_wall_visual.queue_free()
-		_texture_wall_visual = null
+		_texture_wall_visual.modulate.a = 0.75  # 半透，暗示可通过
 	hint_updated.emit("石门打开了！后面的区域现已可通行。")
 
 func _paint_decorations() -> void:

@@ -47,10 +47,26 @@ const VIEW_SPEED_MULT: Dictionary = {
 @onready var aura: Line2D = $Aura
 @onready var sprite: Sprite2D = $CharacterTexture
 
-# 园丁精灵图帧数组 (2行3列: r0=idle左/中/右, r1=walk左/中/右)
-var gardener_frames: Array[Texture2D] = []
-var gardener_frame_idx: float = 1.0  # 默认中间帧
-var gardener_use_sprite: bool = false
+# 医生精灵帧（按动作+方向命名）
+# 全部统一 320x260 canvas，feet 对齐到 canvas 底部（y=260）
+# 显示时 sprite 缩放到合适高度，position.y 偏移使脚底贴到 collision 底边
+const FRAME_H: float = 260.0  # canvas 高度
+var idle_tex: Texture2D
+var jump_tex: Texture2D
+var walk_left_frames: Array[Texture2D] = []
+var walk_right_frames: Array[Texture2D] = []
+var climb_frames: Array[Texture2D] = []
+
+var walk_frame_idx: float = 0.0
+var climb_frame_idx: float = 0.0
+var last_facing: float = 1.0  # -1=left, 1=right
+var use_sprite: bool = false
+
+# ── 显示参数 ──
+# sprite 缩放后高度 = DISPLAY_H (像素世界坐标)
+# collision 矩形 34x62 中心在 origin，所以脚底 = y=+31
+# sprite 以 sprite.position 为锚点 (默认 center=true)，所以要把脚底对齐到 y=+31
+const DISPLAY_H: float = 56.0  # 玩家精灵显示高度（世界像素）
 
 func _physics_process(delta: float) -> void:
 	# ── 梯子上：跳过普通物理（由 main.gd 接管位置）──
@@ -188,41 +204,88 @@ func _physics_process(delta: float) -> void:
 func _update_animation(dir: float) -> void:
 	if sprite == null:
 		return
-	if gardener_use_sprite and gardener_frames.size() >= 6:
-		# 园丁帧动画 — 前后方向有明显区别
-		# Row 0: idle (左/中/右), Row 1: walk (左/中/右)
-		var scale_v: float = 0.2
-		var is_moving: bool = abs(velocity.x) >= 5.0 and is_on_floor()
-		
-		if not is_moving:
-			# 站立 — 中间帧
-			var tex := gardener_frames[1]  # idle row, center col
-			sprite.texture = tex
-			sprite.scale = Vector2(scale_v, scale_v)
-			sprite.position = Vector2(0, -30)
-		elif dir > 0:
-			# 向前（右）— 右腿跨前 — 用右侧行走帧 + 弹跳感
-			gardener_frame_idx += abs(velocity.x) * 0.005
-			var col := 2  # 右侧行走
-			var tex := gardener_frames[1 * 3 + col]  # walk row, right col
-			sprite.texture = tex
-			sprite.scale = Vector2(scale_v, scale_v + sin(gardener_frame_idx * 5.0) * 0.015)
-			sprite.position = Vector2(0, -30 + sin(gardener_frame_idx * 5.0) * 2.0)
-		else:
-			# 向后（左）— 左腿跨后 — 用左侧行走帧 + 轻微拖步感
-			gardener_frame_idx += abs(velocity.x) * 0.003
-			var tex := gardener_frames[1 * 3 + 0]  # walk row, left col
-			sprite.texture = tex
-			sprite.scale = Vector2(-scale_v, scale_v + sin(gardener_frame_idx * 3.0) * 0.008)
-			sprite.position = Vector2(0, -30 + sin(gardener_frame_idx * 3.0) * 1.0)
-	else:
-		# 原有SVG动画
+	if not use_sprite:
+		# SVG fallback
 		if abs(velocity.x) < 5.0 and is_on_floor():
 			sprite.scale.y = lerp(sprite.scale.y, 0.72 + sin(Time.get_ticks_msec() * 0.004) * 0.02, 0.1)
 		else:
 			sprite.scale.y = lerp(sprite.scale.y, 0.72, 0.2)
 		if dir != 0:
 			sprite.scale.x = abs(sprite.scale.x) * signf(dir)
+		return
+
+	# 统一显示参数：脚底对齐到 collision 底边 (y=+31 世界坐标)
+	# collision 高 62，center=0，所以碰撞盒范围 y ∈ [-31, +31]
+	# sprite (centered=true) 以 sprite.position 为中心，脚底在 sprite.position.y + (FRAME_H/2)*scale_v
+	# 要让脚底 = +31：sprite.position.y = 31 - (FRAME_H/2)*scale_v = 31 - DISPLAY_H/2
+	var scale_v: float = DISPLAY_H / FRAME_H
+	var sprite_y: float = 31.0 - DISPLAY_H * 0.5
+
+	# ── 梯子上：爬梯动画 ──
+	if is_on_ladder:
+		# 播放 climb 帧循环 (只切换 2 帧)
+		if abs(velocity.y) > 5.0 or abs(velocity.x) > 5.0:
+			climb_frame_idx += 0.08
+		var ci: int = int(fmod(climb_frame_idx, float(climb_frames.size()))) if climb_frames.size() > 0 else 0
+		if ci < 0: ci = 0
+		if ci >= climb_frames.size(): ci = climb_frames.size() - 1
+		if climb_frames.size() > 0 and climb_frames[ci] != null:
+			sprite.texture = climb_frames[ci]
+		# 爬梯时把朝向上次的方向（爬梯不需要翻转）
+		sprite.flip_h = false
+		sprite.scale = Vector2(scale_v, scale_v)
+		sprite.position = Vector2(0, sprite_y)
+		return
+
+	# ── 跳跃中（不在地面）──
+	if not is_on_floor():
+		if jump_tex != null:
+			sprite.texture = jump_tex
+		# 跳跃保持上次朝向
+		sprite.flip_h = last_facing < 0
+		sprite.scale = Vector2(scale_v, scale_v)
+		sprite.position = Vector2(0, sprite_y)
+		return
+
+	# ── 地面：idle 或 walk ──
+	if abs(velocity.x) < 5.0:
+		# 站立
+		if idle_tex != null:
+			sprite.texture = idle_tex
+		sprite.flip_h = false
+		sprite.scale = Vector2(scale_v, scale_v)
+		sprite.position = Vector2(0, sprite_y)
+		# 轻微呼吸感
+		var breathe: float = sin(Time.get_ticks_msec() * 0.003) * 0.5
+		sprite.position.y = sprite_y + breathe
+		walk_frame_idx = 0.0
+		return
+
+	# 行走中
+	if dir > 0:
+		# 向右走
+		last_facing = 1.0
+		sprite.flip_h = false
+		if walk_right_frames.size() > 0:
+			walk_frame_idx += abs(velocity.x) * 0.005
+			var fi: int = int(fmod(walk_frame_idx, float(walk_right_frames.size())))
+			if fi < 0: fi = 0
+			if fi >= walk_right_frames.size(): fi = walk_right_frames.size() - 1
+			sprite.texture = walk_right_frames[fi]
+	elif dir < 0:
+		# 向左走
+		last_facing = -1.0
+		sprite.flip_h = false
+		if walk_left_frames.size() > 0:
+			walk_frame_idx += abs(velocity.x) * 0.005
+			var fi: int = int(fmod(walk_frame_idx, float(walk_left_frames.size())))
+			if fi < 0: fi = 0
+			if fi >= walk_left_frames.size(): fi = walk_left_frames.size() - 1
+			sprite.texture = walk_left_frames[fi]
+
+	# 行走弹跳
+	sprite.scale = Vector2(scale_v, scale_v + sin(walk_frame_idx * 4.0) * 0.04)
+	sprite.position = Vector2(0, sprite_y + abs(sin(walk_frame_idx * 4.0)) * 1.5)
 
 func use_special() -> void:
 	if current_view == "adhd":
@@ -274,23 +337,38 @@ static func create() -> MindscapePlayer:
 	var sprite := Sprite2D.new()
 	sprite.name = "CharacterTexture"
 
-	# 尝试加载园丁精灵图
-	var gardener_loaded := false
-	var gardener_tex: Array[Texture2D] = []
-	for row in range(2):
-		for col in range(3):
-			var path := "res://assets/characters/gardener_r%d_c%d.png" % [row, col]
-			var tex := load(path)
-			if tex != null:
-				gardener_tex.append(tex)
+	# 尝试加载医生精灵图（按动作+方向分套）
+	var idle_tex: Texture2D = load("res://assets/characters/gardener_idle.png")
+	var jump_tex: Texture2D = load("res://assets/characters/gardener_jump.png")
+	var walk_left: Array[Texture2D] = []
+	for i in range(1, 4):
+		var t: Texture2D = load("res://assets/characters/gardener_walk_left_%d.png" % i)
+		if t != null:
+			walk_left.append(t)
+	var walk_right: Array[Texture2D] = []
+	for i in range(1, 4):
+		var t: Texture2D = load("res://assets/characters/gardener_walk_right_%d.png" % i)
+		if t != null:
+			walk_right.append(t)
+	var climb: Array[Texture2D] = []
+	for i in range(1, 3):
+		var t: Texture2D = load("res://assets/characters/gardener_climb_%d.png" % i)
+		if t != null:
+			climb.append(t)
 
-	if gardener_tex.size() >= 6:
-		gardener_loaded = true
-		sprite.texture = gardener_tex[1]  # r0_c1: idle center
-		sprite.scale = Vector2(0.2, 0.2)
-		sprite.position = Vector2(0, -30)
-		player.gardener_frames = gardener_tex
-		player.gardener_use_sprite = true
+	if idle_tex != null and jump_tex != null and walk_left.size() >= 3 and walk_right.size() >= 3 and climb.size() >= 2:
+		# 统一显示参数：脚底对齐到 collision 底边 (y=+31)
+		var scale_v: float = MindscapePlayer.DISPLAY_H / MindscapePlayer.FRAME_H
+		sprite.texture = idle_tex
+		sprite.centered = true
+		sprite.scale = Vector2(scale_v, scale_v)
+		sprite.position = Vector2(0, 31.0 - MindscapePlayer.DISPLAY_H * 0.5)
+		player.idle_tex = idle_tex
+		player.jump_tex = jump_tex
+		player.walk_left_frames = walk_left
+		player.walk_right_frames = walk_right
+		player.climb_frames = climb
+		player.use_sprite = true
 	else:
 		var player_tex := load("res://assets/characters/player.svg")
 		if player_tex != null:
