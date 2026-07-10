@@ -104,8 +104,8 @@ const LEVELS: Array = [
 		"type": "npc_cipher",
 		"prereq": "",
 		"reward": "key_4",
-		"hint": "5个NPC各说一句话。听懂他们没说出口的...",
-		"view_hint": "抑郁模式看到潜台词，自闭症模式读密码本。",
+		"hint": "5个NPC各说一句话，密码本里藏着10个标记字，5位密码锁等你解开。",
+		"view_hint": "抑郁模式看到NPC潜台词，自闭症模式高亮密码本标记字。",
 	},
 ]
 
@@ -125,9 +125,9 @@ const KEYS: Dictionary = {
 const LASER_SYSTEM: Dictionary = {
 	"laser_device_1": {"name": "激光装置1", "source": "find_difference"},
 	"laser_device_2": {"name": "激光装置2", "source": "nine_grid"},
-	"wind_vane_1":   {"name": "风向标1",   "pos": Vector2(4200, 3040), "direction": Vector2(1, 0.3)},
-	"wind_vane_2":   {"name": "风向标2",   "pos": Vector2(7200, 3040), "direction": Vector2(-1, 0.3)},
-	"treasure_pos":  Vector2(5600, 2900),
+	"wind_vane_1":   {"name": "风向标1",   "pos": Vector2(3950, 3200), "direction": Vector2(1, 0.4)},
+	"wind_vane_2":   {"name": "风向标2",   "pos": Vector2(7200, 3200), "direction": Vector2(-1, 0.4)},
+	"treasure_pos":  Vector2(5575, 4200),  # 地下（两束激光在此处交汇）
 }
 
 # ════════════════════════════════════════════════════════════
@@ -207,19 +207,19 @@ const DIALOGUES: Dictionary = {
 		{"expr": "happy", "text": "四把钥匙集齐了？地下深处宝箱在等你。"},
 	],
 	"npc_cipher_1": [
-		{"expr": "neutral", "text": "我守在这里很久了。", "subtext": "第一个位置，像门一样"},
+		{"expr": "neutral", "text": "你说那些孩子们啊，他们以前可顽皮啊。他们过去常常爬那棵老橡树，最高那个枝丫只有最小的那个敢爬上去。", "subtext": "最小的孩子最勇敢，大人们反而不敢呢。"},
 	],
 	"npc_cipher_2": [
-		{"expr": "neutral", "text": "知识有时是负担。", "subtext": "第二个人，梦总是一对"},
+		{"expr": "neutral", "text": "嘿我和你说，我家屋檐上那块松了的瓦，前天我自己爬上去修好了，没请人，省了两块钱工钱。", "subtext": "我才不会说其实我爬不上去呢，让别人笑话。"},
 	],
 	"npc_cipher_3": [
-		{"expr": "neutral", "text": "工具比人更诚实。", "subtext": "第三道裂痕最危险"},
+		{"expr": "neutral", "text": "傍晚那会儿风大，把我晾在外头的被单吹到篱笆上，还好没掉泥地里。", "subtext": "风来得正好，被单刚好挂到篱笆尖上。"},
 	],
 	"npc_cipher_4": [
-		{"expr": "neutral", "text": "旅途没有终点。", "subtext": "第四个倒影无人认领"},
+		{"expr": "neutral", "text": "诶诶诶你问我可问对了，这里好玩的事情不少，我家公鸡昨天下了一个蛋，你说神不神奇？", "subtext": "诶呀逗逗外乡人玩，公鸡怎么会下蛋呢？"},
 	],
 	"npc_cipher_5": [
-		{"expr": "neutral", "text": "倾听是最难的修行。", "subtext": "第五根手指，沾满墨迹"},
+		{"expr": "neutral", "text": "等等别打扰我，我还在等邮差送信呢。", "subtext": "其实已经等了三天了，邮差可能不会来了。"},
 	],
 	"cave_hermit": [
 		{"expr": "thinking", "text": "迷宫深处有两条路。一条通向钥匙，一条通向宝藏。"},

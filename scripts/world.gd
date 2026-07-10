@@ -70,10 +70,18 @@ const WORLD_TILE_H := 281
 const TILESET_MAIN := preload("res://map/tileset.tres")
 const TILESET_DROP := preload("res://map/tileset_drop.tres")
 const SKY_MOUNTAINS_TEX := preload("res://assets/sky_user.png")
-const HOUSE_TEX := preload("res://assets/house_user.png")
+const HOUSE_TEX := preload("res://assets/house_user.png")  # 精美白底版，不再用shader擦白
 const SLAB_TEX := preload("res://assets/slab.png")
 const DIRT_GRAD_TEX := preload("res://assets/dirt_gradient.png")
 const VINE_WALL_TEX := preload("res://assets/vine_wall.png")
+const MAZE_ENTRANCE_TEX := preload("res://assets/maze_entrance.png")
+const WIND_VANE_TEX_1 := preload("res://assets/wind_vane_1.png")
+const WIND_VANE_TEX_2 := preload("res://assets/wind_vane_2.png")
+const BOOKSHELF_TEX := preload("res://assets/bookshelf.png")
+const STONE_CHEST_TEX := preload("res://assets/stone_chest.png")
+const CARD_SLOT_TEX := preload("res://assets/card_slot.png")
+const PASSWORD_BOOK_TEX := preload("res://assets/password_book.png")
+const PASSWORD_LOCK_TEX := preload("res://assets/password_lock.png")
 const MOUNTAIN_BG_TEX := preload("res://assets/mountain_bg.png")
 const TREE_BG_TEX := preload("res://assets/tree_bg.png")
 const TREE_NEAR_TEX := preload("res://assets/tree_near.png")
@@ -118,6 +126,7 @@ const PLATFORMS: Array = [
 
 var _texture_wall_blocks: Array[Vector2i] = []
 var _texture_wall_visual: Sprite2D = null
+var _texture_wall_body: StaticBody2D = null
 
 func build(state: Dictionary) -> void:
 	add_to_group("world")
@@ -391,14 +400,66 @@ func _draw_trees_near(container: Node2D) -> void:
 
 func _draw_buildings_bg(container: Node2D) -> void:
 	var bld_colors := [Color("#8a7060"), Color("#9a8070"), Color("#7a6050"), Color("#a09080")]
-	# 灯塔位置 — 用用户的房子图替换原来的灯塔
-	_spawn_house_sprite(container, Vector2(4900, 2900), 360.0)
-	# 水坝
-	_draw_dam(Vector2(6200, 3000), container)
-	# 许愿堂位置 — 用用户的房子图替换原来的许愿堂
-	_spawn_house_sprite(container, Vector2(9800, 2900), 360.0)
+	# 灯塔位置 — 用用户的房子图（与原 cabin 位置对齐）
+	_spawn_house_sprite(container, Vector2(4600, GROUND_Y_PX), 260.0)
+	# 水坝已删除
+	# 许愿堂 — 改为书架 + 石台+宝箱（透明底 PNG，底边贴地）
+	_spawn_wishplace_decor(container, Vector2(9800, GROUND_Y_PX))
 
-# 在指定位置放置用户提供的房子图（透明底）
+
+# 许愿堂装饰：左侧书架 + 右侧石台宝箱（透明底 PNG，底边贴地面）
+func _spawn_wishplace_decor(container: Node2D, pos: Vector2) -> void:
+	# 书架：放在 pos 左侧 60px
+	var shelf := Sprite2D.new()
+	shelf.texture = BOOKSHELF_TEX
+	shelf.centered = false
+	shelf.texture_filter = TEXTURE_FILTER_LINEAR
+	shelf.position = Vector2(pos.x - 110, pos.y - float(BOOKSHELF_TEX.get_height()))
+	shelf.z_index = 2
+	var mat1 := ShaderMaterial.new()
+	mat1.shader = _get_alpha_white_shader()
+	shelf.material = mat1
+	container.add_child(shelf)
+
+	# 石台+宝箱：放在 pos 右侧 50px
+	var chest_sprite := Sprite2D.new()
+	chest_sprite.texture = STONE_CHEST_TEX
+	chest_sprite.centered = false
+	chest_sprite.texture_filter = TEXTURE_FILTER_LINEAR
+	chest_sprite.position = Vector2(pos.x + 30, pos.y - float(STONE_CHEST_TEX.get_height()))
+	chest_sprite.z_index = 2
+	var mat2 := ShaderMaterial.new()
+	mat2.shader = _get_alpha_white_shader()
+	chest_sprite.material = mat2
+	container.add_child(chest_sprite)
+
+	# ── 书架交互区域（按E出现密码本） ──
+	var shelf_zone := Area2D.new()
+	shelf_zone.name = "BookshelfZone"
+	shelf_zone.position = Vector2(pos.x - 110 + BOOKSHELF_TEX.get_width() * 0.5, pos.y - BOOKSHELF_TEX.get_height() * 0.5)
+	shelf_zone.set_meta("kind", "bookshelf")
+	var shelf_shape := CollisionShape2D.new()
+	var shelf_rect := RectangleShape2D.new()
+	shelf_rect.size = Vector2(BOOKSHELF_TEX.get_width() + 20, BOOKSHELF_TEX.get_height() + 20)
+	shelf_shape.shape = shelf_rect
+	shelf_zone.add_child(shelf_shape)
+	add_child(shelf_zone)
+	interactables.append(shelf_zone)
+
+	# ── 宝箱交互区域（按E出现密码锁） ──
+	var chest_zone := Area2D.new()
+	chest_zone.name = "ChestPasswordZone"
+	chest_zone.position = Vector2(pos.x + 30 + STONE_CHEST_TEX.get_width() * 0.5, pos.y - STONE_CHEST_TEX.get_height() * 0.5)
+	chest_zone.set_meta("kind", "chest_password")
+	var chest_shape := CollisionShape2D.new()
+	var chest_rect := RectangleShape2D.new()
+	chest_rect.size = Vector2(STONE_CHEST_TEX.get_width() + 20, STONE_CHEST_TEX.get_height() + 20)
+	chest_shape.shape = chest_rect
+	chest_zone.add_child(chest_shape)
+	add_child(chest_zone)
+	interactables.append(chest_zone)
+
+# 在指定位置放置用户提供的房子图（透明底 + 去白底shader）
 # pos 是房子底边中点（地面位置），height_px 是房子在世界中显示的高度
 func _spawn_house_sprite(container: Node2D, pos: Vector2, height_px: float) -> void:
 	var s := Sprite2D.new()
@@ -410,26 +471,64 @@ func _spawn_house_sprite(container: Node2D, pos: Vector2, height_px: float) -> v
 	s.position = Vector2(pos.x - width_px * 0.5, pos.y - height_px)
 	s.scale = Vector2(width_px / float(HOUSE_TEX.get_width()), height_px / float(HOUSE_TEX.get_height()))
 	s.texture_filter = TEXTURE_FILTER_LINEAR
-	s.z_index = -3  # 在前景石板之下，但在远景之上
+	s.z_index = 2  # 在前景石板、树、灌木之上
+	# 用去白底 shader（阈值很高，只过滤纯白，保留所有亮色装饰）
+	var mat := ShaderMaterial.new()
+	mat.shader = _get_alpha_white_shader()
+	s.material = mat
 	container.add_child(s)
+
+var __alpha_white_shader: Shader = null
+func _get_alpha_white_shader() -> Shader:
+	if __alpha_white_shader != null:
+		return __alpha_white_shader
+	var shader := Shader.new()
+	shader.code = """
+shader_type canvas_item;
+void fragment() {
+	vec4 c = texture(TEXTURE, UV);
+	// 纯白/接近纯白 → 透明（阈值提高，避免擦掉米色墙、窗框、烟囱高光）
+	float whiteness = (c.r + c.g + c.b) / 3.0;
+	if (whiteness > 0.985) {
+		c.a *= 1.0 - smoothstep(0.985, 1.0, whiteness);
+	}
+	COLOR = c;
+}
+"""
+	__alpha_white_shader = shader
+	return shader
+
+# 去除 vine_wall.png 的半透明深棕底色 (RGB≈0.31,0.25,0.20, alpha<255)
+var __vine_alpha_shader: Shader = null
+func _get_vine_alpha_shader() -> Shader:
+	if __vine_alpha_shader != null:
+		return __vine_alpha_shader
+	var shader := Shader.new()
+	shader.code = """
+shader_type canvas_item;
+void fragment() {
+	vec4 c = texture(TEXTURE, UV);
+	// 背景色阈值：RGB 三通道都在 [0.25, 0.36] 之间，且 alpha < 250
+	// 这是画师预乘的深棕底色，alpha=200
+	float bg_r = step(0.25, c.r) * step(c.r, 0.36);
+	float bg_g = step(0.20, c.g) * step(c.g, 0.30);
+	float bg_b = step(0.15, c.b) * step(c.b, 0.25);
+	if (c.a < 0.98 && bg_r > 0.5 && bg_g > 0.5 && bg_b > 0.5) {
+		c.a = 0.0;
+	}
+	COLOR = c;
+}
+"""
+	__vine_alpha_shader = shader
+	return shader
 
 func _draw_lighthouse(_pos: Vector2, _container: Node2D) -> void:
 	# 灯塔已替换为用户房子图（见 _spawn_house_sprite）
 	pass
 
 func _draw_dam(pos: Vector2, container: Node2D) -> void:
-	var x := pos.x; var y := pos.y
-	for row in range(5):
-		var block := ColorRect.new()
-		block.position = Vector2(x + row * 40, y + row * 8)
-		block.size = Vector2(36, 22)
-		block.color = Color("#889098")
-		container.add_child(block)
-	var wall := ColorRect.new()
-	wall.position = Vector2(x + 40, y - 80)
-	wall.size = Vector2(160, 120)
-	wall.color = Color("#788890", 0.5)
-	container.add_child(wall)
+	# 水坝已删除（用户要求）
+	pass
 
 func _draw_observatory(_pos: Vector2, _container: Node2D) -> void:
 	# 许愿堂已替换为用户房子图（见 _spawn_house_sprite）
@@ -654,49 +753,70 @@ func _draw_ground_foreground() -> void:
 
 
 func _paint_texture_wall_blocker() -> void:
+	# 先清除迷宫函数在墙区域留下的可见 _block_layer tiles
 	var wall_col := 263
-	var wall_top := GROUND_ROW - 18
-	var wall_bot := GROUND_ROW
-	for y in range(wall_top, wall_bot + 1):
-		for dx in [-1, 0, 1]:
-			_block_layer.set_cell(Vector2i(wall_col + dx, y), 0, T_GRASS_MID)
-			_texture_wall_blocks.append(Vector2i(wall_col + dx, y))
+	for y in range(GROUND_ROW - 20, GROUND_ROW + 1):
+		_block_layer.set_cell(Vector2i(wall_col, y), -1)
 
-	# ── 藤蔓纹理墙视觉（贴齐瓦片位置） ──
-	# 墙覆盖 col 260-266（留边距），row 180-201
-	var wall_vis_left := 260.0 * TILE_SIZE
-	var wall_vis_right := 266.0 * TILE_SIZE
-	var wall_vis_top := (GROUND_ROW - 20) * TILE_SIZE
-	var wall_vis_bot := (GROUND_ROW + 1) * TILE_SIZE
-	var wall_vis_w := wall_vis_right - wall_vis_left   # 96 px
-	var wall_vis_h := wall_vis_bot - wall_vis_top        # 336 px
+	# 石头碰撞墙 — 隐形StaticBody2D，完全不可见
+	var wall_body := StaticBody2D.new()
+	wall_body.name = "TextureWallCollider"
+	wall_body.collision_layer = 1
+	wall_body.collision_mask = 0
+	var col_shape := CollisionShape2D.new()
+	var rect := RectangleShape2D.new()
+	var wall_top_y := (GROUND_ROW - 18) * TILE_SIZE
+	var wall_height := 19 * TILE_SIZE
+	rect.size = Vector2(TILE_SIZE, wall_height)
+	col_shape.shape = rect
+	col_shape.position = Vector2(wall_col * TILE_SIZE + TILE_SIZE / 2.0, wall_top_y + wall_height / 2.0)
+	wall_body.add_child(col_shape)
+	add_child(wall_body)
+	_texture_wall_body = wall_body
+	# 记录待移除（保持兼容）
+	_texture_wall_blocks.append(Vector2i(wall_col, GROUND_ROW))
+
+	# ── 藤蔓纹理墙视觉 — 比例自然，不要把纹理拉得太粗 ──
+	# 原图 512x640 宽高比 0.8，按此比例调整视觉宽度
+	var vine_top := (GROUND_ROW - 20) * TILE_SIZE
+	var vine_bot := (GROUND_ROW + 1) * TILE_SIZE
+	var vine_h := vine_bot - vine_top
+	var aspect: float = float(VINE_WALL_TEX.get_width()) / float(VINE_WALL_TEX.get_height())
+	var vine_w := vine_h * aspect
+	# 居中放在 263 列
+	var vine_center_x := (263.0 + 0.5) * TILE_SIZE
+	var vine_left := vine_center_x - vine_w * 0.5
+	var vine_right := vine_left + vine_w
 
 	var wall_sprite := Sprite2D.new()
 	wall_sprite.name = "TexWallVine"
 	wall_sprite.texture = VINE_WALL_TEX
 	wall_sprite.centered = false
-	wall_sprite.position = Vector2(wall_vis_left, wall_vis_top)
-	wall_sprite.scale = Vector2(wall_vis_w / float(VINE_WALL_TEX.get_width()), wall_vis_h / float(VINE_WALL_TEX.get_height()))
+	wall_sprite.position = Vector2(vine_left, vine_top)
+	wall_sprite.scale = Vector2(vine_w / float(VINE_WALL_TEX.get_width()), vine_h / float(VINE_WALL_TEX.get_height()))
 	wall_sprite.z_index = 3
 	wall_sprite.texture_filter = TEXTURE_FILTER_LINEAR
+	# 去除 PNG 的半透明深棕底色（RGB≈80,65,50 且 alpha<255 的像素）
+	var mat := ShaderMaterial.new()
+	mat.shader = _get_vine_alpha_shader()
+	wall_sprite.material = mat
 	add_child(wall_sprite)
 	_texture_wall_visual = wall_sprite
 
-	var label := Label.new()
-	label.text = "══ 石墙 ══\n需要盲人模式触摸"
-	label.position = Vector2(wall_col * TILE_SIZE - 45, GROUND_Y_PX - 310)
-	label.add_theme_font_size_override("font_size", 13)
-	label.add_theme_color_override("font_color", Color("#ffaa44"))
-	label.z_index = 10
-	add_child(label)
+	# 墙后面填充实心地面 tiles，不留洞 — 宽度只 1 tile（只填补 263 列）
+	for y in range(GROUND_ROW - 20, GROUND_ROW + 1):
+		_ground_layer.set_cell(Vector2i(wall_col, y), 0, T_GRASS_FILL)
 
 func remove_texture_wall_blocker() -> void:
-	for pos in _texture_wall_blocks:
-		_block_layer.set_cell(pos, -1)
+	# 移除隐形碰撞
+	if _texture_wall_body != null:
+		_texture_wall_body.queue_free()
+		_texture_wall_body = null
 	_texture_wall_blocks.clear()
-	# 保留藤蔓墙视觉（只移除碰撞，墙还在）
+	# 藤蔓墙保留！改为微微发光示意可通过
 	if _texture_wall_visual != null:
-		_texture_wall_visual.modulate.a = 0.75  # 半透，暗示可通过
+		var tween := create_tween()
+		tween.tween_property(_texture_wall_visual, "modulate", Color("#d0e0ff", 0.8), 0.6)
 	hint_updated.emit("石门打开了！后面的区域现已可通行。")
 
 func _paint_decorations() -> void:
@@ -842,57 +962,40 @@ func _draw_rock(pos: Vector2, color: Color) -> void:
 #  地下迷宫入口 — 真正可走的石头台阶
 # ══════════════════════════════════════════════════════════════
 func _make_underground_maze_entrance() -> void:
-	# 迷宫入口改为门洞 — 玩家走到这里按 E 进入
+	# 迷宫入口 — 用一张漂亮的石拱门 PNG
 	_maze_main_to_upper_ladders = []
-	
+
 	var gate_x := 288 * TILE_SIZE   # 4608 px
 	var gate_y := GROUND_Y_PX       # 3200 px
-	
-	# ── 门框（石拱） ──
-	var left_pillar := Polygon2D.new()
-	left_pillar.polygon = PackedVector2Array([
-		Vector2(0, 0), Vector2(14, 0), Vector2(14, -64), Vector2(0, -64)
-	])
-	left_pillar.position = Vector2(gate_x - 40, gate_y)
-	left_pillar.color = Color("#5a4a3a")
-	left_pillar.z_index = 6
-	add_child(left_pillar)
-	
-	var right_pillar := Polygon2D.new()
-	right_pillar.polygon = PackedVector2Array([
-		Vector2(0, 0), Vector2(14, 0), Vector2(14, -64), Vector2(0, -64)
-	])
-	right_pillar.position = Vector2(gate_x + 26, gate_y)
-	right_pillar.color = Color("#5a4a3a")
-	right_pillar.z_index = 6
-	add_child(right_pillar)
-	
-	var arch := Polygon2D.new()
-	arch.polygon = PackedVector2Array([
-		Vector2(-6, 0), Vector2(54, 0), Vector2(54, 14), 
-		Vector2(44, -20), Vector2(4, -20), Vector2(-6, 14),
-	])
-	arch.position = Vector2(gate_x - 40, gate_y - 64)
-	arch.color = Color("#6a5a4a")
-	arch.z_index = 6
-	add_child(arch)
-	
-	# ── 入口门板（带颜色提示是交互门） ──
-	var door := ColorRect.new()
-	door.position = Vector2(gate_x - 36, gate_y - 60)
-	door.size = Vector2(68, 60)
-	door.color = Color("#3a3020", 0.85)
-	door.z_index = 5
-	add_child(door)
-	
+
+	# ── 石拱门 PNG（192x256 = 12x16 tiles） ──
+	var tex_w := float(MAZE_ENTRANCE_TEX.get_width())
+	var tex_h := float(MAZE_ENTRANCE_TEX.get_height())
+	var scale: float = 1.0
+	var s := Sprite2D.new()
+	s.texture = MAZE_ENTRANCE_TEX
+	s.centered = false
+	s.name = "MazeDoor"  # 供 main.gd open_maze_gate 移除
+	# 锚点：放在地表线，底边对齐地面
+	s.position = Vector2(gate_x - tex_w * 0.5, gate_y - tex_h * 1.0)
+	s.scale = Vector2(scale, scale)
+	s.texture_filter = TEXTURE_FILTER_LINEAR
+	s.z_index = 6
+	# 抗锯齿去白底
+	var mat := ShaderMaterial.new()
+	mat.shader = _get_alpha_white_shader()
+	s.material = mat
+	add_child(s)
+
+	# ── [E] 进入 提示 ──
 	var door_label := Label.new()
 	door_label.text = "[E] 进入"
-	door_label.position = Vector2(gate_x - 30, gate_y - 42)
+	door_label.position = Vector2(gate_x - 22, gate_y - 100)
 	door_label.add_theme_font_size_override("font_size", 12)
 	door_label.add_theme_color_override("font_color", Color("#ffe8a0"))
 	door_label.z_index = 7
 	add_child(door_label)
-	
+
 	# ── 可交互区域 ──
 	var gate_zone := Area2D.new()
 	gate_zone.name = "MazeGate"
@@ -905,9 +1008,7 @@ func _make_underground_maze_entrance() -> void:
 	gate_zone.add_child(gshape)
 	interactables.append(gate_zone)
 	add_child(gate_zone)
-	
-	# ── 门板隐藏引用（用于后续打开动画） ──
-	door.name = "MazeDoor"
+
 	door_label.name = "MazeDoorLabel"
 
 # ═══════════════════════════════════════════════════════
@@ -1101,7 +1202,6 @@ func _make_regions_on_tilemap() -> void:
 	_label_region("← 石墙", Vector2(4100, 2960), Color("#ff8040"))
 	_label_region("森林", Vector2(5000, 2950), Color("#5f8b5f"))
 	_label_region("灯塔", Vector2(5500, 2950), Color("#6eb8db"))
-	_label_region("水坝", Vector2(6200, 2950), Color("#7b9088"))
 	_label_region("旧车站", Vector2(6900, 2950), Color("#878792"))
 	_label_region("游乐园", Vector2(7900, 2950), Color("#e7a84c"))
 	_label_region("许愿堂", Vector2(9800, 2950), Color("#8fa9d7"))
@@ -1474,14 +1574,15 @@ func _make_wind_vanes() -> void:
 	var vane1_pos: Vector2 = data["wind_vane_1"]["pos"] as Vector2
 	var vane2_pos: Vector2 = data["wind_vane_2"]["pos"] as Vector2
 	var treasure: Vector2 = data["treasure_pos"] as Vector2
-	
+
 	# 计算正确角度
 	_correct_angle_1 = (treasure - vane1_pos).angle()
 	_correct_angle_2 = (treasure - vane2_pos).angle()
-	
+
 	_make_single_vane(vane1_pos, 1, _correct_angle_1)
 	_make_single_vane(vane2_pos, 2, _correct_angle_2)
-	_make_treasure_spot(treasure)
+	# 宝藏提示点放在地表（玩家可达） — 检测仍用地下 treasure_pos
+	_make_treasure_spot(Vector2(5575, 2900))
 
 func _make_single_vane(pos: Vector2, vane_idx: int, hint_angle: float) -> void:
 	var vane := Node2D.new()
@@ -1490,49 +1591,46 @@ func _make_single_vane(pos: Vector2, vane_idx: int, hint_angle: float) -> void:
 	vane.z_index = 10
 	add_child(vane)
 	_wind_vane_nodes.append(vane)
-	
-	# 基座
-	var base := Polygon2D.new()
-	base.polygon = PackedVector2Array([
-		Vector2(-16, -4), Vector2(16, -4), Vector2(12, 8), Vector2(-12, 8)
-	])
-	base.color = Color("#6a5a4a")
-	vane.add_child(base)
-	
-	# 柱子
-	var pole := ColorRect.new()
-	pole.position = Vector2(-3, -64)
-	pole.size = Vector2(6, 60)
-	pole.color = Color("#8a7a6a")
-	vane.add_child(pole)
-	
-	# 风向标头部（箭头，指向hint_angle方向）
+
+	# PNG 柱子：地面以下 80px + 地面以上 336px
+	var tex: Texture2D = WIND_VANE_TEX_1 if vane_idx == 1 else WIND_VANE_TEX_2
+	var pole_sprite := Sprite2D.new()
+	pole_sprite.texture = tex
+	pole_sprite.centered = false
+	# PNG 80x416，GROUND_Y=80 在图中；锚点放在柱顶中心
+	pole_sprite.position = Vector2(-tex.get_width() * 0.5, -tex.get_height() + 80)  # 80 是图中地面位置
+	pole_sprite.texture_filter = TEXTURE_FILTER_LINEAR
+	vane.add_child(pole_sprite)
+
+	# 风向标头部箭头（可旋转，初始指向 hint_angle）
 	var arrow := Polygon2D.new()
-	var arr_len: float = 30.0
-	var arr_w: float = 8.0
+	var arr_len: float = 36.0
+	var arr_w: float = 9.0
 	arrow.polygon = PackedVector2Array([
-		Vector2(0, 0),
-		Vector2(-arr_len * 0.6, -arr_w),
-		Vector2(-arr_len * 0.6, -arr_w * 0.3),
-		Vector2(-arr_len, -arr_w * 0.3),
-		Vector2(-arr_len, arr_w * 0.3),
-		Vector2(-arr_len * 0.6, arr_w * 0.3),
-		Vector2(-arr_len * 0.6, arr_w),
+		Vector2(arr_len * 0.4, 0),     # 后端
+		Vector2(arr_len * 0.4, -arr_w * 0.5),
+		Vector2(arr_len, -arr_w * 0.5),  # 箭头尖端
+		Vector2(arr_len, 0),
+		Vector2(arr_len, arr_w * 0.5),
+		Vector2(arr_len * 0.4, arr_w * 0.5),
+		Vector2(arr_len * 0.4, arr_w),
+		Vector2(arr_len * 0.4 + 6, 0),   # 缺口
+		Vector2(arr_len * 0.4, -arr_w),
 	])
-	arrow.position = Vector2(0, -68)
-	arrow.rotation = hint_angle  # 指向treasure的初始方向
+	arrow.position = Vector2(0, -tex.get_height() + 60)  # 顶部上方
+	arrow.rotation = hint_angle
 	arrow.color = Color("#ff6644")
 	arrow.name = "Arrow"
 	vane.add_child(arrow)
-	
+
 	# 标签
 	var label := Label.new()
 	label.text = "风向标%d" % vane_idx
-	label.position = Vector2(-30, -96)
+	label.position = Vector2(-30, -tex.get_height() + 30)
 	label.add_theme_font_size_override("font_size", 14)
 	label.add_theme_color_override("font_color", Color("#ffe8a0"))
 	vane.add_child(label)
-	
+
 	# 放置区域（更大的碰撞区，用于拖放检测）
 	var zone := Area2D.new()
 	zone.name = "VanePlacement_%d" % vane_idx
@@ -1546,7 +1644,8 @@ func _make_single_vane(pos: Vector2, vane_idx: int, hint_angle: float) -> void:
 	zone.set_meta("vane_idx", vane_idx)
 	add_child(zone)
 	_vane_placement_zones.append(zone)
-	
+	interactables.append(zone)  # 加入可交互列表，按E触发_open_vane_slot_panel
+
 	# 高亮环（呼吸效果，仅当装置已获得但未放置时可见）
 	var glow := Polygon2D.new()
 	glow.name = "GlowRing"

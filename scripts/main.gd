@@ -12,6 +12,8 @@ var save_timer: float = 0.0
 var menu_root: Control
 var pause_root: Control
 var wheel_root: Control
+var _vane_panel_root: Control = null
+var _popup_root: Control = null  # 通用弹窗（密码本/密码锁）
 var hud_label: Label
 var prompt_label: Label
 var objective_label: Label
@@ -32,6 +34,11 @@ var laser_owned: Dictionary = {"laser_device_1": false, "laser_device_2": false}
 
 # ── 拖放/激光常量 ──
 const LASER_ANGLE_STEP: float = 0.03  # 滚轮旋转步长(rad)
+
+# ── 交互面板PNG预加载 ──
+const CARD_SLOT_TEX := preload("res://assets/card_slot.png")
+const PASSWORD_BOOK_TEX := preload("res://assets/password_book.png")
+const PASSWORD_LOCK_TEX := preload("res://assets/password_lock.png")
 
 func _ready() -> void:
 	show_login_screen()
@@ -589,6 +596,8 @@ func interact() -> void:
 			show_toast("岔路B尽头：宝箱（%d/4钥匙）。" % keys.size(), 2.0)
 		"maze_gate":
 			open_maze_gate()
+		"wind_vane_placement":
+			_open_vane_slot_panel(current_near)
 		"key_chest":
 			var key_id: String = current_near.get_meta("key_id", "")
 			if key_id != "":
@@ -608,10 +617,240 @@ func interact() -> void:
 				show_ending()
 			else:
 				show_toast("两束激光需要对到正确角度，交汇在一点...", 3.0)
+		"bookshelf":
+			_open_password_book()
+		"chest_password":
+			_open_password_lock()
 		_:
 			# 新式谜题实例（PuzzleTextureWall等）自带交互处理
 			if current_near.has_method("_input"):
 				pass  # 谜题自己处理输入
+
+
+# ════════════════════════════════════════════════════════════
+#  风向标卡槽面板（按E后弹出）
+#  玩家把对应激光装置拖入对应卡槽即可放置
+# ════════════════════════════════════════════════════════════
+func _open_vane_slot_panel(vane_zone: Area2D) -> void:
+	# 关闭已存在的弹窗
+	_close_popup()
+	if _vane_panel_root != null and is_instance_valid(_vane_panel_root):
+		_close_vane_panel()
+		return
+
+	var vane_idx: int = int(vane_zone.get_meta("vane_idx", 1))
+	if world.is_laser_placed(vane_idx):
+		show_toast("此风向标已放置了装置。", 2.0)
+		return
+
+	player.controls_enabled = false
+	var panel := Panel.new()
+	panel.name = "VanePanel"
+	var tex_w: float = float(CARD_SLOT_TEX.get_width())
+	var tex_h: float = float(CARD_SLOT_TEX.get_height())
+	panel.size = Vector2(tex_w + 20, tex_h + 60)
+	panel.position = Vector2(1280/2 - panel.size.x/2, 720/2 - panel.size.y/2)
+	hud.add_child(panel)
+	_vane_panel_root = panel
+
+	# 标题
+	var title := Label.new()
+	title.text = "风向标%d — 装置卡槽" % vane_idx
+	title.position = Vector2(30, 10)
+	title.add_theme_font_size_override("font_size", 22)
+	title.add_theme_color_override("font_color", Color("#ffe8a0"))
+	panel.add_child(title)
+
+	# 卡槽 PNG 背景图
+	var slot_bg := TextureRect.new()
+	slot_bg.texture = CARD_SLOT_TEX
+	slot_bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	slot_bg.position = Vector2(10, 40)
+	slot_bg.size = Vector2(tex_w, tex_h)
+	panel.add_child(slot_bg)
+
+	# 卡槽拖放区域（覆盖在PNG的槽位上）
+	var slot_drop := ColorRect.new()
+	slot_drop.name = "Slot%d" % vane_idx
+	slot_drop.position = Vector2(10 + 120, 40 + 60)  # 对齐PNG槽位
+	slot_drop.size = Vector2(160, 100)
+	slot_drop.color = Color.TRANSPARENT  # 透明但可接收drop
+	panel.add_child(slot_drop)
+
+	# 拖入提示
+	var slot_text := Label.new()
+	slot_text.text = "把装置%d拖入槽位" % vane_idx
+	slot_text.position = Vector2(50, 40 + tex_h - 10)
+	slot_text.add_theme_font_size_override("font_size", 14)
+	slot_text.add_theme_color_override("font_color", Color("#ccccee"))
+	panel.add_child(slot_text)
+
+	# 关闭按钮
+	var close_btn := Button.new()
+	close_btn.text = "关闭"
+	close_btn.position = Vector2(panel.size.x - 200, panel.size.y - 40)
+	close_btn.size = Vector2(180, 36)
+	close_btn.pressed.connect(_close_vane_panel)
+	panel.add_child(close_btn)
+
+	# 未获得装置提醒
+	var owned: bool = laser_owned.get("laser_device_%d" % vane_idx, false)
+	if not owned:
+		var warn := Label.new()
+		warn.text = "（你还没有获得装置%d）" % vane_idx
+		warn.position = Vector2(30, 40 + tex_h - 30)
+		warn.add_theme_font_size_override("font_size", 13)
+		warn.add_theme_color_override("font_color", Color("#ff8888"))
+		panel.add_child(warn)
+
+
+func _close_vane_panel() -> void:
+	if _vane_panel_root != null and is_instance_valid(_vane_panel_root):
+		_vane_panel_root.queue_free()
+		_vane_panel_root = null
+	player.controls_enabled = true
+
+
+# ════════════════════════════════════════════════════════════
+#  书架 → 密码本弹窗
+# ════════════════════════════════════════════════════════════
+func _open_password_book() -> void:
+	_close_popup()
+	_close_vane_panel()
+	player.controls_enabled = false
+
+	var root := Control.new()
+	root.name = "PopupRoot"
+	hud.add_child(root)
+	_popup_root = root
+
+	# 暗色遮罩（点击关闭）
+	var overlay := ColorRect.new()
+	overlay.color = Color(0, 0, 0, 0.6)
+	overlay.size = Vector2(1280, 720)
+	overlay.gui_input.connect(func(event: InputEvent):
+		if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+			_close_popup()
+	)
+	root.add_child(overlay)
+
+	# 密码本 PNG
+	var tex_rect := TextureRect.new()
+	tex_rect.texture = PASSWORD_BOOK_TEX
+	tex_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	var tw: float = PASSWORD_BOOK_TEX.get_width() * 3.0
+	var th: float = PASSWORD_BOOK_TEX.get_height() * 3.0
+	tex_rect.size = Vector2(tw, th)
+	tex_rect.position = Vector2(1280/2 - tw/2, 720/2 - th/2)
+	root.add_child(tex_rect)
+
+	# 标题
+	var title := Label.new()
+	title.text = "密码本"
+	title.add_theme_font_size_override("font_size", 28)
+	title.add_theme_color_override("font_color", Color("#ffe8a0"))
+	title.position = Vector2(1280/2 - 50, 720/2 - th/2 - 50)
+	root.add_child(title)
+
+	# 提示
+	var tip := Label.new()
+	tip.text = "点击任意位置关闭"
+	tip.add_theme_font_size_override("font_size", 14)
+	tip.add_theme_color_override("font_color", Color("#888888"))
+	tip.position = Vector2(1280/2 - 60, 720/2 + th/2 + 30)
+	root.add_child(tip)
+
+
+# ════════════════════════════════════════════════════════════
+#  宝箱 → 密码锁弹窗
+# ════════════════════════════════════════════════════════════
+func _open_password_lock() -> void:
+	_close_popup()
+	_close_vane_panel()
+	player.controls_enabled = false
+
+	var root := Control.new()
+	root.name = "PopupRoot"
+	hud.add_child(root)
+	_popup_root = root
+
+	# 暗色遮罩
+	var overlay := ColorRect.new()
+	overlay.color = Color(0, 0, 0, 0.6)
+	overlay.size = Vector2(1280, 720)
+	overlay.gui_input.connect(func(event: InputEvent):
+		if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+			_close_popup()
+	)
+	root.add_child(overlay)
+
+	# 密码锁 PNG
+	var tex_rect := TextureRect.new()
+	tex_rect.texture = PASSWORD_LOCK_TEX
+	tex_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	var tw: float = PASSWORD_LOCK_TEX.get_width() * 2.5
+	var th: float = PASSWORD_LOCK_TEX.get_height() * 2.5
+	tex_rect.size = Vector2(tw, th)
+	tex_rect.position = Vector2(1280/2 - tw/2, 720/2 - th/2)
+	root.add_child(tex_rect)
+
+	# 标题
+	var title := Label.new()
+	title.text = "密码锁"
+	title.add_theme_font_size_override("font_size", 28)
+	title.add_theme_color_override("font_color", Color("#ffe8a0"))
+	title.position = Vector2(1280/2 - 50, 720/2 - th/2 - 50)
+	root.add_child(title)
+
+	# 提示
+	var tip := Label.new()
+	tip.text = "点击任意位置关闭"
+	tip.add_theme_font_size_override("font_size", 14)
+	tip.add_theme_color_override("font_color", Color("#888888"))
+	tip.position = Vector2(1280/2 - 60, 720/2 + th/2 + 30)
+	root.add_child(tip)
+
+
+func _close_popup() -> void:
+	if _popup_root != null and is_instance_valid(_popup_root):
+		_popup_root.queue_free()
+		_popup_root = null
+	player.controls_enabled = true
+
+
+# 检测拖放时是否落在卡槽上 — 在 _end_drag 中调用
+func _try_place_to_vane_slot(global_pos: Vector2, item_id: String) -> bool:
+	if _vane_panel_root == null or not is_instance_valid(_vane_panel_root):
+		return false
+	var slot_name := "Slot1" if item_id == "laser_device_1" else "Slot2"
+	var slot: ColorRect = _vane_panel_root.get_node_or_null(slot_name) as ColorRect
+	if slot == null:
+		return false
+	# 转换为 panel 局部坐标
+	var local := slot.global_position
+	var s_pos: Vector2 = _vane_panel_root.global_position + slot.position
+	var s_size: Vector2 = slot.size
+	var lp: Vector2 = global_pos - _vane_panel_root.global_position
+	if lp.x >= slot.position.x and lp.x <= slot.position.x + s_size.x \
+		and lp.y >= slot.position.y and lp.y <= slot.position.y + s_size.y:
+		var vane_idx: int = 1 if item_id == "laser_device_1" else 2
+		if world.is_laser_placed(vane_idx):
+			show_toast("此风向标已有装置。", 2.0)
+			return false
+		var ok: bool = world.place_laser_device(item_id, vane_idx)
+		if ok:
+			state["laser_%d_placed" % vane_idx] = true
+			state["laser_%d_angle" % vane_idx] = 0.0
+			show_toast("激光装置已放置！靠近后用鼠标滚轮旋转角度。", 3.0)
+			AudioManager.play_sfx("collect")
+			_update_inventory_sidebar()
+			autosave()
+			_close_vane_panel()
+			return true
+		else:
+			show_toast("放置失败。", 2.0)
+			return false
+	return false
 
 # ══════════════════════════════════════════════════════════════
 #  侧边物品栏 + 拖放系统
@@ -838,7 +1077,12 @@ func _end_drag(screen_pos: Vector2) -> void:
 	if is_instance_valid(drag_preview):
 		drag_preview.queue_free()
 		drag_preview = null
-	
+
+	# 优先检测卡槽面板（玩家可能从卡槽拖入）
+	if _try_place_to_vane_slot(screen_pos, drag_item_id):
+		drag_item_id = ""
+		return
+
 	# 转换屏幕坐标到世界坐标，检测风向标
 	var camera := get_viewport().get_camera_2d()
 	if camera == null:

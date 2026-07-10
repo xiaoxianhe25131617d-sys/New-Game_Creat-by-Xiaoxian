@@ -53,6 +53,8 @@ var is_demo_playing := false
 var demo_step := 0
 var demo_timer := 0.0
 var is_waiting_input := false
+var demo_complete_count := 0   # 示范完整播放次数（需≥1才能按E开始踩）
+var _is_blanking := false       # 循环结束后短暂空白一帧（标记循环边界）
 var _shake_timer := 0.0
 var _last_stepped := -1
 var _vfx_t := 0.0
@@ -65,70 +67,61 @@ var button_glows: Array[ColorRect] = []
 var step_dots: Array[ColorRect] = []
 
 
-# ═══════════════ 骨骼姿势（6种舞步，画布中央展示）═══════════════
-# 关键:双脚叉开程度 = 跳跃远近
-#   fwd_walk: 双脚并拢,身体前倾,走步
-#   fwd_jump: 双脚微叉,小跳向前
-#   fwd_big:  双脚大叉,大跳向前(脚距最远)
-#   bwd_walk: 双脚并拢,身体后倾,走步
-#   bwd_jump: 双脚微叉,小跳向后
-#   bwd_big:  双脚大叉,大跳向后
+# ═══════════════ 骨骼姿势（6种舞步，方向用左右脚不对称表现）═══════════════
+# 向前 = 左脚竖直锚定，右脚向前/右迈出（从玩家视角看，左脚是"这边"，右脚往外跨）
+# 向后 = 右脚竖直锚定，左脚向后/左迈出
+# 大跳 = 迈出的脚跨得更开 + 身体腾空更高
 
 func _get_pose(move_id: String) -> Dictionary:
-	# 全部基于画布中央 X=0，垂直方向由 center 偏移
-	# 头部 neck hip 在中央, 脚越叉开=跳得越远
-	# 参数: head_x, head_y, neck_x, neck_y, hip_x, hip_y,
-	#        shld_l, shld_r, elb_l, elb_r, hand_l, hand_r,
-	#        knee_l, knee_r, foot_l, foot_r
 	match move_id:
-		# 向前走步:重心前倾,一脚在前一脚在后
+		# 向前走：左脚近身竖直，右脚向前迈出
 		"fwd_walk": return _p(
-			0,-50, 0,-40, 0,0,                     # 头 颈 髋
-			-10,-32, 10,-32,                       # 双肩
-			-18,-20, 18,-20,                       # 双肘
-			-22,-8, 22,-8,                         # 双手
-			-8,16, 8,16,                           # 双膝
-			-12,32, 12,32)                         # 双脚 (并拢落地)
-		# 向前小跳:双脚微叉,身体略离地
+			0,-50, 0,-40, 0,0,
+			-10,-32, 10,-32,
+			-10,-18, 16,-20,
+			-12,-6, 22,-8,
+			-4,14, 12,16,
+			-6,30, 24,32)
+		# 向前小跳：左脚竖直锚地，右脚向前跨出跳跃
 		"fwd_jump": return _p(
-			0,-58, 0,-48, 0,-6,                    # 头 颈 髋(略上抬)
-			-10,-40, 10,-40,                       # 双肩
-			-18,-32, 18,-32,                       # 双肘
-			-22,-22, 22,-22,                       # 双手
-			-12,10, 12,10,                         # 双膝 (略上)
-			-18,28, 18,28)                         # 双脚 (微叉)
-		# 向前大跳:双脚大叉,身体高高跃起
+			0,-58, 0,-48, 0,-6,
+			-10,-40, 10,-40,
+			-10,-28, 18,-30,
+			-14,-18, 26,-20,
+			-4,6, 16,8,
+			-8,24, 30,26)
+		# 向前大跳：左脚竖直，右脚大跨 + 身体高高腾空
 		"fwd_big": return _p(
-			0,-66, 0,-56, 0,-12,                   # 头 颈 髋(明显上抬)
-			-12,-48, 12,-48,                       # 双肩
-			-22,-42, 22,-42,                       # 双肘
-			-28,-32, 28,-32,                       # 双手张开
-			-18,4, 18,4,                           # 双膝 (高高)
-			-30,22, 30,22)                         # 双脚 (大叉=跳得远)
-		# 向后走步:重心后倾
+			0,-66, 0,-56, 0,-12,
+			-12,-48, 12,-48,
+			-12,-38, 22,-40,
+			-18,-28, 30,-30,
+			-6,-2, 20,2,
+			-10,16, 40,18)
+		# 向后走：右脚近身竖直，左脚向后迈出
 		"bwd_walk": return _p(
 			0,-50, 0,-40, 0,0,
 			-10,-32, 10,-32,
-			-18,-20, 18,-20,
-			-22,-8, 22,-8,
-			-8,16, 8,16,
-			-12,32, 12,32)
-		# 向后小跳:双脚微叉
+			-16,-20, 10,-18,
+			-22,-8, 12,-6,
+			-12,16, 4,14,
+			-24,32, 6,30)
+		# 向后小跳：右脚竖直，左脚向后跨出
 		"bwd_jump": return _p(
 			0,-58, 0,-48, 0,-6,
 			-10,-40, 10,-40,
-			-18,-32, 18,-32,
-			-22,-22, 22,-22,
-			-12,10, 12,10,
-			-18,28, 18,28)
-		# 向后大跳:双脚大叉
+			-18,-30, 10,-28,
+			-26,-20, 14,-18,
+			-16,8, 4,6,
+			-30,26, 8,24)
+		# 向后大跳：右脚竖直，左脚大跨 + 腾空
 		"bwd_big": return _p(
 			0,-66, 0,-56, 0,-12,
 			-12,-48, 12,-48,
-			-22,-42, 22,-42,
-			-28,-32, 28,-32,
-			-18,4, 18,4,
-			-30,22, 30,22)
+			-22,-40, 12,-38,
+			-30,-30, 18,-28,
+			-20,2, 6,-2,
+			-40,18, 10,16)
 	return {}
 
 func _p(hx,hy, nx,ny, hpx,hpy, slx,sly, srx,sry, elx,ely, erx,ery, hlx,hly, hrx,hry, klx,kly, krx,kry, flx,fly, frx,fry) -> Dictionary:
@@ -309,27 +302,26 @@ func _on_paint_draw() -> void:
 		paint_canvas.draw_rect(Rect2(Vector2.ZERO, Vector2(CANVAS_W, FRAME_H)), Color("#1a1510", 0.85))
 		return
 	
-	# 先画背景（必须在这里画，不能用子节点否则会盖住 _draw）
+	# 先画背景
 	paint_canvas.draw_rect(Rect2(Vector2.ZERO, Vector2(CANVAS_W, FRAME_H)), Color("#f0e4d4"))
 	# 画地平线
 	paint_canvas.draw_line(Vector2(10, GROUND_Y), Vector2(CANVAS_W-10, GROUND_Y), Color("#998877"), 1.0)
 
-	# 所有动作都在画布中央展示，不画任何圆圈/格子
-	# 小人画在中央，vertical 位置取决于"跳跃高度"=脚离地距离
+	# 循环结束时的空白帧（不画小人）—— 标识循环开头
+	if is_demo_playing and _is_blanking:
+		return
+
+	# 中央小人舞步展示 —— 永远使用demo序列，与玩家输入无关
 	var move_id := "fwd_walk"
 	if is_demo_playing:
 		var mi: int = DEMO_SEQ[demo_step]
 		move_id = MOVE_IDS[mi]
-	elif is_waiting_input and step_buffer.size() > 0:
-		move_id = MOVE_IDS[step_buffer[step_buffer.size()-1]]
 
-	# 根据 move_id 计算中心位置 (X固定=CANVAS_W/2)
-	# 跳得越远 = 身体中心Y越靠上 (离地越高)
-	var center := Vector2(CANVAS_W/2, GROUND_Y-30)  # 基础位置(脚落在 GROUND_Y 附近)
+	var center := Vector2(CANVAS_W/2, GROUND_Y-30)
 	match move_id:
-		"fwd_walk", "bwd_walk": center.y = GROUND_Y-50  # 走路: 脚在 GROUND_Y
-		"fwd_jump", "bwd_jump": center.y = GROUND_Y-58  # 小跳: 脚在 GROUND_Y-8
-		"fwd_big", "bwd_big":   center.y = GROUND_Y-66  # 大跳: 脚在 GROUND_Y-16
+		"fwd_walk", "bwd_walk": center.y = GROUND_Y-50
+		"fwd_jump", "bwd_jump": center.y = GROUND_Y-58
+		"fwd_big", "bwd_big":   center.y = GROUND_Y-66
 
 	_draw_stick(paint_canvas, move_id, center, 1.3, 1.0)
 
@@ -366,27 +358,35 @@ func _on_body_entered(body: Node2D) -> void:
 	if body.is_in_group("player"):
 		player_in_range = true
 		_sync_view()
-		if not is_completed and not is_demo_playing and not is_waiting_input:
-			_start_demo()
+		# demo 在 _ready 已启动且永不停止，不需要这里再触发
 
 func _on_body_exited(body: Node2D) -> void:
 	if body.is_in_group("player"):
 		player_in_range = false
 
 
+func _input(event: InputEvent) -> void:
+	if not player_in_range or is_completed: return
+	if event.is_action_pressed("interact"):
+		if not is_waiting_input:
+			_stop_demo_start_input()
+
+
 # ═══════════════ 地面按钮踩踏 ═══════════════
 
 func _on_button_stepped(idx: int) -> void:
 	if is_completed: return
+	# 还没按E开始输入？只高亮，不记录
+	if not is_waiting_input:
+		_highlight_button(idx)
+		status_label.text = "按 [E] 开始踩按钮 · 示范轮数 %d" % (demo_complete_count + 1)
+		return
+	# 输入模式：记录踩踏，demo 同时在画布上继续循环
 	_highlight_button(idx)
-	if not is_waiting_input and is_demo_playing:
-		_stop_demo_start_input()
-	if not is_waiting_input: return
 	if step_buffer.size() == 0 or step_buffer[step_buffer.size()-1] != idx:
 		step_buffer.append(idx)
 		_last_stepped = idx
 		_update_progress_dots()
-		paint_canvas.queue_redraw()
 		if step_buffer.size() >= ANSWER_LEN:
 			_check_answer()
 
@@ -406,25 +406,27 @@ func _start_demo() -> void:
 	is_waiting_input = false
 	demo_step = 0
 	demo_timer = 0.0
+	demo_complete_count = 0
+	_is_blanking = false
 	step_buffer.clear()
 	_last_stepped = -1
 	for g in button_glows: g.color.a = 0.0
 	_update_progress_dots()
 	check_icon.visible = true
 	check_icon.text = "✓"
-	status_label.text = "示范中…踩任意按钮开始"
+	status_label.text = "按 [E] 开始踩按钮 · 先看看舞步示范"
 	status_label.add_theme_color_override("font_color", Color("#ffe8a0"))
 	hint_updated.emit("观察油画中小人的舞步顺序……")
 	paint_canvas.queue_redraw()
 
 func _stop_demo_start_input() -> void:
-	is_demo_playing = false
+	# 不停止 demo！demo 始终循环示范，输入独立跟踪
 	is_waiting_input = true
 	step_buffer.clear()
 	_last_stepped = -1
 	check_icon.visible = false
 	_update_progress_dots()
-	status_label.text = "踩按钮！（%d步）" % ANSWER_LEN
+	status_label.text = "踩按钮！（%d步）· 对照画上顺序" % ANSWER_LEN
 	status_label.add_theme_color_override("font_color", Color("#55ff88"))
 	hint_updated.emit("开始踩按钮……")
 	paint_canvas.queue_redraw()
@@ -452,7 +454,7 @@ func _check_answer() -> void:
 		paint_canvas.queue_redraw()
 		get_tree().create_timer(0.6).timeout.connect(func():
 			if not is_completed and is_waiting_input:
-				status_label.text = "踩按钮！（%d步）" % ANSWER_LEN
+				status_label.text = "踩按钮！（%d步）· 对照画上顺序" % ANSWER_LEN
 				status_label.add_theme_color_override("font_color", Color("#ffe8a0")))
 
 func _update_progress_dots() -> void:
@@ -487,11 +489,12 @@ func update_on_view_change(view: String) -> void:
 	paint_canvas.queue_redraw()
 	if is_completed: return
 	var can_see := (view == "autism" or view == "depression")
-	if player_in_range and not is_demo_playing and not is_waiting_input:
+	if player_in_range:
 		if can_see:
-			_start_demo()
+			# demo 始终在运行，切回来自然能看到
+			status_label.text = "按 [E] 开始踩按钮 · 先看看舞步示范"
+			status_label.add_theme_color_override("font_color", Color("#ffe8a0"))
 		else:
-			# 切换到非可用视角时停止
 			status_label.text = "需要自闭症/抑郁视角"
 			status_label.add_theme_color_override("font_color", Color("#887766"))
 
@@ -515,14 +518,20 @@ func _process(delta: float) -> void:
 	else:
 		paint_canvas.position = Vector2(-CANVAS_W/2, FRAME_Y)
 
-	# 示范动画
+	# 示范动画：每帧 1.1s，6 帧一个循环，循环完闪一帧空白再重来
+	# demo 始终循环，与输入模式无关
 	if is_demo_playing:
 		demo_timer += delta
 		if demo_timer >= DEMO_STEP_DURATION:
 			demo_timer -= DEMO_STEP_DURATION
-			demo_step += 1
-			if demo_step >= DEMO_SEQ.size():
+			if _is_blanking:
+				_is_blanking = false
 				demo_step = 0
+			else:
+				demo_step += 1
+				if demo_step >= DEMO_SEQ.size():
+					_is_blanking = true
+					demo_complete_count += 1
 		paint_canvas.queue_redraw()
 
 	# ✓ 闪烁

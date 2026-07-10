@@ -2,61 +2,43 @@ extends Area2D
 class_name PuzzleNPCPassword
 
 # ════════════════════════════════════════════════════════════
-#  NPC密码台 — 站台旁5个NPC + 可点击放大的密码本
-#  密码本：一段奇怪的话，含10位数字
-#  自闭模式：前5位（对应NPC顺序）被高亮
-#  抑郁模式：NPC透露线索
-#  正确密码：1234567890
+#  许愿堂密码台 — 密码本 + 5位数字密码锁
+#  5个NPC独立分散在世界中，玩家走近按E对话。
+#  密码本: 正常模式=普通文字, 自闭模式=标记字红色高亮
+#  密码锁: 5位旋转数字锁, 正确答案 3 7 1 4 6
+#  视觉: 一个大房子取代原来的许愿堂背景
 # ════════════════════════════════════════════════════════════
 
 signal puzzle_completed(key_id: String)
 signal hint_updated(text: String)
 
-# ── 密码本内容 ──
-const CIPHER_LINES: Array[String] = [
-	"石台上刻着一段谁也读不懂的话——",
-	" 1 扇门在你身后轻轻合上，",
-	"有 2 个人同时说起不同的梦，",
-	"台阶上有 3 道裂缝延伸到深处，",
-	"井水映出第 4 个倒影却没有人站在井边，",
-	"而 5 根手指都沾了墨，怎么也洗不掉。",
-	"",
-	"后面还刻着——",
-	"第 6 夜有人敲门但无人应答，",
-	" 7 根弦突然断了3根，剩下的还在颤动，",
-	"墙上的 8 字在慢慢转动像要倒下来，",
-	" 9 片羽毛从半空中落下来没有声音，",
-	" 0 点的钟声会响起，让所有人都醒过来。",
-]
+# ── 密码本正文（10个标记字：出 到 错 小 怎 请 别 笑 神 早）──
+const CIPHER_TEXT: String = (
+	"意义之「出」其离原初语境，即已渗入他者之符号系统，彼之「到」达，"
+	+ "实为结构之暴力转译。误读非「错」误，乃语言之宿命——每「小」我皆囚于自身语义之网，"
+	+ "网目细密，外人莫窥其隙。「怎」可冀望对谈即通？余尝「请」观日常言说之际，辞气往来，"
+	+ "宛如隔雾相呼，而所指之实，恒在雾后三寸。「别」以共鸣为真，共识不过统计之偶然。"
+	+ "世人或「笑」此论为玄虚，然此正近于「神」秘主义者之洞见——理解之幻象，"
+	+ "乃认知自设之绊锁。「早」于胡塞尔言「生活世界」时，已暗伏此叹："
+	+ "他者之心，终是现象学之剩余，可悬置，不可拥有。"
+)
 
-const CIPHER_DIGITS: Array[int] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0]
-const HIGHLIGHT_COUNT := 5  # 自闭模式高亮前5位
-const PASSWORD_LEN := 10
-const CORRECT_PASSWORD: String = "1234567890"
-
-# ── NPC数据（无标签，仅位置和潜台词） ──
-const NPC_DATA: Array[Dictionary] = [
-	{"visible_text": "我守在这里很久了。",         "subtext": "第一个位置，像门一样"},
-	{"visible_text": "知识有时是负担。",           "subtext": "第二个人，梦总是一对"},
-	{"visible_text": "工具比人更诚实。",           "subtext": "第三道裂痕最危险"},
-	{"visible_text": "旅途没有终点。",             "subtext": "第四个倒影无人认领"},
-	{"visible_text": "倾听是最难的修行。",         "subtext": "第五根手指，沾满墨迹"},
-]
+const MARKER_CHARS: Array[String] = ["出","到","错","小","怎","请","别","笑","神","早"]
+const CORRECT_PASSWORD: Array[int] = [3, 7, 1, 4, 6]
+const PASSWORD_LEN := 5
 
 # ── 状态 ──
 var player_in_range := false
 var is_completed := false
-var npc_talked: Array[bool] = [false, false, false, false, false]
-var input_digits: Array[String] = []
 var cipher_zoom_open := false
+var lock_open := false
+var lock_digits: Array[int] = [0, 0, 0, 0, 0]
 
-# ── UI ──
-var npc_markers: Array[Polygon2D] = []
-var dialogue_label: RichTextLabel
-var status_label: Label
-var cipher_book_btn: Area2D
+# ── UI 节点 ──
+var _ui_canvas: CanvasLayer
+var _world_visual: Node2D
 var zoom_overlay: CanvasLayer
-var input_panel: Panel
+var lock_overlay: CanvasLayer
 
 
 # ════════════════════════════════════════════════════════════
@@ -72,113 +54,125 @@ func _ready() -> void:
 
 	var shape := CollisionShape2D.new()
 	var rect := RectangleShape2D.new()
-	rect.size = Vector2(260, 200)
+	rect.size = Vector2(260, 180)
 	shape.shape = rect
-	shape.position = Vector2(0, -40)
+	shape.position = Vector2(0, -10)
 	add_child(shape)
 
-	_make_world_console()
+	_make_world_visual()
+	_make_ui_panel()
 	_make_zoom_overlay()
-	_make_input_panel()
+	_make_lock_overlay()
+
+	set_process(true)  # 用于锁的自动检测计时
 
 
 # ════════════════════════════════════════════════════════════
-#  世界中的控制台
+#  世界中的标记（房子本体由 world.gd 用贴图绘制）
 # ════════════════════════════════════════════════════════════
 
-func _make_world_console() -> void:
-	# 底座
-	var base := Polygon2D.new()
-	base.polygon = PackedVector2Array([
-		Vector2(-100, -10), Vector2(100, -10),
-		Vector2(100, 40), Vector2(-100, 40),
-	])
-	base.color = Color("#5a5060")
-	add_child(base)
+func _make_world_visual() -> void:
+	_world_visual = Node2D.new()
+	_world_visual.name = "WorldVisual"
+	_world_visual.z_index = 4
+	add_child(_world_visual)
 
-	# 控制台面板
-	var panel := ColorRect.new()
-	panel.position = Vector2(-100, -55)
-	panel.size = Vector2(200, 44)
-	panel.color = Color("#3a3050")
-	add_child(panel)
+	# 只保留一个小标记，房子由背景层的房子贴图负责
+	var marker := Label.new()
+	marker.text = "密码台"
+	marker.position = Vector2(-24, -80)
+	marker.add_theme_font_size_override("font_size", 16)
+	marker.add_theme_color_override("font_color", Color("#a080f0"))
+	_world_visual.add_child(marker)
 
-	# 5个NPC站位标记（无名字标签！）
-	npc_markers.clear()
-	for i in range(NPC_DATA.size()):
-		var nx := -75.0 + float(i) * 38.0
-		var marker := Polygon2D.new()
-		var pts := PackedVector2Array()
-		for j in range(6):
-			var a := TAU * j / 6.0
-			pts.append(Vector2(cos(a) * 10, sin(a) * 10))
-		marker.polygon = pts
-		marker.position = Vector2(nx, -38)
-		marker.color = Color("#8080a0")
-		add_child(marker)
-		npc_markers.append(marker)
 
-		# 仅序号小点
-		var dot := ColorRect.new()
-		dot.position = Vector2(nx - 3, -52)
-		dot.size = Vector2(6, 6)
-		dot.color = Color("#c0c0e0", 0.4)
-		add_child(dot)
+# ════════════════════════════════════════════════════════════
+#  UI 面板（CanvasLayer）：玩家靠近时显示两个大按钮
+# ════════════════════════════════════════════════════════════
 
-	# 对话显示区
-	dialogue_label = RichTextLabel.new()
-	dialogue_label.name = "DialogueArea"
-	dialogue_label.position = Vector2(-95, -12)
-	dialogue_label.size = Vector2(190, 48)
-	dialogue_label.bbcode_enabled = true
-	dialogue_label.text = "按 [E] 与NPC对话"
-	dialogue_label.fit_content = true
-	add_child(dialogue_label)
+func _make_ui_panel() -> void:
+	_ui_canvas = CanvasLayer.new()
+	_ui_canvas.name = "UICanvas"
+	_ui_canvas.layer = 11
+	_ui_canvas.visible = false
+	add_child(_ui_canvas)
+
+	# 面板背景
+	var panel := Panel.new()
+	panel.name = "UIPanel"
+	panel.position = Vector2(280, 540)
+	panel.size = Vector2(590, 90)
+	var ps := StyleBoxFlat.new()
+	ps.set_corner_radius_all(10)
+	ps.bg_color = Color("#1a1520", 0.88)
+	ps.border_width_left = 2; ps.border_width_right = 2
+	ps.border_width_top = 2; ps.border_width_bottom = 2
+	ps.border_color = Color("#6a5080")
+	panel.add_theme_stylebox_override("panel", ps)
+	_ui_canvas.add_child(panel)
 
 	# 标题
-	var title := Label.new()
-	title.text = "[ NPC密码台 ]"
-	title.position = Vector2(-48, -82)
-	title.add_theme_font_size_override("font_size", 16)
-	title.add_theme_color_override("font_color", Color("#b0a0f0"))
-	add_child(title)
+	var ui_title := Label.new()
+	ui_title.text = "许愿堂 · 密码台"
+	ui_title.position = Vector2(20, 10)
+	ui_title.add_theme_font_size_override("font_size", 16)
+	ui_title.add_theme_color_override("font_color", Color("#b0a0f0"))
+	panel.add_child(ui_title)
 
-	# ── 可点击密码本区域 ──
-	cipher_book_btn = Area2D.new()
-	cipher_book_btn.position = Vector2(65, -55)
-	var bk_shape := CollisionShape2D.new()
-	var bk_rect := RectangleShape2D.new()
-	bk_rect.size = Vector2(32, 40)
-	bk_shape.shape = bk_rect
-	cipher_book_btn.add_child(bk_shape)
-	cipher_book_btn.input_pickable = true
-	cipher_book_btn.input_event.connect(_on_cipher_book_click)
-	add_child(cipher_book_btn)
+	# ── 密码本按钮 ──
+	var book_btn := Button.new()
+	book_btn.name = "BookBtn"
+	book_btn.text = "密码本"
+	book_btn.position = Vector2(20, 38)
+	book_btn.size = Vector2(260, 36)
+	book_btn.add_theme_font_size_override("font_size", 15)
+	book_btn.pressed.connect(_open_zoom)
+	_style_button(book_btn, Color("#6a5080"), Color("#d4c4ff"))
+	panel.add_child(book_btn)
 
-	var book_icon := ColorRect.new()
-	book_icon.position = Vector2(48, -55)
-	book_icon.size = Vector2(32, 40)
-	book_icon.color = Color("#6a5080")
-	add_child(book_icon)
+	# ── 密码锁按钮 ──
+	var lock_btn := Button.new()
+	lock_btn.name = "LockBtn"
+	lock_btn.text = "密码锁"
+	lock_btn.position = Vector2(300, 38)
+	lock_btn.size = Vector2(270, 36)
+	lock_btn.add_theme_font_size_override("font_size", 15)
+	lock_btn.pressed.connect(_open_lock)
+	_style_button(lock_btn, Color("#5a3050"), Color("#e0b0d0"))
+	panel.add_child(lock_btn)
 
-	var book_lbl := Label.new()
-	book_lbl.text = "密码本"
-	book_lbl.position = Vector2(42, -38)
-	book_lbl.add_theme_font_size_override("font_size", 9)
-	book_lbl.add_theme_color_override("font_color", Color("#d4c4ff"))
-	add_child(book_lbl)
+	# 提示
+	var tip := Label.new()
+	tip.text = "走进按下 E 也可交互 · 点击按钮或按 E 键"
+	tip.position = Vector2(20, 46)
+	tip.add_theme_font_size_override("font_size", 12)
+	tip.add_theme_color_override("font_color", Color("#807080"))
+	panel.add_child(tip)
 
-	# 状态
-	status_label = Label.new()
-	status_label.position = Vector2(-95, 50)
-	status_label.add_theme_font_size_override("font_size", 13)
-	status_label.add_theme_color_override("font_color", Color("#ffe8a0"))
-	status_label.text = "按 [E] 开始对话 · 点击右下密码本"
-	add_child(status_label)
+
+func _style_button(btn: Button, bg: Color, fg: Color) -> void:
+	var nb := StyleBoxFlat.new()
+	nb.set_corner_radius_all(6)
+	nb.bg_color = bg
+	nb.border_width_left = 1; nb.border_width_right = 1
+	nb.border_width_top = 1; nb.border_width_bottom = 1
+	nb.border_color = bg.lightened(0.3)
+	btn.add_theme_stylebox_override("normal", nb)
+
+	var hb := StyleBoxFlat.new()
+	hb.set_corner_radius_all(6)
+	hb.bg_color = bg.lightened(0.2)
+	hb.border_width_left = 2; hb.border_width_right = 2
+	hb.border_width_top = 2; hb.border_width_bottom = 2
+	hb.border_color = bg.lightened(0.5)
+	btn.add_theme_stylebox_override("hover", hb)
+
+	btn.add_theme_color_override("font_color", fg)
+	btn.add_theme_color_override("font_hover_color", Color.WHITE)
 
 
 # ════════════════════════════════════════════════════════════
-#  密码本放大覆盖层
+#  密码本放大覆盖层（古书风格，无emoji装饰）
 # ════════════════════════════════════════════════════════════
 
 func _make_zoom_overlay() -> void:
@@ -187,11 +181,9 @@ func _make_zoom_overlay() -> void:
 	zoom_overlay.visible = false
 	add_child(zoom_overlay)
 
-	# 半透明背景
 	var bg := ColorRect.new()
 	bg.size = Vector2(1152, 648)
-	bg.color = Color(0, 0, 0, 0.7)
-	# 点击背景关闭
+	bg.color = Color(0, 0, 0, 0.72)
 	bg.gui_input.connect(func(ev: InputEvent):
 		if ev is InputEventMouseButton and ev.pressed:
 			_close_zoom()
@@ -199,52 +191,62 @@ func _make_zoom_overlay() -> void:
 	bg.mouse_filter = Control.MOUSE_FILTER_STOP
 	zoom_overlay.add_child(bg)
 
-	# 书页面板
 	var page := Panel.new()
-	page.position = Vector2(176, 64)
-	page.size = Vector2(800, 520)
+	page.position = Vector2(126, 54)
+	page.size = Vector2(900, 540)
+	page.name = "ZoomPage"
 	var ps := StyleBoxFlat.new()
-	ps.set_corner_radius_all(10)
-	ps.bg_color = Color("#f5eed8")
+	ps.set_corner_radius_all(12)
+	ps.bg_color = Color("#3a2a1a")
 	ps.border_width_left = 4; ps.border_width_right = 4
 	ps.border_width_top = 4; ps.border_width_bottom = 4
-	ps.border_color = Color("#8a7060")
+	ps.border_color = Color("#6a5040")
 	page.add_theme_stylebox_override("panel", ps)
-	page.name = "ZoomPage"
 	zoom_overlay.add_child(page)
 
-	# 标题
+	# 内页（浅色纸）
+	var inner := Panel.new()
+	inner.position = Vector2(20, 20)
+	inner.size = Vector2(860, 500)
+	inner.name = "InnerPage"
+	var ips := StyleBoxFlat.new()
+	ips.set_corner_radius_all(6)
+	ips.bg_color = Color("#e8dcc8")
+	ips.border_width_left = 1; ips.border_width_right = 1
+	ips.border_width_top = 1; ips.border_width_bottom = 1
+	ips.border_color = Color("#8a7060", 0.3)
+	inner.add_theme_stylebox_override("panel", ips)
+	page.add_child(inner)
+
 	var zt := Label.new()
-	zt.text = "《石台铭文》 — 密码本"
-	zt.position = Vector2(30, 18)
-	zt.add_theme_font_size_override("font_size", 22)
-	zt.add_theme_color_override("font_color", Color("#3a2a1a"))
+	zt.text = "许愿堂铭文 — 密码本"
+	zt.position = Vector2(40, 38)
+	zt.add_theme_font_size_override("font_size", 24)
+	zt.add_theme_color_override("font_color", Color("#1a1008"))
 	page.add_child(zt)
 
-	# 分隔线
 	var sep := ColorRect.new()
-	sep.position = Vector2(30, 52)
-	sep.size = Vector2(740, 2)
-	sep.color = Color("#8a7060", 0.4)
+	sep.position = Vector2(40, 74)
+	sep.size = Vector2(820, 2)
+	sep.color = Color("#6a5040", 0.5)
 	page.add_child(sep)
 
-	# 铭文内容
 	var content := RichTextLabel.new()
 	content.name = "CipherContent"
-	content.position = Vector2(30, 68)
-	content.size = Vector2(740, 400)
+	content.position = Vector2(40, 92)
+	content.size = Vector2(820, 370)
 	content.bbcode_enabled = true
-	content.add_theme_font_size_override("font_size", 18)
-	content.add_theme_color_override("font_color", Color("#2a2018"))
-	content.add_theme_font_size_override("normal_font_size", 18)
+	content.add_theme_font_size_override("normal_font_size", 20)
+	content.add_theme_color_override("default_color", Color("#1a1008"))
+	content.selection_enabled = false
 	page.add_child(content)
 
-	# 底部提示
 	var ztip := Label.new()
-	ztip.text = "点击任意处关闭"
-	ztip.position = Vector2(30, 480)
+	ztip.name = "ZoomTip"
+	ztip.text = "点击空白处关闭 · 按E键也可关闭"
+	ztip.position = Vector2(40, 496)
 	ztip.add_theme_font_size_override("font_size", 14)
-	ztip.add_theme_color_override("font_color", Color("#8a7060"))
+	ztip.add_theme_color_override("font_color", Color("#6a5040"))
 	page.add_child(ztip)
 
 
@@ -253,66 +255,291 @@ func _refresh_zoom_content() -> void:
 	if not is_instance_valid(content): return
 
 	var view := _get_current_view()
-	var lines := PackedStringArray()
-	for i in range(CIPHER_LINES.size()):
-		var line := CIPHER_LINES[i]
+	content.clear()
+
+	if view == "autism":
+		_append_highlighted_content(content)
+	else:
+		content.add_theme_color_override("default_color", Color("#1a1008"))
+		content.append_text(CIPHER_TEXT)
+
+	var ztip: Label = zoom_overlay.get_node_or_null("ZoomPage/ZoomTip") as Label
+	if is_instance_valid(ztip):
 		if view == "autism":
-			# 自闭模式：给前5行（含数字的）高亮对应数字
-			line = _highlight_digits_in_line(line, i)
-		lines.append(line)
-	content.text = "\n".join(lines)
-
-	var ztip: Label = zoom_overlay.get_node_or_null("ZoomPage/Label") as Label
-	if is_instance_valid(ztip) and view == "autism":
-		ztip.text = "注意：前5个数字（对应NPC站位顺序）被高亮 · 点击任意处关闭"
+			ztip.text = "自闭视角：标记字已红色高亮 · 点击空白处关闭"
+		else:
+			ztip.text = "点击空白处关闭 · 按E键也可关闭"
 
 
-func _highlight_digits_in_line(line: String, line_idx: int) -> String:
-	# 找出该行对应的数字（1-5），如果在CIPHER_DIGITS的前HIGHLIGHT_COUNT中
-	for d in range(HIGHLIGHT_COUNT):
-		var digit := str(CIPHER_DIGITS[d])
-		if digit in line:
-			# 只高亮空格包围的数字（避免高亮3根中的3等）
-			var idx := line.find(" " + digit + " ")
-			if idx != -1:
-				line = line.replace(" " + digit + " ", " [color=#ff6644][b] " + digit + " [/b][/color] ")
-				break
-	return line
+func _append_highlighted_content(content: RichTextLabel) -> void:
+	# 逐段分析 CIPHER_TEXT，遇到「X」标记字则红色加粗显示
+	var remaining := CIPHER_TEXT
+	while remaining.length() > 0:
+		var bracket_open := remaining.find("「")
+		if bracket_open == -1:
+			content.add_theme_color_override("default_color", Color("#1a1008"))
+			content.append_text(remaining)
+			break
+		# 输出「之前的部分
+		if bracket_open > 0:
+			content.add_theme_color_override("default_color", Color("#1a1008"))
+			content.append_text(remaining.substr(0, bracket_open))
+		# 找「」
+		var bracket_close := remaining.find("」", bracket_open + 1)
+		if bracket_close == -1:
+			content.add_theme_color_override("default_color", Color("#1a1008"))
+			content.append_text(remaining.substr(bracket_open))
+			break
+		var marker := remaining.substr(bracket_open + 1, bracket_close - bracket_open - 1)
+		if marker in MARKER_CHARS:
+			content.push_color(Color("#e03030"))
+			content.push_bold()
+			content.append_text("「" + marker + "」")
+			content.pop()
+			content.pop()
+		else:
+			content.add_theme_color_override("default_color", Color("#1a1008"))
+			content.append_text(remaining.substr(bracket_open, bracket_close - bracket_open + 1))
+		remaining = remaining.substr(bracket_close + 1)
+
+
+func _highlight_all_markers(text: String) -> String:
+	# 已重构为 _append_highlighted_content，此函数保留兼容
+	return text
 
 
 # ════════════════════════════════════════════════════════════
-#  输入面板（世界内显示）
+#  密码锁覆盖层（5位旋转轮盘锁）
+#  每次转动后 0.8 秒自动检测，正确即解锁，无需确认按钮
 # ════════════════════════════════════════════════════════════
 
-func _make_input_panel() -> void:
-	input_panel = Panel.new()
-	input_panel.visible = false
-	input_panel.position = Vector2(-130, -100)
-	input_panel.size = Vector2(260, 74)
-	var ips := StyleBoxFlat.new()
-	ips.set_corner_radius_all(8)
-	ips.bg_color = Color("#2a2040")
-	ips.border_width_left = 2; ips.border_width_right = 2
-	ips.border_width_top = 2; ips.border_width_bottom = 2
-	ips.border_color = Color("#6a5080")
-	input_panel.add_theme_stylebox_override("panel", ips)
-	add_child(input_panel)
+const LOCK_DIAL_R := 48          # 轮盘半径
+const LOCK_DIAL_GAP := 24        # 轮盘间距
+const LOCK_PANEL_W := 600
+const LOCK_PANEL_H := 300
+var _auto_check_timer: float = -1.0  # -1 表示不检测
 
-	var ilbl := Label.new()
-	ilbl.text = "输入10位密码："
-	ilbl.position = Vector2(14, 8)
-	ilbl.size = Vector2(232, 16)
-	ilbl.add_theme_color_override("font_color", Color("#d4c4ff"))
-	ilbl.add_theme_font_size_override("font_size", 13)
-	input_panel.add_child(ilbl)
+func _make_lock_overlay() -> void:
+	lock_overlay = CanvasLayer.new()
+	lock_overlay.layer = 13
+	lock_overlay.visible = false
+	add_child(lock_overlay)
 
-	var input := LineEdit.new()
-	input.name = "AnswerInput"
-	input.position = Vector2(14, 30)
-	input.size = Vector2(232, 30)
-	input.placeholder_text = "10位数字…"
-	input.add_theme_font_size_override("font_size", 15)
-	input_panel.add_child(input)
+	var bg := ColorRect.new()
+	bg.size = Vector2(1152, 648)
+	bg.color = Color(0, 0, 0, 0.72)
+	bg.gui_input.connect(func(ev: InputEvent):
+		if ev is InputEventMouseButton and ev.pressed:
+			_close_lock()
+	)
+	bg.mouse_filter = Control.MOUSE_FILTER_STOP
+	lock_overlay.add_child(bg)
+
+	var panel := Panel.new()
+	panel.position = Vector2((1152 - LOCK_PANEL_W) / 2.0, (648 - LOCK_PANEL_H) / 2.0)
+	panel.size = Vector2(LOCK_PANEL_W, LOCK_PANEL_H)
+	panel.name = "LockPanel"
+	var ps := StyleBoxFlat.new()
+	ps.set_corner_radius_all(14)
+	ps.bg_color = Color("#1a1028")
+	ps.border_width_left = 3; ps.border_width_right = 3
+	ps.border_width_top = 3; ps.border_width_bottom = 3
+	ps.border_color = Color("#4a3060")
+	panel.add_theme_stylebox_override("panel", ps)
+	lock_overlay.add_child(panel)
+
+	# 标题
+	var tl := Label.new()
+	tl.text = "五位密码锁"
+	tl.position = Vector2(20, 14)
+	tl.add_theme_font_size_override("font_size", 22)
+	tl.add_theme_color_override("font_color", Color("#c0a0e0"))
+	panel.add_child(tl)
+
+	# 副标题：锁体纹理
+	var sub := Label.new()
+	sub.text = "旋转每个轮盘至正确数字"
+	sub.position = Vector2(20, 42)
+	sub.add_theme_font_size_override("font_size", 13)
+	sub.add_theme_color_override("font_color", Color("#706090"))
+	panel.add_child(sub)
+
+	# 5个旋转轮盘
+	var total_w := PASSWORD_LEN * (LOCK_DIAL_R * 2) + (PASSWORD_LEN - 1) * LOCK_DIAL_GAP
+	var dx0 := (LOCK_PANEL_W - total_w) / 2.0
+	for d in range(PASSWORD_LEN):
+		_draw_lock_dial(panel, d, dx0 + d * (LOCK_DIAL_R * 2 + LOCK_DIAL_GAP))
+
+	# 提示文字
+	var tip := Label.new()
+	tip.name = "LockTip"
+	tip.text = "点击上下箭头旋转数字 0-9"
+	tip.position = Vector2(20, LOCK_PANEL_H - 30)
+	tip.add_theme_font_size_override("font_size", 13)
+	tip.add_theme_color_override("font_color", Color("#706090"))
+	panel.add_child(tip)
+
+
+# 画一个旋转轮盘（圆形锁风格）
+func _draw_lock_dial(panel: Panel, digit_idx: int, cx: float) -> void:
+	var cy := 130.0  # 轮盘中心Y
+
+	# 轮盘背景圆（用Panel + 全圆角模拟）
+	var dial_bg := Panel.new()
+	dial_bg.name = "DialBg_%d" % digit_idx
+	dial_bg.position = Vector2(cx - LOCK_DIAL_R, cy - LOCK_DIAL_R)
+	dial_bg.size = Vector2(LOCK_DIAL_R * 2, LOCK_DIAL_R * 2)
+	var bs := StyleBoxFlat.new()
+	bs.set_corner_radius_all(LOCK_DIAL_R)
+	bs.bg_color = Color("#0d0818")
+	bs.border_width_left = 2; bs.border_width_right = 2
+	bs.border_width_top = 2; bs.border_width_bottom = 2
+	bs.border_color = Color("#4a3060")
+	dial_bg.add_theme_stylebox_override("panel", bs)
+	dial_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(dial_bg)
+
+	# 数字标签
+	var label := Label.new()
+	label.name = "DialVal_%d" % digit_idx
+	label.text = "0"
+	label.position = Vector2(cx - LOCK_DIAL_R, cy - 18)
+	label.size = Vector2(LOCK_DIAL_R * 2, 36)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", 40)
+	label.add_theme_color_override("font_color", Color("#ffe8a0"))
+	panel.add_child(label)
+
+	# 上箭头按钮
+	var up := Button.new()
+	up.name = "UpBtn_%d" % digit_idx
+	up.text = "▴"
+	up.flat = true
+	up.position = Vector2(cx - 16, cy - LOCK_DIAL_R - 28)
+	up.size = Vector2(32, 24)
+	up.add_theme_font_size_override("font_size", 14)
+	up.add_theme_color_override("font_color", Color("#a080d0"))
+	up.add_theme_color_override("font_hover_color", Color("#ffffff"))
+	up.pressed.connect(_on_digit_up.bind(digit_idx))
+	panel.add_child(up)
+
+	# 下箭头按钮
+	var dn := Button.new()
+	dn.name = "DnBtn_%d" % digit_idx
+	dn.text = "▾"
+	dn.flat = true
+	dn.position = Vector2(cx - 16, cy + LOCK_DIAL_R + 4)
+	dn.size = Vector2(32, 24)
+	dn.add_theme_font_size_override("font_size", 14)
+	dn.add_theme_color_override("font_color", Color("#a080d0"))
+	dn.add_theme_color_override("font_hover_color", Color("#ffffff"))
+	dn.pressed.connect(_on_digit_down.bind(digit_idx))
+	panel.add_child(dn)
+
+	# 序号标签
+	var idxl := Label.new()
+	idxl.text = str(digit_idx + 1)
+	idxl.position = Vector2(cx - 12, cy + LOCK_DIAL_R + 32)
+	idxl.size = Vector2(24, 16)
+	idxl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	idxl.add_theme_font_size_override("font_size", 12)
+	idxl.add_theme_color_override("font_color", Color("#504070"))
+	panel.add_child(idxl)
+
+
+func _on_digit_up(idx: int) -> void:
+	lock_digits[idx] = (lock_digits[idx] + 1) % 10
+	_refresh_lock_display()
+	_schedule_auto_check()
+
+func _on_digit_down(idx: int) -> void:
+	lock_digits[idx] = (lock_digits[idx] + 9) % 10
+	_refresh_lock_display()
+	_schedule_auto_check()
+
+func _refresh_lock_display() -> void:
+	var panel := lock_overlay.get_node_or_null("LockPanel") as Panel
+	if not is_instance_valid(panel): return
+	for d in range(PASSWORD_LEN):
+		var lbl: Label = panel.get_node_or_null("DialVal_%d" % d) as Label
+		if is_instance_valid(lbl):
+			lbl.text = str(lock_digits[d])
+
+# 每次转动后延迟 0.8s 自动检测密码
+func _schedule_auto_check() -> void:
+	_auto_check_timer = 0.8  # 每次转动重置计时器
+
+func _process(delta: float) -> void:
+	if _auto_check_timer > 0:
+		_auto_check_timer -= delta
+		if _auto_check_timer <= 0:
+			_auto_check_timer = -1.0
+			_do_auto_check()
+
+# 自动检测密码是否正确
+func _do_auto_check() -> void:
+	var ok := true
+	for i in range(PASSWORD_LEN):
+		if lock_digits[i] != CORRECT_PASSWORD[i]:
+			ok = false; break
+	if ok:
+		# 轮盘变绿
+		var panel := lock_overlay.get_node_or_null("LockPanel") as Panel
+		if is_instance_valid(panel):
+			for d in range(PASSWORD_LEN):
+				var lbl: Label = panel.get_node_or_null("DialVal_%d" % d) as Label
+				if is_instance_valid(lbl):
+					lbl.add_theme_color_override("font_color", Color("#80ff80"))
+		await get_tree().create_timer(0.4).timeout
+		_close_lock()
+		_complete_puzzle()
+
+
+func _open_lock() -> void:
+	if is_completed: return
+	if cipher_zoom_open:
+		return  # 不自动切换，用户需先关闭密码本
+	lock_open = true
+	lock_digits = [0, 0, 0, 0, 0]
+	_refresh_lock_display()
+	lock_overlay.visible = true
+	var player := _get_player()
+	if player != null and "controls_enabled" in player:
+		player.controls_enabled = false
+	hint_updated.emit("密码锁已打开 — 需要5位数字密码")
+
+
+func _close_lock() -> void:
+	lock_open = false
+	lock_overlay.visible = false
+	var player := _get_player()
+	if player != null and "controls_enabled" in player:
+		player.controls_enabled = true
+
+
+# ════════════════════════════════════════════════════════════
+#  密码本显示
+# ════════════════════════════════════════════════════════════
+
+func _open_zoom() -> void:
+	if is_completed: return
+	if lock_open:
+		return  # 不自动切换，用户需先关闭密码锁
+	cipher_zoom_open = true
+	_refresh_zoom_content()
+	zoom_overlay.visible = true
+	hint_updated.emit("打开了密码本 — 注意观察引号中的字")
+	var player := _get_player()
+	if player != null and "controls_enabled" in player:
+		player.controls_enabled = false
+
+func _close_zoom() -> void:
+	cipher_zoom_open = false
+	zoom_overlay.visible = false
+	var player := _get_player()
+	if player != null and "controls_enabled" in player:
+		player.controls_enabled = true
 
 
 # ════════════════════════════════════════════════════════════
@@ -322,174 +549,57 @@ func _make_input_panel() -> void:
 func _on_body_entered(body: Node2D) -> void:
 	if body.is_in_group("player"):
 		player_in_range = true
+		_ui_canvas.visible = true
+		hint_updated.emit("按E或点击按钮：密码本 / 密码锁")
 
 func _on_body_exited(body: Node2D) -> void:
 	if body.is_in_group("player"):
 		player_in_range = false
-
-
-func _on_cipher_book_click(_viewport: Node, event: InputEvent, _shape_idx: int) -> void:
-	if not player_in_range or is_completed: return
-	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		_open_zoom()
-
+		_ui_canvas.visible = false
 
 func _input(event: InputEvent) -> void:
 	if not player_in_range or is_completed: return
-
-	# 关闭放大
-	if cipher_zoom_open and event.is_action_pressed("interact"):
-		_close_zoom()
-		return
-
-	if cipher_zoom_open: return
-
-	# 输入面板中的按键处理
-	if input_panel.visible and event is InputEventKey and event.pressed:
-		var inp: LineEdit = input_panel.get_node_or_null("AnswerInput") as LineEdit
-		if not is_instance_valid(inp): return
-
-		var key: String = event.as_text_key_label()
-		if key in ["0","1","2","3","4","5","6","7","8","9"]:
-			if inp.text.length() < PASSWORD_LEN:
-				inp.text += key
-				if inp.text.length() == PASSWORD_LEN:
-					_submit_answer()
-			return
-		elif key == "BackSpace":
-			if inp.text.length() > 0:
-				inp.text = inp.text.left(inp.text.length() - 1)
-			return
-		elif key == "Return":
-			_submit_answer()
-			return
-
-	# E键交互
 	if event.is_action_pressed("interact"):
-		if input_panel.visible:
-			_submit_answer()
-		else:
-			_talk_to_next_npc()
+		if cipher_zoom_open:
+			_close_zoom()
+			get_viewport().set_input_as_handled()
+			return
+		if lock_open:
+			_close_lock()
+			get_viewport().set_input_as_handled()
+			return
+		# 普通状态：按E打开密码本
+		_open_zoom()
+		get_viewport().set_input_as_handled()
 
 
-func _talk_to_next_npc() -> void:
-	var next_idx := -1
-	for i in range(npc_talked.size()):
-		if not npc_talked[i]:
-			next_idx = i
-			break
-
-	if next_idx == -1:
-		# 全对话过 → 打开输入
-		_open_input()
-		return
-
-	var data: Dictionary = NPC_DATA[next_idx]
-	var view := _get_current_view()
-
-	if is_instance_valid(dialogue_label):
-		match view:
-			"depression":
-				dialogue_label.text = "[color=#ffa0a0]%s[/color]\n[color=#a0c0ff](心想: %s)[/color]" % [data["visible_text"], data["subtext"]]
-				hint_updated.emit("NPC %d 的心声: %s" % [next_idx + 1, data["subtext"]])
-			"autism":
-				dialogue_label.text = "[color=#c0d0ff]%s[/color]\n[color=#ffff88]位置%d — 仔细看密码本[/color]" % [data["visible_text"], next_idx + 1]
-				hint_updated.emit("NPC %d: 自闭视角下注意密码本高亮的数字顺序" % [next_idx + 1])
-			_:
-				dialogue_label.text = "[color=#c0c0c0]%s[/color]\n[color=gray](换个视角也许能看到更多…)[/color]" % [data["visible_text"]]
-				hint_updated.emit("第%d个人说了些什么…去看密码本" % [next_idx + 1])
-
-	npc_talked[next_idx] = true
-	_highlight_marker(next_idx)
-
-	var talked := 0
-	for t in npc_talked: if t: talked += 1
-	status_label.text = "已对话 %d/5 · 点击密码本查看" % talked
-
-
-func _open_input() -> void:
-	input_panel.visible = true
-	var inp: LineEdit = input_panel.get_node_or_null("AnswerInput") as LineEdit
-	if is_instance_valid(inp): inp.text = ""
-	status_label.text = "输入10位密码（全部对话完成）"
-	hint_updated.emit("密码本中按顺序排列的10个数字就是密码")
-
-
-func _submit_answer() -> void:
-	var inp: LineEdit = input_panel.get_node_or_null("AnswerInput") as LineEdit
-	if not is_instance_valid(inp): return
-	var ans := inp.text.strip_edges()
-
-	if ans == CORRECT_PASSWORD:
-		_complete_puzzle()
-	else:
-		status_label.text = "密码不对……再仔细看看密码本"
-		hint_updated.emit("密码错误。看清楚密码本中的10个数字顺序。")
-		inp.text = ""
-
+# ════════════════════════════════════════════════════════════
+#  完成
+# ════════════════════════════════════════════════════════════
 
 func _complete_puzzle() -> void:
 	is_completed = true
-	input_panel.visible = false
 	if cipher_zoom_open: _close_zoom()
-	status_label.text = "✨ 获得钥匙4（天文台钥匙）！"
-	for m in npc_markers:
-		if is_instance_valid(m): m.color = Color("#ffd700")
-	hint_updated.emit("✨ 你获得了钥匙4！")
+	if lock_open: _close_lock()
+	_ui_canvas.visible = false
+	hint_updated.emit("你获得了钥匙4！")
 	puzzle_completed.emit("key_4")
-
-
-# ════════════════════════════════════════════════════════════
-#  密码本放大
-# ════════════════════════════════════════════════════════════
-
-func _open_zoom() -> void:
-	cipher_zoom_open = true
-	_refresh_zoom_content()
-	zoom_overlay.visible = true
-	hint_updated.emit("打开了密码本 — 仔细观察铭文中的数字")
-	var player := _get_player()
-	if player != null and "controls_enabled" in player:
-		player.controls_enabled = false
-
-
-func _close_zoom() -> void:
-	cipher_zoom_open = false
-	zoom_overlay.visible = false
-	var player := _get_player()
-	if player != null and "controls_enabled" in player:
-		player.controls_enabled = true
-	# 如果所有NPC对话完成且输入面板未打开，提示
-	var all_talked := true
-	for t in npc_talked: if not t: all_talked = false
-	if all_talked and not input_panel.visible and not is_completed:
-		_open_input()
 
 
 # ════════════════════════════════════════════════════════════
 #  辅助
 # ════════════════════════════════════════════════════════════
 
-func _highlight_marker(idx: int) -> void:
-	if idx < npc_markers.size():
-		var m := npc_markers[idx]
-		var t := create_tween()
-		t.tween_property(m, "color", Color("#ffd700"), 0.25)
-		t.tween_property(m, "color", Color("#80a0c0"), 0.5)
-
-
 func _get_current_view() -> String:
-	var world: Node = get_tree().get_nodes_in_group("world").front()
-	if world and world.has_method("get_current_view"):
-		return world.get_current_view()
+	for node in get_tree().get_nodes_in_group("world"):
+		if node.has_method("get_current_view"):
+			return node.get_current_view()
 	return "normal"
-
 
 func _get_player() -> Node2D:
 	for node in get_tree().get_nodes_in_group("player"):
 		return node
 	return null
-
 
 func is_solved() -> bool:
 	return is_completed

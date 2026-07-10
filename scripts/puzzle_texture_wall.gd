@@ -82,30 +82,26 @@ func _ready() -> void:
 
 
 func _make_wall_visual() -> void:
+	# 墙本体完全透明 — 真正的墙由 world.gd 的藤蔓纹理负责
 	wall_visual = Polygon2D.new()
 	wall_visual.polygon = PackedVector2Array([
 		Vector2(-80, -140), Vector2(80, -140),
 		Vector2(80, 140), Vector2(-80, 140),
 	])
-	wall_visual.color = Color("#5b4b3a")
+	wall_visual.color = Color(0, 0, 0, 0)
 	add_child(wall_visual)
 
-	# 石墙纹理裂痕
+	# 石墙纹理裂痕也隐藏
 	for i in range(14):
 		var line := Line2D.new()
 		line.width = 2
-		line.default_color = Color("#4a3a2a", 0.7)
+		line.default_color = Color(0, 0, 0, 0)
 		var y: float = -130.0 + i * 21.0
 		line.add_point(Vector2(-60, y + sin(i * 2.3) * 8))
 		line.add_point(Vector2(60, y + cos(i * 1.9) * 6))
 		add_child(line)
 
-	var title := Label.new()
-	title.text = "[ 石 门 ]"
-	title.position = Vector2(-30, -148)
-	title.add_theme_font_size_override("font_size", 18)
-	title.add_theme_color_override("font_color", Color("#b0a080"))
-	add_child(title)
+	# 石门标题也隐藏（藤蔓纹理就是装饰，不需要 [石门] 文字）
 
 
 func _make_stones() -> void:
@@ -121,7 +117,7 @@ func _make_stones() -> void:
 			sp.append(Vector2(cos(a) * 12, sin(a) * 11))
 		stone.polygon = sp
 		stone.position = Vector2(bx, by)
-		stone.color = Color("#7a6a5a")
+		stone.color = Color("#4a3a5a")
 		stone.name = "Stone%d" % i
 		add_child(stone)
 		stone_visuals.append(stone)
@@ -133,7 +129,7 @@ func _make_hint_label() -> void:
 	hint_label.size = Vector2(270, 0)
 	hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint_label.add_theme_font_size_override("font_size", 13)
-	hint_label.add_theme_color_override("font_color", Color("#ffe8a0"))
+	hint_label.add_theme_color_override("font_color", Color("#c0c0e0"))
 	hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	hint_label.text = "靠近后按 [E] 触摸墙面"
 	add_child(hint_label)
@@ -389,13 +385,12 @@ func _depress_stone(idx: int) -> void:
 		return
 	var stone := stone_visuals[idx]
 	var tween := create_tween()
-	tween.tween_property(stone, "color", Color("#404030"), 0.2)
+	tween.tween_property(stone, "color", Color("#202840"), 0.2)
 	tween.tween_property(stone, "scale", Vector2(0.85, 0.65), 0.25)
 	tween.tween_property(stone, "position", stone.position + Vector2(0, 8), 0.25)
 
 
 func _flash_stone_closest_to(key: String) -> void:
-	# 根据按键位置，让最近的石块微闪一下
 	var kpos: Array = KEYBOARD.get(key, [99, 99])
 	var best_idx := -1
 	var best_dist := 999.0
@@ -407,35 +402,36 @@ func _flash_stone_closest_to(key: String) -> void:
 			best_idx = i
 	if best_idx >= 0 and best_idx < stone_visuals.size():
 		var tween := create_tween()
-		tween.tween_property(stone_visuals[best_idx], "modulate", Color("#ffcc88"), 0.08)
+		tween.tween_property(stone_visuals[best_idx], "modulate", Color("#aaccff"), 0.08)
 		tween.tween_property(stone_visuals[best_idx], "modulate", Color.WHITE, 0.3)
 
 
 func _pulse_all_stones() -> void:
 	for stone in stone_visuals:
 		var tween := create_tween()
-		tween.tween_property(stone, "modulate", Color("#a09070"), 0.4)
+		tween.tween_property(stone, "modulate", Color("#7060a0"), 0.4)
 		tween.tween_property(stone, "modulate", Color.WHITE, 0.4)
 
 
 func _tween_wall_pulse() -> void:
-	var tween := create_tween()
-	tween.set_loops(3)
-	tween.tween_property(wall_visual, "modulate", Color("#8a7a6a"), 0.35)
-	tween.tween_property(wall_visual, "modulate", Color("#5b4b3a"), 0.35)
-
+	# 墙本体已隐藏（藤蔓纹理由 world.gd 负责），不再 tween 墙的可见性
+	# 只让石头脉冲
+	pass
 
 func _tween_wall_flash(near: bool) -> void:
-	var flash_color := Color("#a0e080") if near else Color("#e0a080")
-	var tween := create_tween()
-	tween.tween_property(wall_visual, "color", flash_color, 0.1)
-	tween.tween_property(wall_visual, "color", Color("#5b4b3a"), 0.3)
+	# 墙本体已隐藏，这里改用石头高亮反馈
+	var flash_color := Color("#80c0ff") if near else Color("#c080ff")
+	for stone in stone_visuals:
+		var t := create_tween()
+		t.tween_property(stone, "modulate", Color(1, 1, 1, 0.7) * flash_color, 0.1)
+		t.tween_property(stone, "modulate", Color.WHITE, 0.3)
 
 
 func _tween_celebration() -> void:
+	# 墙本体已隐藏，让石头们发亮庆祝
 	var tween := create_tween().set_parallel(true)
-	tween.tween_property(wall_visual, "color", Color("#ffd700"), 0.5)
-	tween.tween_property(wall_visual, "modulate", Color.WHITE, 0.5)
+	for stone in stone_visuals:
+		tween.tween_property(stone, "modulate", Color("#eef8ff"), 0.5)
 
 
 # ════════════════════════════════════════════════════════════

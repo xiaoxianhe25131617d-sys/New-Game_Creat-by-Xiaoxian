@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://8630fa888afa"
-path="res://.godot/imported/gardener_walk_left_1.png-7d382089c4d967a6ce43f4330c1316d6.ctex"
+uid="uid://bk8m50iy8dmjj"
+path="res://.godot/imported/wind_vane_2.png-bba03e8017e70369df3fa61c4e6f6c0f.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/characters/gardener_walk_left_1.png"
-dest_files=["res://.godot/imported/gardener_walk_left_1.png-7d382089c4d967a6ce43f4330c1316d6.ctex"]
+source_file="res://assets/wind_vane_2.png"
+dest_files=["res://.godot/imported/wind_vane_2.png-bba03e8017e70369df3fa61c4e6f6c0f.ctex"]
 
 [params]
 
