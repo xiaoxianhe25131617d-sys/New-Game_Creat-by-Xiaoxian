@@ -1,0 +1,11 @@
+# macOS Finder metadata
+.DS_Store
+
+# Godot editor, import cache, and shader cache
+.godot/
+
+# Local media captures and temporary exports
+*.mov
+*.mp4
+*.avi
+*.wav
