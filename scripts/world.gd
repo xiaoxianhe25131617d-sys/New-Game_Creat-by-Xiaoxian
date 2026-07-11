@@ -758,20 +758,21 @@ func _draw_ground_foreground() -> void:
 	var surface_y := GROUND_Y_PX                            # 3200 (地表线)
 	var bottom_y := float(WORLD_TILE_H * TILE_SIZE)         # 4496
 
-	# ── 1. 小栅栏(缩小放在地表，很小一层) ──
+	# ── 1. 小栅栏(均匀缩小，完整显示在地表) ──
 	var tex_w := float(SLAB_NEW_TEX.get_width())   # 2848
-	var tex_h := float(SLAB_NEW_TEX.get_height())  # 50 (石板路面纹理)
-	var scale_y: float = 0.15                      # 大幅缩小，约7.5px高
-	var display_h := tex_h * scale_y               # 约 7.5px
-	var slab_y: float = surface_y - display_h
-	var n := int(ceil(world_w / tex_w)) + 1
+	var tex_h := float(SLAB_NEW_TEX.get_height())  # 50
+	var scale_s: float = 0.06                      # 均匀缩小到约 171x3px 每块
+	var spacing := tex_w * scale_s                 # 约 170px 间距
+	var display_h := tex_h * scale_s               # 约 3px 高
+	var slab_y: float = surface_y - display_h      # 贴在地表线上
+	var n := int(ceil(world_w / spacing)) + 2
 	for i in range(maxi(0, n)):
 		var s := Sprite2D.new()
 		s.texture = SLAB_NEW_TEX
 		s.centered = false
-		s.position = Vector2(i * tex_w - tex_w * 0.5, slab_y)
-		s.scale = Vector2(1.0, scale_y)
-		s.texture_filter = TEXTURE_FILTER_NEAREST  # 像素清晰
+		s.position = Vector2(i * spacing - spacing * 0.5, slab_y)
+		s.scale = Vector2(scale_s, scale_s)
+		s.texture_filter = TEXTURE_FILTER_NEAREST
 		s.z_index = 0
 		fg.add_child(s)
 

@@ -45,7 +45,7 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	# 剧情滚动 — 优先级最高，漫画正在显示时暂停游戏逻辑
-	if _intro_layer != null and is_instance_valid(_intro_layer):
+	if _intro_canvas != null and is_instance_valid(_intro_canvas):
 		_intro_t += delta
 		var t01: float = clampf(_intro_t / _intro_duration, 0.0, 1.0)
 		# 进度条
@@ -183,7 +183,7 @@ func _input(event: InputEvent) -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	# 剧情滚动 — 任意键/鼠标按下立即跳过
-	if _intro_layer != null and is_instance_valid(_intro_layer):
+	if _intro_canvas != null and is_instance_valid(_intro_canvas):
 		if event is InputEventKey and event.pressed and not event.echo:
 			_intro_skip()
 			get_viewport().set_input_as_handled()
@@ -424,6 +424,7 @@ func _normalize_state() -> void:
 		state["current_view"] = "normal"
 
 # ── 剧情滚动状态 (show_intro 用) ──
+var _intro_canvas: CanvasLayer = null
 var _intro_layer: Control = null
 var _intro_comic: TextureRect = null
 var _intro_bar: ColorRect = null
@@ -437,14 +438,20 @@ func show_intro() -> void:
 	player.controls_enabled = false
 
 	const COMIC := preload("res://assets/intro_comic.png")
-	var vp := get_viewport().get_visible_rect().size
+	var vs := get_viewport().get_visible_rect().size
+
+	# ── 使用 CanvasLayer 保证渲染在最顶层 ──
+	var canvas := CanvasLayer.new()
+	canvas.name = "IntroCanvas"
+	canvas.layer = 10000  # 最高层，覆盖一切
+	add_child(canvas)
 
 	# 全屏 Control 拦截输入
 	var layer := Control.new()
 	layer.name = "IntroComic"
 	layer.set_anchors_preset(Control.PRESET_FULL_RECT)
 	layer.mouse_filter = Control.MOUSE_FILTER_STOP
-	add_child(layer)
+	canvas.add_child(layer)
 
 	# 全屏黑底
 	var bg := ColorRect.new()
@@ -453,64 +460,63 @@ func show_intro() -> void:
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer.add_child(bg)
 
-	# 漫画 — TextureRect，宽度撑满屏幕，从顶部开始显示
-	var comic_native_h := float(COMIC.get_height())
-	var comic_native_w := float(COMIC.get_width())
-	# 宽度撑满屏幕
-	var comic_w := vp.x
-	var scale := comic_w / comic_native_w
-	var comic_h := comic_native_h * scale  # 等比缩放后的实际高度（远超屏幕）
+	# 漫画 — 宽度撑满屏幕，从顶部开始向上滚动
+	var native_w := float(COMIC.get_width())
+	var native_h := float(COMIC.get_height())
+	var scale := vs.x / native_w
+	var display_w := vs.x
+	var display_h := native_h * scale  # 等比缩放后的实际高度
 	var comic := TextureRect.new()
 	comic.texture = COMIC
 	comic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	comic.stretch_mode = TextureRect.STRETCH_SCALE
 	comic.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	comic.size = Vector2(comic_w, comic_h)
-	# 起始: 顶部对齐屏幕顶部（立即可见，从顶部开始向上滚）
-	comic.position = Vector2(0, 0)
+	comic.size = Vector2(display_w, display_h)
+	comic.position = Vector2(0, 0)  # 从屏幕顶部开始显示
 	layer.add_child(comic)
 
-	# 顶部 "按任意键跳过" 提示
+	# 底部 "按任意键跳过" 提示
 	var hint := Label.new()
-	hint.text = "按任意键 / 点击鼠标跳过 →"
-	hint.add_theme_color_override("font_color", Color(1, 1, 1, 0.8))
+	hint.text = "按任意键 / 点击跳过 →"
+	hint.add_theme_color_override("font_color", Color(1, 1, 1, 0.85))
 	hint.add_theme_font_size_override("font_size", 18)
-	hint.position = Vector2(vp.x - 280, vp.y - 36)
-	hint.z_index = 10
+	hint.position = Vector2(vs.x - 270, vs.y - 36)
+	hint.z_index = 100
 	layer.add_child(hint)
 
 	# 底部进度条
 	var bar_bg := ColorRect.new()
 	bar_bg.color = Color(1, 1, 1, 0.2)
-	bar_bg.size = Vector2(vp.x, 3)
-	bar_bg.position = Vector2(0, vp.y - 3)
-	bar_bg.z_index = 10
+	bar_bg.size = Vector2(vs.x, 3)
+	bar_bg.position = Vector2(0, vs.y - 3)
+	bar_bg.z_index = 100
 	layer.add_child(bar_bg)
 	var bar := ColorRect.new()
 	bar.color = Color("#c89933", 0.95)
 	bar.size = Vector2(0, 3)
-	bar.position = Vector2(0, vp.y - 3)
-	bar.z_index = 11
+	bar.position = Vector2(0, vs.y - 3)
+	bar.z_index = 101
 	layer.add_child(bar)
 
-	# 保存状态 — _process 推进滚动, _unhandled_input 检测跳过
+	# 保存状态
 	_intro_layer = layer
+	_intro_canvas = canvas
 	_intro_comic = comic
 	_intro_bar = bar
 	_intro_t = 0.0
 	_intro_done = false
-	_intro_vp = vp
-	# 需要滚动的距离：漫画总高度 - 一屏，向上滚
-	_intro_comic_total_h = maxf(0, comic_h - vp.y)
+	_intro_vp = vs
+	_intro_comic_total_h = maxf(0, display_h - vs.y)
 
 func _intro_skip() -> void:
 	# 立即跳到末尾(完结状态)
 	_intro_done = true
 
 func _intro_finish() -> void:
-	# 结束: 销毁 layer, 恢复玩家控制, 提示引导
-	if is_instance_valid(_intro_layer):
-		_intro_layer.queue_free()
+	# 结束: 销毁整个 CanvasLayer, 恢复玩家控制
+	if is_instance_valid(_intro_canvas):
+		_intro_canvas.queue_free()
+	_intro_canvas = null
 	_intro_layer = null
 	_intro_comic = null
 	_intro_bar = null
