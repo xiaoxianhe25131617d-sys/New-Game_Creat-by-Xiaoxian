@@ -402,7 +402,7 @@ func _draw_trees_near(container: Node2D) -> void:
 func _draw_buildings_bg(container: Node2D) -> void:
 	# 背景建筑 — 暖调融入，与手绘水彩远山和像素元素统一
 	# 灯塔位置 — 用房子图（自动裁切透明边，底边贴地）
-	_spawn_house_sprite(container, Vector2(5500, GROUND_Y_PX), 320.0)
+	_spawn_house_sprite(container, Vector2(5500, GROUND_Y_PX), 160.0)
 	# 许愿堂 — 书架 + 宝箱
 	_spawn_wishplace_decor(container, Vector2(9800, GROUND_Y_PX))
 
@@ -923,18 +923,19 @@ func _make_beautiful_decor() -> void:
 			_draw_rock(Vector2(rx, GROUND_Y_PX - 2), [Color("#888888"), Color("#999999"), Color("#777777")][i % 3])
 
 func _draw_cabin(pos: Vector2) -> void:
-	for row in range(4):
+	# 缩小小屋 — 60% 比例（约 50% 宽，60% 高）
+	for row in range(3):
 		for col in range(3):
 			var log := ColorRect.new()
-			log.position = Vector2(pos.x - 24 + col * 16, pos.y - 60 + row * 15)
-			log.size = Vector2(14, 13)
+			log.position = Vector2(pos.x - 18 + col * 12, pos.y - 45 + row * 12)
+			log.size = Vector2(10, 10)
 			log.color = Color("#8b6914") if (row + col) % 2 == 0 else Color("#7a5a10")
 			log.z_index = 5   # 在新地表图(z=0)之上,显示在地面
 			add_child(log)
 	var roof := Polygon2D.new()
 	roof.polygon = PackedVector2Array([
-		Vector2(pos.x - 32, pos.y - 60), Vector2(pos.x + 28, pos.y - 60),
-		Vector2(pos.x, pos.y - 85)
+		Vector2(pos.x - 24, pos.y - 45), Vector2(pos.x + 21, pos.y - 45),
+		Vector2(pos.x, pos.y - 64)
 	])
 	roof.color = Color("#a04030")
 	roof.z_index = 6
@@ -1669,8 +1670,8 @@ func _make_single_vane(pos: Vector2, vane_idx: int, hint_angle: float) -> void:
 	var pole_sprite := Sprite2D.new()
 	pole_sprite.texture = tex
 	pole_sprite.centered = false
-	# 风向标加高加粗，与小房子协调 (从 300 增到 380)
-	var target_h: float = 380.0
+	# 风向标缩小到 180px 高（与缩小的房子协调），底部贴地
+	var target_h: float = 180.0
 	var scale_v: float = target_h / float(tex.get_height())
 	var w: float = float(tex.get_width()) * scale_v
 	pole_sprite.scale = Vector2(scale_v, scale_v)
@@ -1697,11 +1698,11 @@ func _make_single_vane(pos: Vector2, vane_idx: int, hint_angle: float) -> void:
 
 	# 激光方向指针（小细线，在杆顶）
 	var pointer := Line2D.new()
-	pointer.width = 3.0
+	pointer.width = 2.0
 	pointer.default_color = Color("#ff6644", 0.9)
 	pointer.add_point(Vector2.ZERO)
-	pointer.add_point(Vector2(34, 0))  # 向右延伸，rotation控制方向
-	pointer.position = Vector2(0, -target_h - 8)
+	pointer.add_point(Vector2(22, 0))  # 向右延伸，rotation控制方向
+	pointer.position = Vector2(0, -target_h - 6)
 	pointer.rotation = hint_angle
 	pointer.name = "LaserPointer"
 	vane.add_child(pointer)
@@ -1709,8 +1710,8 @@ func _make_single_vane(pos: Vector2, vane_idx: int, hint_angle: float) -> void:
 	# 标签
 	var label := Label.new()
 	label.text = "风向标%d" % vane_idx
-	label.position = Vector2(-30, -target_h - 26)
-	label.add_theme_font_size_override("font_size", 14)
+	label.position = Vector2(-30, -target_h - 22)
+	label.add_theme_font_size_override("font_size", 12)
 	label.add_theme_color_override("font_color", Color("#ffe8a0"))
 	vane.add_child(label)
 
@@ -1770,18 +1771,18 @@ func place_laser_device(device_id: String, vane_idx: int) -> bool:
 	if not data.has(vane_key):
 		return false
 	var vane_pos: Vector2 = data[vane_key]["pos"] as Vector2
-	
+
 	if _placed_lasers.has(vane_idx):
 		return false  # 已经有装置了
-	
+
 	# 创建激光装置节点（世界空间）
 	var device := Node2D.new()
 	device.name = device_id
 	device.position = vane_pos + Vector2(0, -80)
 	device.z_index = 20
-	
+
+	# ── 装置基座（菱形）──
 	var body := Polygon2D.new()
-	# 菱形装置
 	var sz := 12.0
 	body.polygon = PackedVector2Array([
 		Vector2(0, -sz), Vector2(sz, 0), Vector2(0, sz), Vector2(-sz, 0)
@@ -1789,15 +1790,23 @@ func place_laser_device(device_id: String, vane_idx: int) -> bool:
 	var dev_color := Color("#ff4444") if vane_idx == 1 else Color("#44aaff")
 	body.color = dev_color
 	device.add_child(body)
-	
+
+	# 提示标签（靠近时按滚轮旋转）
 	var dev_label := Label.new()
-	dev_label.text = "装置%d" % vane_idx
-	dev_label.position = Vector2(-18, -24)
+	dev_label.text = "装置%d — 滚轮旋转" % vane_idx
+	dev_label.position = Vector2(-50, -28)
 	dev_label.add_theme_font_size_override("font_size", 11)
 	dev_label.add_theme_color_override("font_color", dev_color.lightened(0.3))
 	device.add_child(dev_label)
-	
-	# 激光束（初始水平）
+
+	# ── 激光束（初始指向正确方向的近邻，提示"要调整到这里"）──
+	# 给个偏离正确角度的初始值，玩家一看就知道"还要调"
+	var initial_angle: float
+	match vane_idx:
+		1: initial_angle = _correct_angle_1 + 0.8   # 偏 ~46°，明显不对
+		2: initial_angle = _correct_angle_2 - 0.8   # 偏 ~46°，明显不对
+		_: initial_angle = 0.0
+
 	var beam := Line2D.new()
 	beam.name = "LaserBeam"
 	beam.width = 4.0
@@ -1806,15 +1815,26 @@ func place_laser_device(device_id: String, vane_idx: int) -> bool:
 	beam.add_point(Vector2.ZERO)
 	beam.add_point(Vector2.ZERO)
 	device.add_child(beam)
-	
+
+	# ── 目标角度提示（半透明辅助线，从装置指向正确方向）──
+	var guide := Line2D.new()
+	guide.name = "GuideLine"
+	guide.width = 1.5
+	guide.default_color = Color(dev_color.r, dev_color.g, dev_color.b, 0.3)
+	guide.z_index = 14
+	guide.add_point(Vector2.ZERO)
+	var guide_angle: float = _correct_angle_1 if vane_idx == 1 else _correct_angle_2
+	guide.add_point(Vector2(cos(guide_angle), sin(guide_angle)) * 80.0)  # 只画短辅助线
+	device.add_child(guide)
+
 	add_child(device)
 	_placed_lasers[vane_idx] = {"node": device, "beam": beam}
-	_laser_angles[vane_idx] = 0.0
-	
+	_laser_angles[vane_idx] = initial_angle
+
 	# 更新风向标发光
 	_update_vane_glow(vane_idx)
 	_update_laser_beam(vane_idx)
-	
+
 	return true
 
 func _update_laser_beam(vane_idx: int) -> void:
