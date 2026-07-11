@@ -224,6 +224,8 @@ func _make_tile_visuals() -> void:
 			ch.queue_free()
 		elif ch is ColorRect and ch.name.begins_with("EmptySlot_"):
 			ch.queue_free()
+		elif ch is Label and ch.name.begins_with("EmptyMark_"):
+			ch.queue_free()
 	tile_nodes.clear()
 
 	for idx in range(9):
@@ -234,14 +236,58 @@ func _make_tile_visuals() -> void:
 		var cy: float = gy * CELL_SIZE - CELL_SIZE
 
 		if tile_num == 0:
-			# 空位 — 深色填充
+			# ── 空位：明显空白（深色底 + 亮色描边 + 大问号）──
 			var ev := ColorRect.new()
 			ev.name = "EmptySlot_%d" % idx
 			ev.position = Vector2(cx - CELL_SIZE/2.0 + 2, cy - CELL_SIZE/2.0 + 2)
 			ev.size = Vector2(CELL_SIZE - 4, CELL_SIZE - 4)
-			ev.color = Color("#0e0c14")
+			ev.color = Color("#08080f")  # 接近纯黑，明显比图块深
 			ev.z_index = 1
 			grid_container.add_child(ev)
+			# 描边（用第二个 ColorRect 当边框）
+			var border := ColorRect.new()
+			border.name = "EmptySlotBorder_%d" % idx
+			border.position = Vector2(cx - CELL_SIZE/2.0, cy - CELL_SIZE/2.0)
+			border.size = Vector2(CELL_SIZE, CELL_SIZE)
+			border.color = Color("#4a4a6a", 0.0)  # 透明
+			border.z_index = 0
+			# 用 StyleBoxFlat 不行（ColorRect 不支持），用4条细线模拟边框
+			var top := ColorRect.new()
+			top.position = Vector2(cx - CELL_SIZE/2.0, cy - CELL_SIZE/2.0)
+			top.size = Vector2(CELL_SIZE, 2)
+			top.color = Color("#5a78a0", 0.7)
+			top.name = "EmptyMark_%d_top" % idx
+			grid_container.add_child(top)
+			var bot := ColorRect.new()
+			bot.position = Vector2(cx - CELL_SIZE/2.0, cy + CELL_SIZE/2.0 - 2)
+			bot.size = Vector2(CELL_SIZE, 2)
+			bot.color = Color("#5a78a0", 0.7)
+			bot.name = "EmptyMark_%d_bot" % idx
+			grid_container.add_child(bot)
+			var left := ColorRect.new()
+			left.position = Vector2(cx - CELL_SIZE/2.0, cy - CELL_SIZE/2.0)
+			left.size = Vector2(2, CELL_SIZE)
+			left.color = Color("#5a78a0", 0.7)
+			left.name = "EmptyMark_%d_l" % idx
+			grid_container.add_child(left)
+			var right := ColorRect.new()
+			right.position = Vector2(cx + CELL_SIZE/2.0 - 2, cy - CELL_SIZE/2.0)
+			right.size = Vector2(2, CELL_SIZE)
+			right.color = Color("#5a78a0", 0.7)
+			right.name = "EmptyMark_%d_r" % idx
+			grid_container.add_child(right)
+			# 中央问号
+			var q := Label.new()
+			q.name = "EmptyMark_%d" % idx
+			q.text = "?"
+			q.position = Vector2(cx - 8, cy - 14)
+			q.size = Vector2(16, 24)
+			q.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			q.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			q.add_theme_font_size_override("font_size", 22)
+			q.add_theme_color_override("font_color", Color("#7a9acf", 0.85))
+			q.z_index = 3
+			grid_container.add_child(q)
 			tile_nodes.append(ev)
 			continue
 
