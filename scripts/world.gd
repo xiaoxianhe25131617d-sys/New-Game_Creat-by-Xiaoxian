@@ -16,16 +16,18 @@ var bg_canvas: CanvasLayer
 var sky_background: TextureRect
 var view_tint_canvas: CanvasLayer
 var palette_overlay: ColorRect
-var blind_black: ColorRect
-var blind_label: Label
+var blind_vision: ColorRect
+var blind_vision_material: ShaderMaterial
 var view_overlay_canvas: CanvasLayer
 var monster_canvas: CanvasLayer
 
-var blind_cursor: Panel
-var cursor_pulse_time: float = 0.0
 var current_palette_view: String = "normal"
 var view_pulse_time: float = 0.0
 var _spike_canvas: CanvasLayer
+
+const BLIND_VISION_WORLD_RADIUS: float = 80.0
+const BLIND_VISION_FEATHER: float = 16.0
+const BLIND_VISION_SHADER := preload("res://shaders/blind_vision.gdshader")
 
 var _drop_through_tiles: Array[Vector2i] = []  # 可穿透地板位置列表
 var _ladder_zones: Array[Area2D] = []  # 梯子列表（玩家可爬）
@@ -130,6 +132,8 @@ func build(state: Dictionary) -> void:
 #  BACKGROUND CANVAS + VIEW TINT
 # ══════════════════════════════════════════════════════════════
 func _make_background_canvas() -> void:
+	# Run after normal gameplay nodes so the mask uses the latest camera canvas transform.
+	process_priority = 1000
 	# 固定在视口后的像素天空背景。
 	bg_canvas = CanvasLayer.new()
 	bg_canvas.name = "BackgroundCanvas"
@@ -153,7 +157,7 @@ func _make_background_canvas() -> void:
 	view_tint_canvas = CanvasLayer.new()
 	view_tint_canvas.name = "ViewTintCanvas"
 	view_tint_canvas.layer = 500
-	view_tint_canvas.follow_viewport_enabled = true
+	view_tint_canvas.follow_viewport_enabled = false
 	add_child(view_tint_canvas)
 
 	palette_overlay = ColorRect.new()
@@ -163,49 +167,32 @@ func _make_background_canvas() -> void:
 	palette_overlay.color = Color(1.0, 0.9, 0.75, 0.08)
 	view_tint_canvas.add_child(palette_overlay)
 
-	# 盲人全黑覆盖层（最高优先级）
-	blind_black = ColorRect.new()
-	blind_black.name = "BlindBlack"
-	blind_black.set_anchors_preset(Control.PRESET_FULL_RECT)
-	blind_black.color = Color(0, 0, 0, 1)
-	blind_black.mouse_filter = Control.MOUSE_FILTER_PASS
-	blind_black.visible = false
-	blind_black.z_index = 127
-	view_tint_canvas.add_child(blind_black)
+	# Blind vision mask. The shader samples the already-rendered scene and
+	# replaces it with grayscale only inside the player's dynamic radius.
+	blind_vision = ColorRect.new()
+	blind_vision.name = "BlindVision"
+	blind_vision.set_anchors_preset(Control.PRESET_FULL_RECT)
+	blind_vision.color = Color.WHITE
+	blind_vision.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	blind_vision.visible = false
+	blind_vision.z_index = 127
+	blind_vision_material = ShaderMaterial.new()
+	blind_vision_material.shader = BLIND_VISION_SHADER
+	blind_vision_material.set_shader_parameter("player_screen_uv", Vector2(0.5, 0.5))
+	blind_vision_material.set_shader_parameter("radius_px", BLIND_VISION_WORLD_RADIUS)
+	blind_vision_material.set_shader_parameter("feather_px", BLIND_VISION_FEATHER)
+	blind_vision.material = blind_vision_material
+	view_tint_canvas.add_child(blind_vision)
 
-	blind_label = Label.new()
-	blind_label.name = "BlindLabel"
-	blind_label.text = "盲人模式 - 按F键回声定位"
-	blind_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	blind_label.position = Vector2(300, 500)
-	blind_label.size = Vector2(680, 60)
-	blind_label.add_theme_font_size_override("font_size", 28)
-	blind_label.add_theme_color_override("font_color", Color(0.4, 0.6, 1.0))
-	blind_label.visible = false
-	blind_label.z_index = 127
-	view_tint_canvas.add_child(blind_label)
-
-	# Blind cursor (layer 1000, above blind_black)
 	view_overlay_canvas = CanvasLayer.new()
 	view_overlay_canvas.name = "ViewOverlayCanvas"
 	view_overlay_canvas.layer = 10000
-	view_overlay_canvas.follow_viewport_enabled = true
+	view_overlay_canvas.follow_viewport_enabled = false
 	add_child(view_overlay_canvas)
-
-	blind_cursor = Panel.new()
-	blind_cursor.name = "BlindCursor"
-	blind_cursor.size = Vector2(14, 14)
-	blind_cursor.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	blind_cursor.visible = false
-	var cs := StyleBoxFlat.new()
-	cs.bg_color = Color.WHITE
-	cs.set_corner_radius_all(7)
-	blind_cursor.add_theme_stylebox_override("panel", cs)
-	view_overlay_canvas.add_child(blind_cursor)
 
 	monster_canvas = CanvasLayer.new()
 	monster_canvas.name = "MonsterCanvas"
-	monster_canvas.layer = 9000
+	monster_canvas.layer = 450
 	monster_canvas.follow_viewport_enabled = true
 	add_child(monster_canvas)
 
@@ -965,8 +952,8 @@ func remove_interactable(node: Node) -> void:
 func _process(delta: float) -> void:
 	view_pulse_time += delta
 	_animate_view_tint()
-	if current_palette_view == "blind" and blind_cursor.visible:
-		_update_blind_cursor(delta)
+	if current_palette_view == "blind" and is_instance_valid(blind_vision_material):
+		_update_blind_vision()
 
 func set_view_palette(view: String) -> void:
 	if not is_instance_valid(palette_overlay): return
@@ -977,26 +964,20 @@ func set_view_palette(view: String) -> void:
 	match view:
 		"blind":
 			palette_overlay.color = Color(1, 1, 1, 0)
-			blind_black.visible = true
-			blind_label.visible = true
-			blind_cursor.visible = true
-			cursor_pulse_time = 0.0
+			blind_vision.visible = true
+			_update_blind_vision()
 		"adhd":
 			palette_overlay.color = Color(1.0, 0.92, 0.4, 0.12)
-			blind_black.visible = false; blind_label.visible = false
-			blind_cursor.visible = false
+			blind_vision.visible = false
 		"autism":
 			palette_overlay.color = Color(0.6, 0.75, 1.0, 0.2)
-			blind_black.visible = false; blind_label.visible = false
-			blind_cursor.visible = false
+			blind_vision.visible = false
 		"depression":
 			palette_overlay.color = Color(0.12, 0.18, 0.28, 0.5)
-			blind_black.visible = false; blind_label.visible = false
-			blind_cursor.visible = false
+			blind_vision.visible = false
 		_:
 			palette_overlay.color = Color(1.0, 0.9, 0.75, 0.06)
-			blind_black.visible = false; blind_label.visible = false
-			blind_cursor.visible = false
+			blind_vision.visible = false
 
 	if _spike_canvas: _spike_canvas.visible = (view == "depression")
 	_notify_monsters_view_changed(view)
@@ -1018,21 +999,22 @@ func _animate_view_tint() -> void:
 			palette_overlay.color = Color(base.r, base.g, base.b, clampf(0.5 * br, 0.44, 0.56))
 		_: pass
 
-func _update_blind_cursor(delta: float) -> void:
+func _update_blind_vision() -> void:
+	var viewport_size := get_viewport_rect().size
+	if viewport_size.x <= 0.0 or viewport_size.y <= 0.0:
+		return
+	var screen_position := _get_player_screen_position()
+	var player_screen_uv := Vector2(
+		screen_position.x / viewport_size.x,
+		screen_position.y / viewport_size.y
+	)
 	var camera := get_viewport().get_camera_2d()
-	if camera == null: return
-	var player := _get_player()
-	if player == null: return
-	var vs := get_viewport().get_visible_rect().size
-	var cam_pos := camera.global_position
-	var p_pos := player.global_position
-	var zoom := camera.zoom
-	var screen_pos := (p_pos - cam_pos) / zoom + vs / 2.0
-	blind_cursor.position = screen_pos - blind_cursor.size / 2.0
-	cursor_pulse_time += delta
-	var alpha: float = 0.8 + 0.2 * sin(cursor_pulse_time * 3.0)
-	var st := blind_cursor.get_theme_stylebox("panel") as StyleBoxFlat
-	if st != null: st.bg_color = Color(1.0, 1.0, 1.0, alpha)
+	var zoom_scale := 1.0
+	if camera != null:
+		zoom_scale = maxf(absf(camera.zoom.x), 0.001)
+	blind_vision_material.set_shader_parameter("player_screen_uv", player_screen_uv)
+	blind_vision_material.set_shader_parameter("radius_px", BLIND_VISION_WORLD_RADIUS * zoom_scale)
+	blind_vision_material.set_shader_parameter("feather_px", BLIND_VISION_FEATHER * zoom_scale)
 
 func trigger_echo_pulse(_center: Vector2) -> void:
 	if current_palette_view != "blind" or not is_instance_valid(view_overlay_canvas): return
@@ -1048,7 +1030,7 @@ func trigger_echo_pulse(_center: Vector2) -> void:
 	rs.border_color = Color(1.0, 1.0, 1.0, 0.9)
 	ring.add_theme_stylebox_override("panel", rs)
 	ring.size = Vector2(start_sz, start_sz)
-	ring.position = Vector2(ss.x * 0.5 - start_sz / 2.0, ss.y * 0.5 - start_sz / 2.0)
+	ring.position = _get_player_screen_position() - Vector2(start_sz, start_sz) / 2.0
 	view_overlay_canvas.add_child(ring)
 	var tween := create_tween().set_parallel(true)
 	tween.tween_method(_echo_ring_step.bind(ring, start_sz, end_sz), 0.0, 1.0, 0.55)
@@ -1058,8 +1040,7 @@ func _echo_ring_step(val: float, ring: Panel, start_sz: float, end_sz: float) ->
 	if not is_instance_valid(ring): return
 	var sz := lerpf(start_sz, end_sz, val)
 	ring.size = Vector2(sz, sz)
-	var vs := get_viewport().get_visible_rect().size
-	ring.position = Vector2(vs.x / 2.0 - sz / 2.0, vs.y / 2.0 - sz / 2.0)
+	ring.position = _get_player_screen_position() - Vector2(sz, sz) / 2.0
 	var st := ring.get_theme_stylebox("panel") as StyleBoxFlat
 	if st != null:
 		st.set_corner_radius_all(int(sz / 2.0))
@@ -1076,6 +1057,12 @@ func _notify_monsters_view_changed(view: String) -> void:
 func _get_player() -> Node2D:
 	for node in get_tree().get_nodes_in_group("player"): return node
 	return null
+
+func _get_player_screen_position() -> Vector2:
+	var player := _get_player()
+	if player == null:
+		return get_viewport_rect().size * 0.5
+	return player.get_global_transform_with_canvas().origin
 
 # ══════════════════════════════════════════════════════════════
 #  风向标 + 激光联动系统

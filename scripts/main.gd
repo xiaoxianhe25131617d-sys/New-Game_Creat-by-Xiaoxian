@@ -4,6 +4,8 @@ var world: MindscapeWorld
 var player: MindscapePlayer
 var camera: Camera2D
 var hud: CanvasLayer
+var inventory_canvas: CanvasLayer
+var controls_canvas: CanvasLayer
 var dialogue: DialogueBox
 var state: Dictionary
 var current_near: Node2D = null
@@ -370,6 +372,7 @@ func start_game(new_game: bool) -> void:
 	dialogue.closed.connect(func(): player.controls_enabled = true)
 	_make_hud()
 	world.set_view_palette(str(state.get("current_view", "normal")))
+	_set_blind_hud_visible(str(state.get("current_view", "normal")) == "blind")
 	# Connect all monster damage signals
 	for node in get_tree().get_nodes_in_group("monster"):
 		if is_instance_valid(node) and node.has_signal("player_touched"):
@@ -453,6 +456,18 @@ func _make_hud() -> void:
 	hud = CanvasLayer.new()
 	hud.layer = 20
 	add_child(hud)
+	# Inventory stays visible above the blind vision mask.
+	inventory_canvas = CanvasLayer.new()
+	inventory_canvas.name = "InventoryCanvas"
+	inventory_canvas.layer = 600
+	inventory_canvas.follow_viewport_enabled = false
+	add_child(inventory_canvas)
+	# Menus are intentionally above the mask so the player can change views or pause.
+	controls_canvas = CanvasLayer.new()
+	controls_canvas.name = "ViewControlsCanvas"
+	controls_canvas.layer = 700
+	controls_canvas.follow_viewport_enabled = false
+	add_child(controls_canvas)
 	hud_label = Label.new()
 	hud_label.position = Vector2(18, 16)
 	hud_label.add_theme_font_size_override("font_size", 22)
@@ -631,7 +646,7 @@ func _create_sidebar_inventory() -> void:
 	sbg.bg_color = Color("#0a0a18", 0.78)
 	sbg.set_corner_radius_all(6)
 	sidebar.add_theme_stylebox_override("panel", sbg)
-	hud.add_child(sidebar)
+	inventory_canvas.add_child(sidebar)
 	
 	var pad := 10.0
 	var y := 8.0
@@ -818,7 +833,7 @@ func _start_drag(item_id: String, event: InputEventMouseButton) -> void:
 	icon.add_theme_font_size_override("font_size", 18)
 	drag_preview.add_child(icon)
 	
-	hud.add_child(drag_preview)
+	inventory_canvas.add_child(drag_preview)
 	
 	drag_mouse_offset = event.position + sidebar.position + inv_slots[item_id].position
 	_update_drag_preview(event.global_position)
@@ -1208,7 +1223,7 @@ func open_view_wheel() -> void:
 	wheel_root = Panel.new()
 	wheel_root.position = Vector2(440, 180)
 	wheel_root.size = Vector2(400, 320)
-	hud.add_child(wheel_root)
+	controls_canvas.add_child(wheel_root)
 	var title := Label.new()
 	title.text = "切换视角"
 	title.position = Vector2(130, 20)
@@ -1259,6 +1274,7 @@ func try_switch_view(view: String) -> void:
 	state["current_view"] = view
 	player.set_view(view)
 	world.set_view_palette(view)
+	_set_blind_hud_visible(view == "blind")
 	AudioManager.set_view(view)
 	_notify_puzzles_view_changed(view)
 	autosave()
@@ -1280,7 +1296,7 @@ func toggle_pause() -> void:
 	pause_root.process_mode = Node.PROCESS_MODE_ALWAYS
 	pause_root.position = Vector2(450, 190)
 	pause_root.size = Vector2(380, 320)
-	hud.add_child(pause_root)
+	controls_canvas.add_child(pause_root)
 	var list := VBoxContainer.new()
 	list.position = Vector2(70, 45)
 	list.size = Vector2(240, 240)
@@ -1300,8 +1316,18 @@ func show_album() -> void:
 	album.title = "纪念相册"
 	var lines: PackedStringArray = PackedStringArray(state.get("album", []))
 	album.dialog_text = "还没有照片。" if lines.is_empty() else "\n".join(lines)
-	add_child(album)
+	controls_canvas.add_child(album)
 	album.popup_centered(Vector2(520, 420))
+
+func _set_blind_hud_visible(is_blind: bool) -> void:
+	if hud_label != null:
+		hud_label.visible = not is_blind
+	if objective_label != null:
+		objective_label.visible = not is_blind
+	if prompt_label != null:
+		prompt_label.visible = not is_blind
+	if damage_overlay != null:
+		damage_overlay.visible = not is_blind
 
 func autosave_with_laser_angles() -> void:
 	if not game_running:

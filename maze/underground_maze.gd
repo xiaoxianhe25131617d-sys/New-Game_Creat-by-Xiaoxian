@@ -4,6 +4,7 @@ class_name UndergroundMaze
 
 const MAP_SIZE := Vector2(3096, 1758)
 const CLIMB_SPEED := 180.0
+const BLIND_VISION_SHADER := preload("res://shaders/blind_vision.gdshader")
 
 @export var map_size := MAP_SIZE
 @export var show_reference_in_editor := true:
@@ -20,6 +21,9 @@ const CLIMB_SPEED := 180.0
 var runtime_player: MindscapePlayer
 var active_ladder: Area2D
 var ladder_detach_cooldown := 0.0
+var blind_vision_canvas: CanvasLayer
+var blind_vision: ColorRect
+var blind_vision_material: ShaderMaterial
 
 func _ready() -> void:
 	add_to_group("world")
@@ -27,6 +31,13 @@ func _ready() -> void:
 	if Engine.is_editor_hint():
 		return
 	_spawn_runtime_player()
+	_make_blind_vision()
+	process_priority = 1000
+
+func _process(_delta: float) -> void:
+	if Engine.is_editor_hint() or runtime_player == null or blind_vision_material == null:
+		return
+	_update_blind_vision()
 
 func _physics_process(delta: float) -> void:
 	if Engine.is_editor_hint() or runtime_player == null:
@@ -43,6 +54,7 @@ func _spawn_runtime_player() -> void:
 	runtime_player.name = "RuntimePlayer"
 	runtime_player.global_position = player_spawn.global_position
 	add_child(runtime_player)
+	runtime_player.set_view("blind")
 
 	var camera := Camera2D.new()
 	camera.name = "MazeCamera"
@@ -54,6 +66,44 @@ func _spawn_runtime_player() -> void:
 	camera.limit_right = int(map_size.x)
 	camera.limit_bottom = int(map_size.y)
 	runtime_player.add_child(camera)
+
+func _make_blind_vision() -> void:
+	blind_vision_canvas = CanvasLayer.new()
+	blind_vision_canvas.name = "BlindVisionCanvas"
+	blind_vision_canvas.layer = 500
+	blind_vision_canvas.follow_viewport_enabled = false
+	add_child(blind_vision_canvas)
+
+	blind_vision = ColorRect.new()
+	blind_vision.name = "BlindVision"
+	blind_vision.set_anchors_preset(Control.PRESET_FULL_RECT)
+	blind_vision.color = Color.WHITE
+	blind_vision.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	blind_vision_material = ShaderMaterial.new()
+	blind_vision_material.shader = BLIND_VISION_SHADER
+	blind_vision_material.set_shader_parameter("player_screen_uv", Vector2(0.5, 0.5))
+	blind_vision_material.set_shader_parameter("radius_px", MindscapeWorld.BLIND_VISION_WORLD_RADIUS)
+	blind_vision_material.set_shader_parameter("feather_px", MindscapeWorld.BLIND_VISION_FEATHER)
+	blind_vision.material = blind_vision_material
+	blind_vision_canvas.add_child(blind_vision)
+	_update_blind_vision()
+
+func _update_blind_vision() -> void:
+	var viewport_size := get_viewport_rect().size
+	if viewport_size.x <= 0.0 or viewport_size.y <= 0.0:
+		return
+	var screen_position := runtime_player.get_global_transform_with_canvas().origin
+	var player_screen_uv := Vector2(
+		screen_position.x / viewport_size.x,
+		screen_position.y / viewport_size.y
+	)
+	var camera := runtime_player.get_node_or_null("MazeCamera") as Camera2D
+	var zoom_scale := 1.0
+	if camera != null:
+		zoom_scale = maxf(absf(camera.zoom.x), 0.001)
+	blind_vision_material.set_shader_parameter("player_screen_uv", player_screen_uv)
+	blind_vision_material.set_shader_parameter("radius_px", MindscapeWorld.BLIND_VISION_WORLD_RADIUS * zoom_scale)
+	blind_vision_material.set_shader_parameter("feather_px", MindscapeWorld.BLIND_VISION_FEATHER * zoom_scale)
 
 func get_ladder_at_point(point: Vector2) -> Area2D:
 	for child in ladders.get_children():
