@@ -58,7 +58,9 @@ const KC_CHAR := {
 var current_step: int = -1
 var player_in_range: bool = false
 var is_completed: bool = false
-var wall_visual: Polygon2D
+const WALL_TEXTURE_PATH := "res://assets/environment/generated/stone_wall.png"
+
+var wall_visual: Sprite2D
 var hint_label: Label
 var stone_visuals: Array[Polygon2D] = []
 
@@ -82,37 +84,41 @@ func _ready() -> void:
 
 
 func _make_wall_visual() -> void:
-	wall_visual = Polygon2D.new()
-	wall_visual.polygon = PackedVector2Array([
-		Vector2(-80, -140), Vector2(80, -140),
-		Vector2(80, 140), Vector2(-80, 140),
-	])
-	wall_visual.color = Color("#5b4b3a")
+	var texture := load(WALL_TEXTURE_PATH) as Texture2D
+	wall_visual = Sprite2D.new()
+	wall_visual.name = "WallTexture"
+	wall_visual.texture = texture
+	wall_visual.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	if texture != null:
+		var texture_size := texture.get_size()
+		var scale_factor := minf(190.0 / texture_size.x, 300.0 / texture_size.y)
+		wall_visual.scale = Vector2(scale_factor, scale_factor)
+		_align_texture_base(wall_visual, texture.get_image(), 32.0)
 	add_child(wall_visual)
 
-	# 石墙纹理裂痕
-	for i in range(14):
-		var line := Line2D.new()
-		line.width = 2
-		line.default_color = Color("#4a3a2a", 0.7)
-		var y: float = -130.0 + i * 21.0
-		line.add_point(Vector2(-60, y + sin(i * 2.3) * 8))
-		line.add_point(Vector2(60, y + cos(i * 1.9) * 6))
-		add_child(line)
-
-	var title := Label.new()
-	title.text = "[ 石 门 ]"
-	title.position = Vector2(-30, -148)
-	title.add_theme_font_size_override("font_size", 18)
-	title.add_theme_color_override("font_color", Color("#b0a080"))
-	add_child(title)
+func _align_texture_base(sprite: Sprite2D, image: Image, target_y: float) -> void:
+	var min_x := image.get_width()
+	var max_x := -1
+	var max_y := -1
+	for y in range(image.get_height()):
+		for x in range(image.get_width()):
+			if image.get_pixel(x, y).a <= 0.8:
+				continue
+			min_x = mini(min_x, x)
+			max_x = maxi(max_x, x)
+			max_y = maxi(max_y, y)
+	if max_y < 0:
+		return
+	var center := Vector2(image.get_width(), image.get_height()) * 0.5
+	sprite.position.x = -(((min_x + max_x) * 0.5) - center.x) * sprite.scale.x
+	sprite.position.y = target_y - (max_y - center.y) * sprite.scale.y
 
 
 func _make_stones() -> void:
 	# 4个无标签凸起石块（从左到右均匀排列）
 	for i in range(4):
 		var bx := -45.0 + float(i) * 30.0
-		var by := 30.0
+		var by := -52.0
 
 		var stone := Polygon2D.new()
 		var sp := PackedVector2Array()
@@ -129,7 +135,7 @@ func _make_stones() -> void:
 
 func _make_hint_label() -> void:
 	hint_label = Label.new()
-	hint_label.position = Vector2(-135, 75)
+	hint_label.position = Vector2(-135, -238)
 	hint_label.size = Vector2(270, 0)
 	hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint_label.add_theme_font_size_override("font_size", 13)
@@ -428,14 +434,13 @@ func _tween_wall_pulse() -> void:
 func _tween_wall_flash(near: bool) -> void:
 	var flash_color := Color("#a0e080") if near else Color("#e0a080")
 	var tween := create_tween()
-	tween.tween_property(wall_visual, "color", flash_color, 0.1)
-	tween.tween_property(wall_visual, "color", Color("#5b4b3a"), 0.3)
+	tween.tween_property(wall_visual, "modulate", flash_color, 0.1)
+	tween.tween_property(wall_visual, "modulate", Color.WHITE, 0.3)
 
 
 func _tween_celebration() -> void:
 	var tween := create_tween().set_parallel(true)
-	tween.tween_property(wall_visual, "color", Color("#ffd700"), 0.5)
-	tween.tween_property(wall_visual, "modulate", Color.WHITE, 0.5)
+	tween.tween_property(wall_visual, "modulate", Color("#ffe28a"), 0.5)
 
 
 # ════════════════════════════════════════════════════════════

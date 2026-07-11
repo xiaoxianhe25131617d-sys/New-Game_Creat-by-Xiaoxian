@@ -11,6 +11,9 @@ const GRAVITY: float = 1600.0
 const MAX_FALL_SPEED: float = 900.0
 const COYOTE_TIME: float = 0.08
 const JUMP_BUFFER: float = 0.1
+const DOCTOR_SPRITESHEET_PATH: String = "res://assets/characters/generated/doctor_spritesheet_512.png"
+const DOCTOR_FRAME_SIZE: Vector2i = Vector2i(32, 32)
+const DOCTOR_DISPLAY_SCALE: Vector2 = Vector2(3.0, 3.0)
 
 var current_view: String = "normal"
 var dash_time: float = 0.0
@@ -21,6 +24,7 @@ var coyote_timer: float = 0.0
 var jump_buffer_timer: float = 0.0
 var was_on_floor: bool = false
 var is_on_ladder: bool = false  # 梯子上（由 main.gd 设置）
+var facing_dir: float = 1.0
 var _drop_cooldown: float = 0.0  # 穿透地板冷却（防止反复触发）
 
 # ADHD 自动行走
@@ -45,7 +49,7 @@ const VIEW_SPEED_MULT: Dictionary = {
 
 @onready var body: Polygon2D = $Body
 @onready var aura: Line2D = $Aura
-@onready var sprite: Sprite2D = $CharacterTexture
+@onready var sprite: AnimatedSprite2D = $CharacterTexture
 
 func _physics_process(delta: float) -> void:
 	# ── 梯子上：跳过普通物理（由 main.gd 接管位置）──
@@ -58,7 +62,7 @@ func _physics_process(delta: float) -> void:
 			hdir = 1.0
 		velocity.x = hdir * SPEED * 0.5
 		if hdir != 0:
-			scale.x = signf(hdir)
+			facing_dir = signf(hdir)
 		# y 速度归零（由 main.gd 直接控制 y）
 		velocity.y = 0.0
 		move_and_slide()
@@ -79,12 +83,9 @@ func _physics_process(delta: float) -> void:
 	# 关键：玩家**踩在** drop tile 上时，drop tile 在物理层2（独立 tileset）
 	# 玩家 mask 同时启用 layer 1+2，所以能站在 drop tile 上
 	# 当玩家按下 S/Down/Ui_Down 时，临时关闭 mask bit 2 → drop tile 对玩家透明 → 玩家掉下去
-	# 掉到下层 (y>=269) 之后重新开启 mask bit 2
 	if _drop_cooldown > 0.0:
 		_drop_cooldown -= delta
-		# 掉下去后重新开启碰撞层2（当玩家 y 已掉到主层地面以下）
-		var feet_tile_y := floori((global_position.y + 31) / 16.0)
-		if feet_tile_y >= 269:  # 已经掉到主层地板(y=268)以下
+		if _drop_cooldown <= 0.0:
 			set_collision_mask_value(2, true)
 			_drop_cooldown = 0.0
 	elif _drop_cooldown <= 0.0:
@@ -169,13 +170,13 @@ func _physics_process(delta: float) -> void:
 	# 加速度
 	if dash_time > 0.0:
 		dash_time -= delta
-		velocity.x = signf(scale.x) * DASH_SPEED
+		velocity.x = facing_dir * DASH_SPEED
 	else:
 		var target_speed: float = (SPEED if is_on_floor() else AIR_SPEED) * spd_mult
 		var accel: float = target_speed * 12.0 * delta
 		velocity.x = move_toward(velocity.x, direction * target_speed, accel)
 		if direction != 0:
-			scale.x = signf(direction)
+			facing_dir = signf(direction)
 
 	move_and_slide()
 	_update_animation(direction)
@@ -183,12 +184,33 @@ func _physics_process(delta: float) -> void:
 func _update_animation(dir: float) -> void:
 	if sprite == null:
 		return
-	if abs(velocity.x) < 5.0 and is_on_floor():
-		sprite.scale.y = lerp(sprite.scale.y, 0.72 + sin(Time.get_ticks_msec() * 0.004) * 0.02, 0.1)
+	if is_on_ladder:
+		var climbing: bool = Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP) or Input.is_action_pressed("ui_up") or Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN) or Input.is_action_pressed("ui_down")
+		if facing_dir >= 0.0:
+			_play_animation(&"climb_right", climbing, true)
+		else:
+			_play_animation(&"climb_left", climbing, false)
+		return
+	if not is_on_floor():
+		_play_animation(&"jump", false, facing_dir >= 0.0)
+		return
+	if dir < 0.0:
+		_play_animation(&"walk_left", true, false)
+	elif dir > 0.0:
+		_play_animation(&"walk_right", true, true)
 	else:
-		sprite.scale.y = lerp(sprite.scale.y, 0.72, 0.2)
-	if dir != 0:
-		sprite.scale.x = abs(sprite.scale.x) * signf(dir)
+		_play_animation(&"idle", false, facing_dir >= 0.0)
+
+func _play_animation(anim: StringName, should_play: bool, flip_h: bool) -> void:
+	sprite.flip_h = flip_h
+	if sprite.animation != anim:
+		sprite.play(anim)
+	if should_play:
+		if not sprite.is_playing():
+			sprite.play(anim)
+	else:
+		sprite.pause()
+		sprite.frame = 0
 
 func use_special() -> void:
 	if current_view == "adhd":
@@ -237,13 +259,14 @@ static func create() -> MindscapePlayer:
 	poly.visible = false
 	player.add_child(poly)
 
-	var sprite := Sprite2D.new()
+	var sprite := AnimatedSprite2D.new()
 	sprite.name = "CharacterTexture"
-	var player_tex := load("res://assets/characters/player.svg")
-	if player_tex != null:
-		sprite.texture = player_tex
-	sprite.scale = Vector2(0.72, 0.72)
-	sprite.position = Vector2(0, -12)
+	sprite.sprite_frames = _create_doctor_sprite_frames()
+	sprite.animation = &"idle"
+	sprite.scale = DOCTOR_DISPLAY_SCALE
+	# 透明帧里的鞋底与 62px 高碰撞体底部对齐，避免角色悬浮。
+	sprite.position = Vector2(0, -3)
+	sprite.play(&"idle")
 	player.add_child(sprite)
 
 	var aura := Line2D.new()
@@ -256,3 +279,33 @@ static func create() -> MindscapePlayer:
 	aura.z_index = 99
 	player.add_child(aura)
 	return player
+
+static func _create_doctor_sprite_frames() -> SpriteFrames:
+	var sheet := load(DOCTOR_SPRITESHEET_PATH) as Texture2D
+	var frames := SpriteFrames.new()
+	if frames.has_animation(&"default"):
+		frames.remove_animation(&"default")
+	if sheet == null:
+		push_warning("Doctor spritesheet not found: %s" % DOCTOR_SPRITESHEET_PATH)
+		return frames
+	_add_doctor_animation(frames, sheet, &"idle", [Vector2i(0, 0)], 1.0, true)
+	_add_doctor_animation(frames, sheet, &"walk_left", [Vector2i(1, 0), Vector2i(2, 0)], 6.5, true)
+	_add_doctor_animation(frames, sheet, &"walk_right", [Vector2i(1, 0), Vector2i(2, 0)], 6.5, true)
+	_add_doctor_animation(frames, sheet, &"jump", [Vector2i(5, 0)], 1.0, false)
+	_add_doctor_animation(frames, sheet, &"research", [Vector2i(6, 0)], 1.0, true)
+	_add_doctor_animation(frames, sheet, &"climb_left", [Vector2i(7, 0), Vector2i(1, 1)], 6.5, true)
+	_add_doctor_animation(frames, sheet, &"climb_right", [Vector2i(7, 0), Vector2i(1, 1)], 6.5, true)
+	return frames
+
+static func _add_doctor_animation(frames: SpriteFrames, sheet: Texture2D, anim: StringName, cells: Array, fps: float, loop: bool) -> void:
+	frames.add_animation(anim)
+	frames.set_animation_speed(anim, fps)
+	frames.set_animation_loop(anim, loop)
+	for cell: Vector2i in cells:
+		frames.add_frame(anim, _create_doctor_frame(sheet, cell))
+
+static func _create_doctor_frame(sheet: Texture2D, cell: Vector2i) -> AtlasTexture:
+	var frame := AtlasTexture.new()
+	frame.atlas = sheet
+	frame.region = Rect2(cell.x * DOCTOR_FRAME_SIZE.x, cell.y * DOCTOR_FRAME_SIZE.y, DOCTOR_FRAME_SIZE.x, DOCTOR_FRAME_SIZE.y)
+	return frame

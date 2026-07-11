@@ -24,10 +24,10 @@ const VIEW_COLORS: Dictionary = {
 }
 
 const PLAYER_START: Vector2 = Vector2(3400, 3168)
-const WORLD_SIZE: Vector2 = Vector2(11200, 4500)
+const WORLD_SIZE: Vector2 = Vector2(11200, 3600)
 
 # ════════════════════════════════════════════════════════════
-#  7大关卡定义 — 石墙之后依次排列
+#  6大关卡定义 — 石墙之后依次排列
 # ════════════════════════════════════════════════════════════
 const LEVELS: Array = [
 	{
@@ -75,17 +75,6 @@ const LEVELS: Array = [
 		"view_hint": "抑郁模式直接显示正确排列图形。",
 	},
 	{
-		"id": "dark_maze",
-		"name": "地下黑暗迷宫",
-		"region": "underground",
-		"pos": Vector2(5400, 4250),
-		"type": "audio_maze",
-		"prereq": "",
-		"reward": "key_3",
-		"hint": "从灯塔旁走下去。完全黑暗——只有盲人模式能靠声音导航。",
-		"view_hint": "盲人模式：听觉导航是唯一出路。",
-	},
-	{
 		"id": "amusement_lights",
 		"name": "游乐园灯板",
 		"region": "park",
@@ -115,7 +104,6 @@ const LEVELS: Array = [
 const KEYS: Dictionary = {
 	"key_1":  {"name": "宴会厅钥匙",  "source": "banquet_painting",  "color": Color("#ffd700")},
 	"key_2":  {"name": "游乐园钥匙",  "source": "amusement_lights",   "color": Color("#ff6b6b")},
-	"key_3":  {"name": "迷宫钥匙",    "source": "dark_maze",         "color": Color("#4ecdc4")},
 	"key_4":  {"name": "天文台钥匙",  "source": "npc_password",      "color": Color("#a29bfe")},
 }
 
@@ -134,27 +122,26 @@ const LASER_SYSTEM: Dictionary = {
 #  NPC 定义
 # ════════════════════════════════════════════════════════════
 const NPCS: Array = [
-	{"id": "guide_old_man", "name": "引导老人", "region": "spawn", "pos": Vector2(3200, 3176), "portrait": "#b98b62"},
-	{"id": "map_keeper",    "name": "地图管理员", "region": "spawn", "pos": Vector2(3600, 3176), "portrait": "#80b2d4"},
-	{"id": "ranger",        "name": "护林员",    "region": "forest", "pos": Vector2(2600, 3176), "portrait": "#719d64"},
-	{"id": "poet",          "name": "诗人",      "region": "forest", "pos": Vector2(3200, 3176), "portrait": "#b1a0d8"},
-	{"id": "house_keeper",  "name": "密室看守",  "region": "forest", "pos": Vector2(2900, 3176), "portrait": "#cba0ff"},
-	{"id": "dock_elder",    "name": "码头老人",  "region": "lighthouse", "pos": Vector2(4650, 3176), "portrait": "#8d9fba"},
-	{"id": "keeper",        "name": "灯塔管理员", "region": "lighthouse", "pos": Vector2(5330, 3176), "portrait": "#d8a25e"},
-	{"id": "braille_scholar","name": "盲文学者",  "region": "lighthouse", "pos": Vector2(4430, 3176), "portrait": "#71b8ff", "blind_npc": true},
-	{"id": "engineer",      "name": "总工程师",  "region": "dam", "pos": Vector2(5000, 3176), "portrait": "#abb0b8"},
-	{"id": "sign_girl",     "name": "手语少女",  "region": "station", "pos": Vector2(6200, 3176), "portrait": "#a8d5bd", "sign_only": true},
-	{"id": "painter",       "name": "流浪画家",  "region": "station", "pos": Vector2(6400, 3176), "portrait": "#cba0ff"},
-	{"id": "station_master","name": "站长",      "region": "station", "pos": Vector2(6800, 3176), "portrait": "#94adc6"},
-	{"id": "clown",         "name": "小丑",      "region": "park", "pos": Vector2(7500, 3176),  "portrait": "#ff7d7d"},
-	{"id": "mechanic",      "name": "修理工",    "region": "park", "pos": Vector2(7900, 3176),  "portrait": "#d9be6a"},
-	{"id": "ticket",        "name": "售票员",    "region": "park", "pos": Vector2(8300, 3176),  "portrait": "#78d0b8"},
-	{"id": "npc_cipher_1",  "name": "守卫A",     "region": "observatory", "pos": Vector2(9000, 3176), "portrait": "#94adc6"},
-	{"id": "npc_cipher_2",  "name": "学者B",     "region": "observatory", "pos": Vector2(9250, 3176), "portrait": "#80b2d4"},
-	{"id": "npc_cipher_3",  "name": "工匠C",     "region": "observatory", "pos": Vector2(9500, 3176), "portrait": "#abb0b8"},
-	{"id": "npc_cipher_4",  "name": "旅者D",     "region": "observatory", "pos": Vector2(10100, 3176), "portrait": "#b98b62"},
-	{"id": "npc_cipher_5",  "name": "智者E",     "region": "observatory", "pos": Vector2(10350, 3176), "portrait": "#cba0ff"},
-	{"id": "cave_hermit",   "name": "洞穴隐士",  "region": "underground", "pos": Vector2(5100, 4256), "portrait": "#a3ccff"},
+	{"id": "guide_old_man", "name": "引导老人", "region": "spawn", "pos": Vector2(3200, 3200), "portrait": "#b98b62", "sprite_index": 0},
+	{"id": "map_keeper",    "name": "地图管理员", "region": "spawn", "pos": Vector2(3600, 3200), "portrait": "#80b2d4", "sprite_index": 1},
+	{"id": "ranger",        "name": "护林员",    "region": "forest", "pos": Vector2(2600, 3200), "portrait": "#719d64", "sprite_index": 2},
+	{"id": "poet",          "name": "诗人",      "region": "forest", "pos": Vector2(3200, 3200), "portrait": "#b1a0d8", "sprite_index": 3},
+	{"id": "house_keeper",  "name": "密室看守",  "region": "forest", "pos": Vector2(2900, 3200), "portrait": "#cba0ff", "sprite_index": 4},
+	{"id": "dock_elder",    "name": "码头老人",  "region": "lighthouse", "pos": Vector2(4650, 3200), "portrait": "#8d9fba", "sprite_index": 5},
+	{"id": "keeper",        "name": "灯塔管理员", "region": "lighthouse", "pos": Vector2(5330, 3200), "portrait": "#d8a25e", "sprite_index": 6},
+	{"id": "braille_scholar","name": "盲文学者",  "region": "lighthouse", "pos": Vector2(4430, 3200), "portrait": "#71b8ff", "blind_npc": true, "sprite_index": 7},
+	{"id": "engineer",      "name": "总工程师",  "region": "dam", "pos": Vector2(5000, 3200), "portrait": "#abb0b8", "sprite_index": 8},
+	{"id": "sign_girl",     "name": "手语少女",  "region": "station", "pos": Vector2(6200, 3200), "portrait": "#a8d5bd", "sign_only": true, "sprite_index": 9},
+	{"id": "painter",       "name": "流浪画家",  "region": "station", "pos": Vector2(6400, 3200), "portrait": "#cba0ff", "sprite_index": 10},
+	{"id": "station_master","name": "站长",      "region": "station", "pos": Vector2(6800, 3200), "portrait": "#94adc6", "sprite_index": 11},
+	{"id": "clown",         "name": "小丑",      "region": "park", "pos": Vector2(7500, 3200),  "portrait": "#ff7d7d", "sprite_index": 12},
+	{"id": "mechanic",      "name": "修理工",    "region": "park", "pos": Vector2(7900, 3200),  "portrait": "#d9be6a", "sprite_index": 13},
+	{"id": "ticket",        "name": "售票员",    "region": "park", "pos": Vector2(8300, 3200),  "portrait": "#78d0b8", "sprite_index": 14},
+	{"id": "npc_cipher_1",  "name": "守卫A",     "region": "observatory", "pos": Vector2(9000, 3200), "portrait": "#94adc6", "sprite_index": 15},
+	{"id": "npc_cipher_2",  "name": "学者B",     "region": "observatory", "pos": Vector2(9250, 3200), "portrait": "#80b2d4", "sprite_index": 16},
+	{"id": "npc_cipher_3",  "name": "工匠C",     "region": "observatory", "pos": Vector2(9500, 3200), "portrait": "#abb0b8", "sprite_index": 17},
+	{"id": "npc_cipher_4",  "name": "旅者D",     "region": "observatory", "pos": Vector2(10100, 3200), "portrait": "#b98b62", "sprite_index": 18},
+	{"id": "npc_cipher_5",  "name": "智者E",     "region": "observatory", "pos": Vector2(10350, 3200), "portrait": "#cba0ff", "sprite_index": 19},
 ]
 
 const DIALOGUES: Dictionary = {
@@ -163,8 +150,8 @@ const DIALOGUES: Dictionary = {
 		{"expr": "happy", "text": "闭上眼睛，用手去触摸它。只有放下视觉，才能感知纹理。"},
 	],
 	"map_keeper": [
-		{"expr": "thinking", "text": "石墙后面有7个挑战在等着你。四个区域，四种视角。"},
-		{"expr": "happy", "text": "地下入口在灯塔附近——那里一片漆黑。"},
+		{"expr": "thinking", "text": "石墙后面有6个挑战在等着你。所有道路都在地面展开。"},
+		{"expr": "happy", "text": "三把钥匙分别藏在油画、灯板和许愿堂的谜题里。"},
 	],
 	"ranger": [
 		{"expr": "thinking", "text": "石墙不只是石头。它上面有盲文一样的纹理。"},
@@ -204,7 +191,7 @@ const DIALOGUES: Dictionary = {
 		{"expr": "thinking", "text": "跳跃才能点到灯。ADHD模式让你跳得更高更快。"},
 	],
 	"ticket": [
-		{"expr": "happy", "text": "四把钥匙集齐了？地下深处宝箱在等你。"},
+		{"expr": "happy", "text": "三把钥匙集齐后，去调整风向标，让光找到时间胶囊。"},
 	],
 	"npc_cipher_1": [
 		{"expr": "neutral", "text": "我守护这个地方已经很久了。", "subtext": "我其实很想休息"},
@@ -220,10 +207,6 @@ const DIALOGUES: Dictionary = {
 	],
 	"npc_cipher_5": [
 		{"expr": "neutral", "text": "智慧来自于倾听。", "subtext": "没人真正听我说过话"},
-	],
-	"cave_hermit": [
-		{"expr": "thinking", "text": "迷宫深处有两条路。一条通向钥匙，一条通向宝藏。"},
-		{"expr": "happy", "text": "闭上眼睛，用耳朵走路。正确的方向会唱歌。"},
 	],
 }
 
@@ -242,7 +225,6 @@ const REGIONS: Dictionary = {
 	"station":    {"name": "旧车站",     "x": 6400, "view": "autism"},
 	"park":       {"name": "游乐园",     "x": 7700, "view": "adhd"},
 	"observatory":{"name": "许愿堂",     "x": 9800, "view": "depression"},
-	"underground":{"name": "地下迷宫",   "x": 5400, "view": "blind", "y": 4300},
 }
 
 static func default_state() -> Dictionary:
@@ -265,10 +247,9 @@ static func default_state() -> Dictionary:
 		"dance_sequence_memorized": false,
 		"lights_solved": false,
 		"npc_subtexts_read": [],
-		"maze_path_chosen": "",
-	"laser_1_placed": false,
-	"laser_2_placed": false,
-	"laser_1_angle": 0.0,
-	"laser_2_angle": 0.0,
-	"treasure_unlocked": false,
+		"laser_1_placed": false,
+		"laser_2_placed": false,
+		"laser_1_angle": 0.0,
+		"laser_2_angle": 0.0,
+		"treasure_unlocked": false,
 	}

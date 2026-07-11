@@ -32,6 +32,7 @@ var laser_owned: Dictionary = {"laser_device_1": false, "laser_device_2": false}
 
 # ── 拖放/激光常量 ──
 const LASER_ANGLE_STEP: float = 0.03  # 滚轮旋转步长(rad)
+const REQUIRED_KEY_COUNT: int = 3
 
 func _ready() -> void:
 	show_login_screen()
@@ -70,7 +71,7 @@ func _update_ladder_climb(delta: float) -> void:
 		# 不在梯子区域内，水平方向由玩家自己输入决定（这里先清零）
 		player.velocity.x = 0.0
 		# 给一个轻微横向推力，让玩家朝面对的方向飞
-		var face: float = 1.0 if player.scale.x >= 0.0 else -1.0
+		var face: float = player.facing_dir
 		player.velocity.x = 120.0 * face
 		return
 
@@ -108,11 +109,8 @@ func _update_audio_region() -> void:
 	if player == null:
 		return
 	var px := player.global_position.x
-	var py := player.global_position.y
 	var region := "spawn"
-	if py > 4150:                    # 地下层
-		region = "underground"
-	elif px < 2200:                   # 左侧森林（纹理墙+找不同+宴会场）
+	if px < 2200:                    # 左侧森林（纹理墙+找不同+宴会场）
 		region = "forest"
 	elif px < 4200:                  # 出生点/中央广场
 		region = "spawn"
@@ -389,6 +387,16 @@ func _normalize_state() -> void:
 	state["unlocked_views"] = unlocked
 	if not state.has("current_view") or not unlocked.has(str(state.get("current_view", "normal"))):
 		state["current_view"] = "normal"
+	var raw_keys: Array = state.get("collected_keys", []) as Array
+	var valid_keys: Array = []
+	for key in raw_keys:
+		var key_id := str(key)
+		if GameData.KEYS.has(key_id) and not valid_keys.has(key_id):
+			valid_keys.append(key_id)
+	state["collected_keys"] = valid_keys
+	var completed: Array = state.get("completed_levels", []) as Array
+	completed.erase("dark_maze")
+	state["completed_levels"] = completed
 
 func show_intro() -> void:
 	player.controls_enabled = false
@@ -458,9 +466,10 @@ func _make_hud() -> void:
 	hud.add_child(objective_label)
 	prompt_label = Label.new()
 	prompt_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	prompt_label.position = Vector2(340, 650)
-	prompt_label.size = Vector2(600, 40)
-	prompt_label.add_theme_font_size_override("font_size", 24)
+	prompt_label.position = Vector2(300, 642)
+	prompt_label.size = Vector2(680, 44)
+	prompt_label.add_theme_font_size_override("font_size", 18)
+	prompt_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	hud.add_child(prompt_label)
 	# Damage overlay (red flash + vignette on monster hit)
 	damage_overlay = ColorRect.new()
@@ -521,14 +530,12 @@ func _get_objective() -> String:
 		return "→ 往右走到[游乐园灯板]，用盲人模式听音+ADHD模式快速点亮"
 	if not completed.has("npc_password"):
 		return "→ 最右侧[许愿堂]的[NPC密码台]等待着你"
-	if not completed.has("dark_maze"):
-		return "→ 灯塔附近往下走台阶——[地下黑暗迷宫]需要盲人模式"
 	
-	if keys.size() < 4:
-		var missing := 4 - keys.size()
-		return "→ 收集剩余%d把钥匙后，去地下迷宫岔路B开启宝箱！" % missing
+	if keys.size() < REQUIRED_KEY_COUNT:
+		var missing := REQUIRED_KEY_COUNT - keys.size()
+		return "→ 收集剩余%d把钥匙后，用两束激光找到时间胶囊。" % missing
 	
-	return "→ 四把钥匙集齐！去地下迷宫深处的宝箱..."
+	return "→ 三把钥匙集齐！调整风向标，让两束激光交汇。"
 
 func _describe_interactable(node: Node) -> String:
 	# 优先按实例类型识别新关卡节点
@@ -537,7 +544,6 @@ func _describe_interactable(node: Node) -> String:
 	if node is PuzzleBanquetPainting: return "[关卡3] 宴会厅油画 — 舞蹈序列"
 	if node is PuzzleAmusementLights: return "[关卡4] 游乐园灯板 — 音频+速度"
 	if node is PuzzleNPCPassword:    return "[关卡5] NPC密码台 — 潜台词解码"
-	if node is PuzzleDarkMaze:       return "[关卡6] 黑暗迷宫 — 听觉导航"
 	
 	match node.get_meta("kind", ""):
 		"npc":
@@ -551,9 +557,9 @@ func _describe_interactable(node: Node) -> String:
 			return str(_puzzle_by_id(str(node.get_meta("id", ""))).get("name", "机关"))
 		"treasure_chest":
 			var keys: Array = state.get("collected_keys", [])
-			if keys.size() >= 4:
+			if keys.size() >= REQUIRED_KEY_COUNT:
 				return "★ 时间胶囊宝箱（已解锁！）"
-			return "★ 宝箱（%d/4钥匙）" % keys.size()
+			return "★ 宝箱（%d/%d钥匙）" % [keys.size(), REQUIRED_KEY_COUNT]
 		"key_chest":
 			return "🔑 钥匙箱（按E拾取）"
 		"zone_indicator":
@@ -582,11 +588,6 @@ func interact() -> void:
 			try_open_treasure_chest(current_near)
 		"zone_indicator":
 			show_toast("关卡区域：%s" % _describe_interactable(current_near))
-		"maze_fork_a":
-			show_toast("岔路A尽头：钥匙3可能就在这里...再往前走走。", 2.0)
-		"maze_fork_b":
-			var keys := get_collected_keys()
-			show_toast("岔路B尽头：宝箱（%d/4钥匙）。" % keys.size(), 2.0)
 		"key_chest":
 			var key_id: String = current_near.get_meta("key_id", "")
 			if key_id != "":
@@ -662,11 +663,10 @@ func _create_sidebar_inventory() -> void:
 	var key_data := [
 		{"id": "key_1", "name": "宴会厅钥匙", "icon": "🔑", "color": Color("#ffd700")},
 		{"id": "key_2", "name": "游乐园钥匙", "icon": "🔑", "color": Color("#ff6b6b")},
-		{"id": "key_3", "name": "迷宫钥匙",   "icon": "🔑", "color": Color("#4ecdc4")},
 		{"id": "key_4", "name": "天文台钥匙", "icon": "🔑", "color": Color("#a29bfe")},
 	]
 	var cx := (SIDEBAR_W - SLOT_W) / 2.0
-	for i in range(4):
+	for i in range(key_data.size()):
 		var slot := _make_inv_slot(Vector2(cx, y), key_data[i], "key", false)
 		inv_slots[key_data[i]["id"]] = slot
 		sidebar.add_child(slot)
@@ -784,7 +784,6 @@ func _show_item_info(item_id: String) -> void:
 	match item_id:
 		"key_1": info = "宴会厅钥匙 — 金色的钥匙"
 		"key_2": info = "游乐园钥匙 — 红色的钥匙"
-		"key_3": info = "迷宫钥匙 — 青色的钥匙"
 		"key_4": info = "天文台钥匙 — 紫色的钥匙"
 		"laser_device_1":
 			if not laser_owned["laser_device_1"]: info = "在找不同密室获得"
@@ -1021,15 +1020,15 @@ func collect_key(key_id: String) -> void:
 	
 	var key_data: Dictionary = GameData.KEYS.get(key_id, {})
 	var key_name: String = key_data.get("name", key_id)
-	show_toast("🔑 获得钥匙：%s（%d/4）" % [key_name, keys.size()])
+	show_toast("🔑 获得钥匙：%s（%d/%d）" % [key_name, keys.size(), REQUIRED_KEY_COUNT])
 	AudioManager.play_sfx("collect")
 	
 	# 更新宝箱显示
 	world.update_treasure_key_count(keys)
 	
-	# 检查是否集齐4把钥匙
-	if keys.size() >= 4:
-		show_toast("✨ 四把钥匙全部集齐！去地下迷宫岔路B开启宝箱！", 5.0)
+	# 检查是否集齐全部钥匙
+	if keys.size() >= REQUIRED_KEY_COUNT:
+		show_toast("✨ 三把钥匙全部集齐！去调整风向标，让光找到时间胶囊！", 5.0)
 	
 	_update_inventory_sidebar()
 	autosave()
@@ -1045,7 +1044,7 @@ func get_collected_keys() -> Array:
 
 func try_open_treasure_chest(chest_node: Node) -> void:
 	var keys: Array = state.get("collected_keys", [])
-	if keys.size() >= 4:
+	if keys.size() >= REQUIRED_KEY_COUNT:
 		# 开启宝箱 → 结局
 		state["finished"] = true
 		state["treasure_unlocked"] = true
@@ -1056,7 +1055,7 @@ func try_open_treasure_chest(chest_node: Node) -> void:
 		autosave()
 		show_ending()
 	else:
-		show_toast("宝箱锁住了...你需要收集4把钥匙。（当前：%d/4）" % keys.size(), 3.0)
+		show_toast("宝箱锁住了...你需要收集%d把钥匙。（当前：%d/%d）" % [REQUIRED_KEY_COUNT, keys.size(), REQUIRED_KEY_COUNT], 3.0)
 
 # 当关卡完成时的回调（由 world._on_puzzle_completed 触发）
 func on_level_completed(level_id: String, reward_id: String = "") -> void:
@@ -1068,7 +1067,7 @@ func on_level_completed(level_id: String, reward_id: String = "") -> void:
 	
 	# 处理奖励
 	match reward_id:
-		"key_1", "key_2", "key_3", "key_4":
+		"key_1", "key_2", "key_4":
 			collect_key(reward_id)
 		"laser_device_1":
 			laser_owned["laser_device_1"] = true
@@ -1085,15 +1084,14 @@ func on_level_completed(level_id: String, reward_id: String = "") -> void:
 		"stone_door":
 			show_toast("石门打开了！左侧区域现已可通行。", 3.0)
 		"treasure":
-			# 来自地下迷宫岔路B的宝箱终点
-			if state.get("collected_keys", []).size() >= 4:
+			if state.get("collected_keys", []).size() >= REQUIRED_KEY_COUNT:
 				state["finished"] = true
 				state["treasure_unlocked"] = true
 				show_toast("🎆🎆🎆 时间胶囊开启了！！！ 🎆🎆🎆", 6.0)
 				AudioManager.play_sfx("collect")
 				show_ending()
 			else:
-				show_toast("迷宫深处的宝箱需要4把钥匙！", 3.0)
+				show_toast("时间胶囊需要%d把钥匙！" % REQUIRED_KEY_COUNT, 3.0)
 		"":
 			pass  # 无特殊奖励
 	
@@ -1163,7 +1161,6 @@ func show_memory(puzzle: Dictionary) -> void:
 		"forest_memorial": "记忆：篝火旁有人把手套递回来——我看见你把它落下了。",
 		"dam_turbine": "记忆：水流和齿轮一起转动，两个人从不同方向找到同一节奏。",
 		"observatory_scope": "记忆：三个人站在望远镜前，用各自的频率对准同一颗星。",
-		"underground_pump": "记忆：五个人把不同的线索摊在地上，拼成同一张回家的地图。",
 	}.get(puzzle.get("id", ""), "记忆：这里重新亮起了一点颜色。"))
 	show_toast(text, 5.0)
 

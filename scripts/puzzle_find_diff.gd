@@ -85,6 +85,7 @@ var obj_view_labels: Array[Array] = []  # 每个物体下的5个视角小标签
 
 const OW: float = 840.0
 const OH: float = 540.0
+const EXTERIOR_TEXTURE_PATH := "res://assets/environment/generated/find_difference_room.png"
 
 
 # ════════════════════════════════════════════════════════════
@@ -116,39 +117,23 @@ func _ready() -> void:
 # ════════════════════════════════════════════════════════════
 
 func _make_exterior() -> void:
-	var wall := ColorRect.new()
-	wall.position = Vector2(-55, -30)
-	wall.size = Vector2(110, 80)
-	wall.color = Color("#8a6e5c")
-	add_child(wall)
-
-	var roof := Polygon2D.new()
-	roof.polygon = PackedVector2Array([Vector2(-65, -30), Vector2(65, -30), Vector2(0, -75)])
-	roof.color = Color("#a04030")
-	add_child(roof)
-
-	var door := ColorRect.new()
-	door.position = Vector2(-10, 10)
-	door.size = Vector2(20, 40)
-	door.color = Color("#4a3020")
-	add_child(door)
-
-	for wx in [-40, 24]:
-		var win := ColorRect.new()
-		win.position = Vector2(wx, -10)
-		win.size = Vector2(16, 16)
-		win.color = Color("#aad4e8")
-		add_child(win)
-
-	var chimney := ColorRect.new()
-	chimney.position = Vector2(30, -55)
-	chimney.size = Vector2(8, 25)
-	chimney.color = Color("#605040")
-	add_child(chimney)
+	var texture := load(EXTERIOR_TEXTURE_PATH) as Texture2D
+	var exterior := Sprite2D.new()
+	exterior.name = "ExteriorTexture"
+	exterior.texture = texture
+	exterior.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	if texture != null:
+		var texture_size := texture.get_size()
+		var scale_factor := minf(180.0 / texture_size.x, 130.0 / texture_size.y)
+		exterior.scale = Vector2(scale_factor, scale_factor)
+		_align_exterior_base(exterior, texture.get_image(), 30.0)
+	add_child(exterior)
 
 	var title := Label.new()
 	title.text = "[ 找不同密室 ]"
-	title.position = Vector2(-50, -100)
+	title.position = Vector2(-70, -112)
+	title.size = Vector2(140, 24)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.add_theme_font_size_override("font_size", 14)
 	title.add_theme_color_override("font_color", Color("#d4c4a4"))
 	add_child(title)
@@ -159,6 +144,23 @@ func _make_exterior() -> void:
 	exterior_label.add_theme_font_size_override("font_size", 12)
 	exterior_label.add_theme_color_override("font_color", Color("#ffe8a0"))
 	add_child(exterior_label)
+
+func _align_exterior_base(sprite: Sprite2D, image: Image, target_y: float) -> void:
+	var min_x := image.get_width()
+	var max_x := -1
+	var max_y := -1
+	for y in range(image.get_height()):
+		for x in range(image.get_width()):
+			if image.get_pixel(x, y).a <= 0.8:
+				continue
+			min_x = mini(min_x, x)
+			max_x = maxi(max_x, x)
+			max_y = maxi(max_y, y)
+	if max_y < 0:
+		return
+	var center := Vector2(image.get_width(), image.get_height()) * 0.5
+	sprite.position.x = -(((min_x + max_x) * 0.5) - center.x) * sprite.scale.x
+	sprite.position.y = target_y - (max_y - center.y) * sprite.scale.y
 
 
 # ════════════════════════════════════════════════════════════

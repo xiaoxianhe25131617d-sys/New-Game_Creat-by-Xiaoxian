@@ -88,8 +88,6 @@ func _generate_sample() -> Vector2:
 			sample = _dam_melody()
 		"observatory":
 			sample = _observatory_melody()
-		"underground":
-			sample = _underground_melody()
 		_:
 			sample = _plaza_melody()
 	
@@ -179,17 +177,6 @@ func _observatory_melody() -> float:
 	s += sin(t * 1244.51 * TAU + sin(t * 0.2) * 2.0) * 0.06
 	s += sin(t * 1661.22 * TAU) * 0.04
 	s += sin(t * 103.83 * TAU) * 0.2  # Ab2
-	return s
-
-func _underground_melody() -> float:
-	var t := generator_phase
-	# Deep, resonant, mysterious
-	var s: float = sin(t * 164.81 * TAU) * 0.35  # E3
-	s += sin(t * 196.0 * TAU) * 0.3  # G3
-	s += sin(t * 246.94 * TAU) * 0.2  # B3
-	# Drip/cave echo
-	s += sin(t * 987.77 * TAU + sin(t * 1.7) * 1.5) * 0.06 * abs(sin(t * 0.4))
-	s += sin(t * 82.41 * TAU) * 0.25  # E2 deep bass
 	return s
 
 # ─── SFX METHODS ───────────────────────────────────
