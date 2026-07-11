@@ -45,6 +45,8 @@ func _init() -> void:
 
 	for segment in STAIR_SEGMENTS:
 		_paint_one_way_stair(stairs, segment[0], segment[1])
+	_clear_ladder_corridors(walls, root.get_node("Ladders"))
+	_clear_stair_corridors(walls, stairs)
 
 	var output := PackedScene.new()
 	var pack_error := output.pack(root)
@@ -74,3 +76,16 @@ func _paint_one_way_stair(layer: TileMapLayer, source_start: Vector2, source_end
 		var amount := 0.0 if x0 == x1 else float(cell_x - start_cell.x) / float(end_cell.x - start_cell.x)
 		var cell_y := roundi(lerpf(float(start_cell.y), float(end_cell.y), amount))
 		layer.set_cell(Vector2i(cell_x, cell_y), 0, Vector2i(1, 0), 0)
+
+func _clear_ladder_corridors(walls: TileMapLayer, ladders: Node2D) -> void:
+	for ladder in ladders.get_children():
+		for wall_cell in walls.get_used_cells():
+			var wall_center := walls.to_global(walls.map_to_local(wall_cell))
+			if bool(ladder.call("contains_world_point", wall_center)):
+				walls.erase_cell(wall_cell)
+
+func _clear_stair_corridors(walls: TileMapLayer, stairs: TileMapLayer) -> void:
+	for stair_cell in stairs.get_used_cells():
+		for offset_y in range(-1, 2):
+			for offset_x in range(-1, 2):
+				walls.erase_cell(stair_cell + Vector2i(offset_x, offset_y))

@@ -1,10 +1,9 @@
-[gd_resource type="TileSet" load_steps=3 format=3 uid="uid://drop7x9kQ4St"]
+[gd_resource type="TileSet" format=3 uid="uid://b5n353gwj5fvd"]
 
-[ext_resource type="Texture2D" path="tileset.png" id="1"]
+[ext_resource type="Texture2D" uid="uid://cpyqnyss8h6vc" path="res://map/tileset.png" id="1"]
 
 [sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_drop01"]
 texture = ExtResource("1")
-texture_region_size = Vector2i(16, 16)
 0:0/0 = 0
 0:0/0/physics_layer_0/polygon_0/points = PackedVector2Array(-8, -8, 8, -8, 8, 8, -8, 8)
 1:0/0 = 0
@@ -31,7 +30,6 @@ texture_region_size = Vector2i(16, 16)
 3:1/0/physics_layer_0/polygon_0/points = PackedVector2Array(-8, -8, 8, -8, 8, 8, -8, 8)
 4:1/0 = 0
 4:1/0/physics_layer_0/polygon_0/points = PackedVector2Array(-8, -8, 8, -8, 8, 8, -8, 8)
-5:1/0 = 0
 5:1/0 = 0
 6:1/0 = 0
 7:1/0 = 0
@@ -76,8 +74,5 @@ texture_region_size = Vector2i(16, 16)
 4:5/0 = 0
 
 [resource]
-tile_size = Vector2i(16, 16)
-# 把 _drop_layer 上的可穿透地板放在 物理层2，让 player.gd 用 mask 位2 单独控制穿透
-physics_layer_0/collision_layer = 2
-physics_layer_0/collision_mask = 1
+physics_layer_0/collision_layer = 1
 sources/0 = SubResource("TileSetAtlasSource_drop01")

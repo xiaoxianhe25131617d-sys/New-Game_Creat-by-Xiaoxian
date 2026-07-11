@@ -18,6 +18,7 @@ func _ready() -> void:
 	_test_scene_contract(maze)
 	_test_markers(maze)
 	_test_ladders(maze)
+	_test_navigation_features_are_clear(maze)
 	_test_runtime_player(maze)
 	maze.free()
 	_finish()
@@ -68,6 +69,23 @@ func _test_ladders(maze: Node) -> void:
 	for ladder in ladders:
 		if not ladder is Area2D or ladder.get_node_or_null("CollisionShape2D") == null:
 			failures.append("Every ladder must be an editable Area2D with a CollisionShape2D")
+
+func _test_navigation_features_are_clear(maze: Node) -> void:
+	var walls := maze.get_node("Walls") as TileMapLayer
+	for ladder in maze.get_node("Ladders").get_children():
+		for wall_cell in walls.get_used_cells():
+			var wall_center := walls.to_global(walls.map_to_local(wall_cell))
+			if bool(ladder.call("contains_world_point", wall_center)):
+				failures.append("Solid wall tile overlaps %s at %s" % [ladder.name, wall_cell])
+				break
+
+	var stairs := maze.get_node("OneWayStairs") as TileMapLayer
+	for stair_cell in stairs.get_used_cells():
+		for offset_y in range(-1, 2):
+			for offset_x in range(-1, 2):
+				if walls.get_cell_source_id(stair_cell + Vector2i(offset_x, offset_y)) >= 0:
+					failures.append("Solid wall tile overlaps one-way stairs near %s" % stair_cell)
+					return
 
 func _test_runtime_player(maze: Node) -> void:
 	var player := maze.get_node_or_null("RuntimePlayer") as MindscapePlayer
