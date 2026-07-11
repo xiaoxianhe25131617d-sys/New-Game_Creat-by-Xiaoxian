@@ -13,6 +13,7 @@ var parallax_layers: Array = []
 var world_shift: Vector2 = Vector2.ZERO
 
 var bg_canvas: CanvasLayer
+var sky_background: TextureRect
 var view_tint_canvas: CanvasLayer
 var palette_overlay: ColorRect
 var blind_black: ColorRect
@@ -63,6 +64,7 @@ const WORLD_TILE_H := 226
 # 预加载 TileSet 资源（确保 iOS 导出时正确打包）
 const TILESET_MAIN := preload("res://map/tileset.tres")
 const TILESET_DROP := preload("res://map/tileset_drop.tres")
+const SKY_TEXTURE := preload("res://assets/sky_user.png")
 const MEMORY_BENCH_TEXTURE_PATH := "res://assets/environment/generated/memory_bench.png"
 
 const T_GRASS_TL := Vector2i(4, 0)
@@ -94,11 +96,11 @@ var _drop_tileset: TileSet     # _drop_layer 专用 tileset，物理层号为2
 # 平台
 const PLATFORMS: Array = [
 	{"x0": 0,   "x1": 262, "row": GROUND_ROW, "tag": "floor_left"},
-	{"x0": 264, "x1": 327, "row": GROUND_ROW, "tag": "floor_mid1"},
+	{"x0": 263, "x1": 327, "row": GROUND_ROW, "tag": "floor_mid1"},
 	{"x0": 328, "x1": 395, "row": GROUND_ROW, "tag": "floor_dam"},
-	{"x0": 397, "x1": 450, "row": GROUND_ROW, "tag": "floor_station"},
-	{"x0": 452, "x1": 520, "row": GROUND_ROW, "tag": "floor_park"},
-	{"x0": 522, "x1": 700, "row": GROUND_ROW, "tag": "floor_obs"},
+	{"x0": 396, "x1": 450, "row": GROUND_ROW, "tag": "floor_station"},
+	{"x0": 451, "x1": 520, "row": GROUND_ROW, "tag": "floor_park"},
+	{"x0": 521, "x1": WORLD_TILE_W - 1, "row": GROUND_ROW, "tag": "floor_obs"},
 ]
 
 var _texture_wall_body: StaticBody2D
@@ -124,26 +126,24 @@ func build(state: Dictionary) -> void:
 #  BACKGROUND CANVAS + VIEW TINT
 # ══════════════════════════════════════════════════════════════
 func _make_background_canvas() -> void:
-	# 天空背景渐变
+	# 固定在视口后的像素天空背景。
 	bg_canvas = CanvasLayer.new()
 	bg_canvas.name = "BackgroundCanvas"
 	bg_canvas.layer = -100
-	bg_canvas.follow_viewport_enabled = true
+	bg_canvas.follow_viewport_enabled = false
 	add_child(bg_canvas)
 
-	var sky_grad := GradientTexture2D.new()
-	sky_grad.gradient = Gradient.new()
-	sky_grad.gradient.set_color(0, Color("#87ceeb"))
-	sky_grad.gradient.set_color(1, Color("#e8f4f8"))
-	sky_grad.width = 2
-	sky_grad.height = 1080
-
-	var sky_rect := TextureRect.new()
-	sky_rect.name = "Sky"
-	sky_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
-	sky_rect.texture = sky_grad
-	sky_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bg_canvas.add_child(sky_rect)
+	sky_background = TextureRect.new()
+	sky_background.name = "Sky"
+	sky_background.position = Vector2.ZERO
+	sky_background.texture = SKY_TEXTURE
+	sky_background.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	sky_background.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	sky_background.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	sky_background.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bg_canvas.add_child(sky_background)
+	_resize_sky_background()
+	get_viewport().size_changed.connect(_resize_sky_background)
 
 	# View tint (layer 500)
 	view_tint_canvas = CanvasLayer.new()
@@ -204,6 +204,10 @@ func _make_background_canvas() -> void:
 	monster_canvas.layer = 9000
 	monster_canvas.follow_viewport_enabled = true
 	add_child(monster_canvas)
+
+func _resize_sky_background() -> void:
+	if is_instance_valid(sky_background):
+		sky_background.size = get_viewport_rect().size
 
 func _make_depression_spikes() -> void:
 	_spike_canvas = CanvasLayer.new()

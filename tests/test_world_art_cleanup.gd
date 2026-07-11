@@ -3,6 +3,8 @@ extends Node
 var failures: Array[String] = []
 
 func _ready() -> void:
+	_test_world_uses_sky_texture()
+	_test_platforms_have_no_ground_seams()
 	_test_wall_has_one_textured_visual()
 	_test_room_has_textured_exterior()
 	_test_memory_anchors_use_benches()
@@ -15,6 +17,34 @@ func _ready() -> void:
 	for failure in failures:
 		push_error(failure)
 	get_tree().quit(1)
+
+func _test_world_uses_sky_texture() -> void:
+	var world := MindscapeWorld.new()
+	add_child(world)
+	world._make_background_canvas()
+	var sky := world.bg_canvas.get_node_or_null("Sky") as TextureRect
+	if sky == null or sky.texture == null:
+		failures.append("World background must have a sky texture")
+	elif sky.texture.resource_path != "res://assets/sky_user.png":
+		failures.append("World background must use sky_user.png")
+	elif sky.stretch_mode != TextureRect.STRETCH_KEEP_ASPECT_COVERED:
+		failures.append("Sky texture must preserve its aspect ratio while covering the viewport")
+	elif sky.size.x <= 0.0 or sky.size.y <= 0.0:
+		failures.append("Sky texture must be sized to the viewport")
+	if world.bg_canvas.follow_viewport_enabled:
+		failures.append("Sky background canvas must remain fixed to the screen")
+	world.free()
+
+func _test_platforms_have_no_ground_seams() -> void:
+	var covered_columns: Dictionary = {}
+	for platform in MindscapeWorld.PLATFORMS:
+		for x in range(platform["x0"], platform["x1"] + 1):
+			if covered_columns.has(x):
+				failures.append("Ground column %d is painted by multiple platforms" % x)
+			covered_columns[x] = true
+	for x in range(MindscapeWorld.WORLD_TILE_W):
+		if not covered_columns.has(x):
+			failures.append("Ground seam remains at tile column %d" % x)
 
 func _test_wall_has_one_textured_visual() -> void:
 	var wall := PuzzleTextureWall.new()
