@@ -40,18 +40,18 @@ const OBJECTS: Array[Dictionary] = [
 	},
 	{
 		"id": "clock", "name": "时钟", "states": ["快", "慢", "准确"],
-		"views": {"normal": 2, "adhd": 1, "depression": 1, "autism": 0, "blind": 0},
-		"correct": 0, "color_a": Color("#ffcc00"), "color_b": Color("#aa8800"), "color_c": Color("#ffee66"),
+		"views": {"normal": 2, "adhd": 1, "depression": 0, "autism": 0, "blind": 0},
+		"correct": 0, "color_a": Color("#dd5544"), "color_b": Color("#5588cc"), "color_c": Color("#ddaa33"),
 	},
 	{
 		"id": "window_obj", "name": "窗户", "states": ["打开", "关闭", "半开"],
-		"views": {"normal": 0, "adhd": 0, "depression": 1, "autism": 1, "blind": 2},
-		"correct": 1, "color_a": Color("#88ccee"), "color_b": Color("#334455"), "color_c": Color("#6699aa"),
+		"views": {"normal": 2, "adhd": 0, "depression": 1, "autism": 1, "blind": 2},
+		"correct": 1, "color_a": Color("#66aadd"), "color_b": Color("#2a2a35"), "color_c": Color("#dd9966"),
 	},
 	{
 		"id": "book", "name": "书本", "states": ["打开", "合上", "半开"],
-		"views": {"normal": 2, "adhd": 1, "depression": 2, "autism": 0, "blind": 1},
-		"correct": 1, "color_a": Color("#ddccaa"), "color_b": Color("#aa9977"), "color_c": Color("#c8b898"),
+		"views": {"normal": 0, "adhd": 1, "depression": 1, "autism": 2, "blind": 1},
+		"correct": 1, "color_a": Color("#f5eed8"), "color_b": Color("#8b3a3a"), "color_c": Color("#d4b896"),
 	},
 ]
 
@@ -111,39 +111,65 @@ func _ready() -> void:
 
 
 # ════════════════════════════════════════════════════════════
-#  世界地图上的房子外观
+#  世界地图上的房子外观 — 质感升级
 # ════════════════════════════════════════════════════════════
 
 func _make_exterior() -> void:
+	# 主墙体：暖棕色砖墙
 	var wall := ColorRect.new()
-	wall.position = Vector2(-55, -30)
-	wall.size = Vector2(110, 80)
-	wall.color = Color("#8a6e5c")
-	add_child(wall)
+	wall.position = Vector2(-55, -30); wall.size = Vector2(110, 80)
+	wall.color = Color("#8a6e5c"); add_child(wall)
+	# 砖缝纹理
+	for bi in range(6):
+		var brick := ColorRect.new()
+		brick.position = Vector2(-55 + (bi % 2) * 5, -30 + bi * 14)
+		brick.size = Vector2(108, 2)
+		brick.color = Color("#7a5e4c", 0.5); add_child(brick)
 
+	# 屋顶：深红色三角顶 + 瓦片纹理
 	var roof := Polygon2D.new()
 	roof.polygon = PackedVector2Array([Vector2(-65, -30), Vector2(65, -30), Vector2(0, -75)])
-	roof.color = Color("#a04030")
-	add_child(roof)
+	roof.color = Color("#a04030"); add_child(roof)
+	# 屋顶高光边
+	var roof_edge := Line2D.new()
+	roof_edge.width = 2.5
+	roof_edge.default_color = Color("#c06048", 0.7)
+	roof_edge.add_point(Vector2(-65, -30)); roof_edge.add_point(Vector2(0, -75))
+	roof_edge.add_point(Vector2(65, -30)); add_child(roof_edge)
 
+	# 门
 	var door := ColorRect.new()
-	door.position = Vector2(-10, 10)
-	door.size = Vector2(20, 40)
-	door.color = Color("#4a3020")
-	add_child(door)
+	door.position = Vector2(-10, 10); door.size = Vector2(20, 40)
+	door.color = Color("#5a3820"); add_child(door)
+	# 门把手
+	var knob := ColorRect.new()
+	knob.position = Vector2(4, 28); knob.size = Vector2(4, 4)
+	knob.color = Color("#ddaa44"); add_child(knob)
 
+	# 两扇窗户
 	for wx in [-40, 24]:
-		var win := ColorRect.new()
-		win.position = Vector2(wx, -10)
-		win.size = Vector2(16, 16)
-		win.color = Color("#aad4e8")
-		add_child(win)
+		var win_frame := ColorRect.new()
+		win_frame.position = Vector2(wx - 2, -12); win_frame.size = Vector2(20, 20)
+		win_frame.color = Color("#6a5040"); add_child(win_frame)
+		var win_glass := ColorRect.new()
+		win_glass.position = Vector2(wx, -10); win_glass.size = Vector2(16, 16)
+		win_glass.color = Color("#99ccdd", 0.8); add_child(win_glass)
+		# 十字窗格
+		var wm_v := ColorRect.new()
+		wm_v.position = Vector2(wx + 7, -10); wm_v.size = Vector2(2, 16)
+		wm_v.color = Color("#6a5040"); add_child(wm_v)
+		var wm_h := ColorRect.new()
+		wm_h.position = Vector2(wx, -3); wm_h.size = Vector2(16, 2)
+		wm_h.color = Color("#6a5040"); add_child(wm_h)
+		# 暖光透出
+		var warm := ColorRect.new()
+		warm.position = Vector2(wx + 2, -8); warm.size = Vector2(12, 12)
+		warm.color = Color("#ffdd88", 0.15); add_child(warm)
 
+	# 烟囱
 	var chimney := ColorRect.new()
-	chimney.position = Vector2(30, -55)
-	chimney.size = Vector2(8, 25)
-	chimney.color = Color("#605040")
-	add_child(chimney)
+	chimney.position = Vector2(30, -55); chimney.size = Vector2(10, 25)
+	chimney.color = Color("#6a5440"); add_child(chimney)
 
 	var title := Label.new()
 	title.text = "[ 找不同密室 ]"
@@ -178,18 +204,20 @@ func _make_room_ui() -> void:
 	shade.gui_input.connect(_on_shade_input)
 	room_overlay.add_child(shade)
 
-	# 主面板
+	# 主面板 — 深色木框 + 暖暗底
 	var panel := Panel.new()
 	panel.name = "Panel"
 	var vs := get_viewport().get_visible_rect().size
 	panel.position = Vector2((vs.x - OW) / 2.0, (vs.y - OH) / 2.0)
 	panel.size = Vector2(OW, OH)
 	var ps := StyleBoxFlat.new()
-	ps.bg_color = Color("#2a1f14")
-	ps.set_corner_radius_all(16)
-	ps.border_width_left = 3; ps.border_width_right = 3
-	ps.border_width_top = 3; ps.border_width_bottom = 3
-	ps.border_color = Color("#5a4a3a")
+	ps.bg_color = Color("#261c12")
+	ps.set_corner_radius_all(14)
+	ps.border_width_left = 4; ps.border_width_right = 4
+	ps.border_width_top = 4; ps.border_width_bottom = 4
+	ps.border_color = Color("#6a5a44")
+	ps.shadow_size = 20
+	ps.shadow_color = Color(0, 0, 0, 0.5)
 	panel.add_theme_stylebox_override("panel", ps)
 	room_overlay.add_child(panel)
 
@@ -277,74 +305,109 @@ func _get_view_color() -> Color:
 # ════════════════════════════════════════════════════════════
 
 func _draw_room_bg(panel: Panel) -> void:
-	# 后墙
+	# ── 后墙：暖棕壁纸感 + 竖向条纹纹理 ──
 	var back := ColorRect.new()
 	back.position = Vector2(0, 120)
 	back.size = Vector2(OW, 240)
-	back.color = Color("#3d3328")
+	back.color = Color("#3a2e22")
 	panel.add_child(back)
-
-	for i in range(17):
+	# 壁纸竖向纹理
+	for i in range(21):
 		var stripe := ColorRect.new()
-		stripe.position = Vector2(10 + i * 50, 120)
-		stripe.size = Vector2(2, 240)
-		stripe.color = Color("#4a3d30", 0.35)
+		stripe.position = Vector2(8 + i * 40, 120)
+		stripe.size = Vector2(3, 240)
+		stripe.color = Color("#4a3a2a", 0.3)
 		back.add_child(stripe)
+	# 交替宽条纹的暗纹
+	for i in range(10):
+		var wide := ColorRect.new()
+		wide.position = Vector2(20 + i * 80, 120)
+		wide.size = Vector2(40, 240)
+		wide.color = Color("#352820", 0.2)
+		back.add_child(wide)
 
-	# 左墙柱
+	# ── 左墙柱：更立体 ──
 	var lw := ColorRect.new()
-	lw.position = Vector2(0, 120)
-	lw.size = Vector2(30, OH - 120)
-	lw.color = Color("#2a1f14")
-	panel.add_child(lw)
+	lw.position = Vector2(0, 120); lw.size = Vector2(30, OH - 120)
+	lw.color = Color("#241a12"); panel.add_child(lw)
+	var lw_hl := ColorRect.new()
+	lw_hl.position = Vector2(24, 120); lw_hl.size = Vector2(6, OH - 120)
+	lw_hl.color = Color("#3a2a1a", 0.5); panel.add_child(lw_hl)
 
-	# 右墙柱
+	# ── 右墙柱 ──
 	var rw := ColorRect.new()
-	rw.position = Vector2(OW - 30, 120)
-	rw.size = Vector2(30, OH - 120)
-	rw.color = Color("#2a1f14")
-	panel.add_child(rw)
+	rw.position = Vector2(OW - 30, 120); rw.size = Vector2(30, OH - 120)
+	rw.color = Color("#241a12"); panel.add_child(rw)
+	var rw_hl := ColorRect.new()
+	rw_hl.position = Vector2(OW - 30, 120); rw_hl.size = Vector2(6, OH - 120)
+	rw_hl.color = Color("#3a2a1a", 0.5); panel.add_child(rw_hl)
 
-	# 墙裙
-	var wain := ColorRect.new()
-	wain.position = Vector2(30, 300)
-	wain.size = Vector2(OW - 60, 60)
-	wain.color = Color("#4a3728")
-	panel.add_child(wain)
-
+	# ── 腰线装饰条 ──
 	var trim := ColorRect.new()
-	trim.position = Vector2(30, 296)
-	trim.size = Vector2(OW - 60, 4)
-	trim.color = Color("#6a5040")
-	panel.add_child(trim)
+	trim.position = Vector2(30, 296); trim.size = Vector2(OW - 60, 6)
+	trim.color = Color("#7a5a40"); panel.add_child(trim)
+	var trim2 := ColorRect.new()
+	trim2.position = Vector2(30, 290); trim2.size = Vector2(OW - 60, 3)
+	trim2.color = Color("#5a3a28"); panel.add_child(trim2)
 
-	# 木地板
+	# ── 墙裙：木镶板风格 ──
+	var wain := ColorRect.new()
+	wain.position = Vector2(30, 302); wain.size = Vector2(OW - 60, 58)
+	wain.color = Color("#4a3525"); panel.add_child(wain)
+	# 镶板竖条
+	for i in range(17):
+		var vp := ColorRect.new()
+		vp.position = Vector2(34 + i * 46, 302)
+		vp.size = Vector2(4, 58)
+		vp.color = Color("#3a2818", 0.6); panel.add_child(vp)
+
+	# ── 木地板：深色交错纹理 ──
 	var floor := ColorRect.new()
-	floor.position = Vector2(30, 360)
-	floor.size = Vector2(OW - 60, OH - 360)
-	floor.color = Color("#5a3a20")
-	panel.add_child(floor)
-
-	for i in range(20):
+	floor.position = Vector2(30, 360); floor.size = Vector2(OW - 60, OH - 360)
+	floor.color = Color("#4a2a18"); panel.add_child(floor)
+	# 随机宽地板条
+	for i in range(16):
 		var plank := ColorRect.new()
-		plank.position = Vector2(30, 360 + i * 9)
-		plank.size = Vector2(OW - 60, 2)
-		plank.color = Color("#4a2e18", 0.5)
+		plank.position = Vector2(30, 360 + i * 11)
+		plank.size = Vector2(OW - 60, 3)
+		plank.color = Color("#5a3620") if i % 3 == 0 else Color("#3a2010", 0.6)
 		floor.add_child(plank)
+	# 地板对角纹理
+	for i in range(8):
+		var grain := ColorRect.new()
+		grain.position = Vector2(40 + i * 100, 364 + i * 22)
+		grain.size = Vector2(80, 1)
+		grain.color = Color("#6a4028", 0.3); floor.add_child(grain)
 
-	# 桌子
+	# ── 壁灯：两侧各一盏 ──
+	for wx in [50, OW - 80]:
+		var sconce := Polygon2D.new()
+		sconce.polygon = PackedVector2Array([
+			Vector2(wx - 8, 180), Vector2(wx + 8, 180),
+			Vector2(wx + 5, 175), Vector2(wx - 5, 175),
+		])
+		sconce.color = Color("#ccaa44"); panel.add_child(sconce)
+		var glow := ColorRect.new()
+		glow.position = Vector2(wx - 24, 160); glow.size = Vector2(48, 24)
+		glow.color = Color("#ffdd88", 0.08); panel.add_child(glow)
+
+	# ── 桌子：更厚的台面 ──
 	var table := ColorRect.new()
-	table.position = Vector2(50, 348)
-	table.size = Vector2(OW - 100, 14)
-	table.color = Color("#8a6a4a")
-	panel.add_child(table)
-
-	for lx in [70, OW - 100]:
+	table.position = Vector2(50, 348); table.size = Vector2(OW - 100, 14)
+	table.color = Color("#8a6240"); panel.add_child(table)
+	# 桌边高光
+	var table_hl := ColorRect.new()
+	table_hl.position = Vector2(50, 348); table_hl.size = Vector2(OW - 100, 3)
+	table_hl.color = Color("#a08060", 0.6); panel.add_child(table_hl)
+	# 桌腿
+	for lx in [70, OW - 120]:
 		var leg := ColorRect.new()
-		leg.position = Vector2(lx, 362)
-		leg.size = Vector2(10, 36)
-		leg.color = Color("#6a4a30")
-		panel.add_child(leg)
+		leg.position = Vector2(lx, 362); leg.size = Vector2(12, 36)
+		leg.color = Color("#5a3a24"); panel.add_child(leg)
+		# 爪脚
+		var foot := ColorRect.new()
+		foot.position = Vector2(lx - 3, 392); foot.size = Vector2(18, 6)
+		foot.color = Color("#4a2a18"); panel.add_child(foot)
 
 
 # ════════════════════════════════════════════════════════════
@@ -592,113 +655,263 @@ func _draw_frame(vis: Control, state: int, color: Color) -> void:
 			r3.color = Color("#ffcc44"); vis.add_child(r3)
 
 
-# ── 时钟 ──
-func _draw_clock(vis: Control, state: int, _color: Color) -> void:
-	var rim := ColorRect.new()
-	rim.position = Vector2(28, 8); rim.size = Vector2(74, 74); rim.color = Color("#8a6a44")
-	vis.add_child(rim)
-	var face := ColorRect.new()
-	face.position = Vector2(31, 11); face.size = Vector2(68, 68); face.color = Color("#f5f0e0")
-	vis.add_child(face)
-
-	var dot := ColorRect.new()
-	dot.position = Vector2(63, 43); dot.size = Vector2(6, 6); dot.color = Color("#333")
-	vis.add_child(dot)
-
-	var ha: float; var ma: float
-	match state:
-		0: ha = -1.8; ma = -2.5
-		1: ha = -0.3; ma = -0.6
-		2: ha = -0.9; ma = -1.6
-
+# ── 时钟 (3种完全不同的视觉风格) ──
+func _draw_clock(vis: Control, state: int, sc: Color) -> void:
 	var cx := 65.0; var cy := 45.0
+	var rim_color: Color; var face_color: Color
+	var ha: float; var ma: float
+
+	match state:
+		0:  # 快 — 红色急促风格，闹钟造型
+			rim_color = Color("#cc4433"); face_color = Color("#fff0e8")
+			ha = -1.8; ma = -2.5
+		1:  # 慢 — 蓝色沉稳风格，方形挂钟
+			rim_color = Color("#335588"); face_color = Color("#e8eff8")
+			ha = -0.3; ma = -0.6
+		2:  # 准确 — 金色精致风格，圆形壁钟
+			rim_color = Color("#c89933"); face_color = Color("#fffdf0")
+			ha = -0.9; ma = -1.6
+
+	match state:
+		1:  # 方形挂钟
+			var sq := ColorRect.new()
+			sq.position = Vector2(22, 4); sq.size = Vector2(86, 86)
+			sq.color = rim_color; vis.add_child(sq)
+			var sqf := ColorRect.new()
+			sqf.position = Vector2(26, 8); sqf.size = Vector2(78, 78)
+			sqf.color = face_color; vis.add_child(sqf)
+			# 方形表盘刻度
+			for i in range(4):
+				var tick := ColorRect.new()
+				var tx: int = [32, 62, 32, 62][i]
+				var ty: int = [14, 14, 66, 66][i]
+				tick.position = Vector2(tx, ty); tick.size = Vector2(6, 6)
+				tick.color = Color("#335588", 0.6); vis.add_child(tick)
+			cx = 65.0; cy = 47.0
+		_:
+			# 圆形时钟（状态0和2）
+			var rim := ColorRect.new()
+			rim.position = Vector2(28, 8); rim.size = Vector2(74, 74)
+			rim.color = rim_color; vis.add_child(rim)
+			var face := ColorRect.new()
+			face.position = Vector2(31, 11); face.size = Vector2(68, 68)
+			face.color = face_color; vis.add_child(face)
+			# 圆形装饰（金色表盘加罗马数字记号）
+			if state == 2:
+				for i in range(12):
+					var mark := ColorRect.new()
+					var a := TAU * i / 12.0
+					mark.position = Vector2(cx + cos(a) * 26 - 1, cy + sin(a) * 26 - 1)
+					mark.size = Vector2(3, 3)
+					mark.color = Color("#c8a050", 0.7); vis.add_child(mark)
+			else:
+				# 红色闹钟加顶部铃铛
+				for lx in [38, 70]:
+					var bell := ColorRect.new()
+					bell.position = Vector2(lx, 2); bell.size = Vector2(10, 8)
+					bell.color = Color("#eecc66"); vis.add_child(bell)
+
+	# 中心点
+	var dot := ColorRect.new()
+	dot.position = Vector2(cx - 3, cy - 3); dot.size = Vector2(6, 6)
+	dot.color = Color("#2a2a2a"); vis.add_child(dot)
+
+	# 时针
 	var hh := Polygon2D.new()
 	hh.polygon = PackedVector2Array([
 		Vector2(cx, cy),
 		Vector2(cx + cos(ha) * 22, cy + sin(ha) * 22),
 		Vector2(cx + cos(ha + 0.1) * 15, cy + sin(ha + 0.1) * 15),
 	])
-	hh.color = Color("#333"); vis.add_child(hh)
+	hh.color = Color("#2a2a2a"); vis.add_child(hh)
 
+	# 分针
 	var mh := Polygon2D.new()
 	mh.polygon = PackedVector2Array([
 		Vector2(cx, cy),
 		Vector2(cx + cos(ma) * 32, cy + sin(ma) * 32),
 		Vector2(cx + cos(ma + 0.08) * 16, cy + sin(ma + 0.08) * 16),
 	])
-	mh.color = Color("#555"); vis.add_child(mh)
+	mh.color = Color("#444"); vis.add_child(mh)
 
 
-# ── 窗户 ──
-func _draw_window_obj(vis: Control, state: int, color: Color) -> void:
-	var frame := ColorRect.new()
-	frame.position = Vector2(20, 10); frame.size = Vector2(90, 70); frame.color = Color("#6a5040")
-	vis.add_child(frame)
-	var glass := ColorRect.new()
-	glass.position = Vector2(26, 16); glass.size = Vector2(78, 58); glass.color = color
-	vis.add_child(glass)
-	var vm := ColorRect.new()
-	vm.position = Vector2(63, 16); vm.size = Vector2(4, 58); vm.color = Color("#4a3020")
-	vis.add_child(vm)
-	var sill := ColorRect.new()
-	sill.position = Vector2(15, 80); sill.size = Vector2(100, 8); sill.color = Color("#7a5a44")
-	vis.add_child(sill)
-
-	var gap: float
+# ── 窗户 (3种完全不同的窗外景色) ──
+func _draw_window_obj(vis: Control, state: int, sc: Color) -> void:
 	match state:
-		0: gap = 20.0
-		1: gap = 0.0
-		2: gap = 10.0
-	if gap > 0:
-		var lp := ColorRect.new()
-		lp.position = Vector2(26 - gap, 16); lp.size = Vector2(35, 58)
-		lp.color = Color("#88ccee"); vis.add_child(lp)
-		var rp := ColorRect.new()
-		rp.position = Vector2(69 + gap, 16); rp.size = Vector2(35, 58)
-		rp.color = Color("#88ccee"); vis.add_child(rp)
+		0:  # 打开 — 蓝天白云、阳光明媚
+			# 窗框
+			var frame := ColorRect.new()
+			frame.position = Vector2(20, 10); frame.size = Vector2(90, 70)
+			frame.color = Color("#8a7050"); vis.add_child(frame)
+			# 蓝天
+			var sky := ColorRect.new()
+			sky.position = Vector2(26, 16); sky.size = Vector2(78, 58)
+			sky.color = Color("#5599dd"); vis.add_child(sky)
+			# 太阳
+			var sun := ColorRect.new()
+			sun.position = Vector2(80, 22); sun.size = Vector2(14, 14)
+			sun.color = Color("#ffdd44"); vis.add_child(sun)
+			# 云
+			for ci in range(2):
+				var cloud := ColorRect.new()
+				cloud.position = Vector2(34 + ci * 22, 30 + ci * 8)
+				cloud.size = Vector2(18, 6); cloud.color = Color(1, 1, 1, 0.7)
+				vis.add_child(cloud)
+			# 竖框
+			var vm := ColorRect.new()
+			vm.position = Vector2(63, 16); vm.size = Vector2(4, 58)
+			vm.color = Color("#6a5040"); vis.add_child(vm)
+			# 底部绿色山丘
+			var hill := Polygon2D.new()
+			hill.polygon = PackedVector2Array([
+				Vector2(26, 74), Vector2(50, 58), Vector2(104, 74)
+			])
+			hill.color = Color("#66aa44"); vis.add_child(hill)
+			# 窗台
+			var sill := ColorRect.new()
+			sill.position = Vector2(15, 80); sill.size = Vector2(100, 8)
+			sill.color = Color("#9a7a54"); vis.add_child(sill)
+
+		1:  # 关闭 — 深色木百叶窗，夜晚
+			# 窗框
+			var df := ColorRect.new()
+			df.position = Vector2(20, 10); df.size = Vector2(90, 70)
+			df.color = Color("#3a2a1a"); vis.add_child(df)
+			# 深色玻璃
+			var dg := ColorRect.new()
+			dg.position = Vector2(26, 16); dg.size = Vector2(78, 58)
+			dg.color = Color("#1a1620"); vis.add_child(dg)
+			# 竖框
+			var dvm := ColorRect.new()
+			dvm.position = Vector2(63, 16); dvm.size = Vector2(4, 58)
+			dvm.color = Color("#2a2018"); vis.add_child(dvm)
+			# 月亮和星星
+			var moon := ColorRect.new()
+			moon.position = Vector2(80, 20); moon.size = Vector2(10, 10)
+			moon.color = Color("#eeeedd"); vis.add_child(moon)
+			for si in range(3):
+				var star := ColorRect.new()
+				star.position = Vector2(32 + si * 16, 22 + si * 10)
+				star.size = Vector2(2, 2); star.color = Color(1, 1, 1, 0.7)
+				vis.add_child(star)
+			# 横向百叶
+			for ri in range(4):
+				var slat := ColorRect.new()
+				slat.position = Vector2(26, 28 + ri * 12); slat.size = Vector2(78, 4)
+				slat.color = Color("#5a3a20"); vis.add_child(slat)
+			# 窗台
+			var dsill := ColorRect.new()
+			dsill.position = Vector2(15, 80); dsill.size = Vector2(100, 8)
+			dsill.color = Color("#3a2a1a"); vis.add_child(dsill)
+
+		2:  # 半开 — 黄昏橙光，半掩的窗帘
+			# 窗框
+			var hf := ColorRect.new()
+			hf.position = Vector2(20, 10); hf.size = Vector2(90, 70)
+			hf.color = Color("#8a7050"); vis.add_child(hf)
+			# 黄昏天空
+			var hg := ColorRect.new()
+			hg.position = Vector2(26, 16); hg.size = Vector2(78, 58)
+			hg.color = Color("#ee9966"); vis.add_child(hg)
+			# 夕阳
+			var dusk_sun := ColorRect.new()
+			dusk_sun.position = Vector2(40, 30); dusk_sun.size = Vector2(16, 10)
+			dusk_sun.color = Color("#ff6633", 0.8); vis.add_child(dusk_sun)
+			# 竖框
+			var hvm := ColorRect.new()
+			hvm.position = Vector2(63, 16); hvm.size = Vector2(4, 58)
+			hvm.color = Color("#6a5040"); vis.add_child(hvm)
+			# 左边窗帘（半掩）
+			var curtain_l := ColorRect.new()
+			curtain_l.position = Vector2(26, 16); curtain_l.size = Vector2(28, 58)
+			curtain_l.color = Color("#cc9966", 0.65); vis.add_child(curtain_l)
+			# 窗帘褶皱
+			for fi in range(3):
+				var fold := ColorRect.new()
+				fold.position = Vector2(30 + fi * 6, 16); fold.size = Vector2(2, 58)
+				fold.color = Color("#aa7744", 0.4); vis.add_child(fold)
+			# 窗台
+			var hsill := ColorRect.new()
+			hsill.position = Vector2(15, 80); hsill.size = Vector2(100, 8)
+			hsill.color = Color("#9a7a54"); vis.add_child(hsill)
 
 
-# ── 书本 ──
-func _draw_book(vis: Control, state: int, color: Color) -> void:
-	var bg := ColorRect.new()
-	bg.position = Vector2(24, 22); bg.size = Vector2(82, 58); bg.color = color
-	vis.add_child(bg)
-	var spine := ColorRect.new()
-	spine.position = Vector2(24, 22); spine.size = Vector2(6, 58)
-	spine.color = color.darkened(0.2); vis.add_child(spine)
-
+# ── 书本 (3种明显不同的外观) ──
+func _draw_book(vis: Control, state: int, sc: Color) -> void:
 	match state:
-		0:
-			bg.color = Color("#eeeecc")
+		0:  # 打开 — 摊开的书，左右两页，奶白色纸张
+			var bg := ColorRect.new()
+			bg.position = Vector2(24, 22); bg.size = Vector2(82, 58)
+			bg.color = Color("#887755"); vis.add_child(bg)
+			var spine := ColorRect.new()
+			spine.position = Vector2(63, 22); spine.size = Vector2(4, 58)
+			spine.color = Color("#665544"); vis.add_child(spine)
 			var lp := ColorRect.new()
-			lp.position = Vector2(30, 22); lp.size = Vector2(34, 58)
-			lp.color = Color("#fff8e8"); vis.add_child(lp)
+			lp.position = Vector2(28, 24); lp.size = Vector2(35, 54)
+			lp.color = Color("#fffdf5"); vis.add_child(lp)
 			var rp := ColorRect.new()
-			rp.position = Vector2(66, 22); rp.size = Vector2(34, 58)
-			rp.color = Color("#fff8e8"); vis.add_child(rp)
-			for ly in [30, 40, 50, 60]:
+			rp.position = Vector2(67, 24); rp.size = Vector2(35, 54)
+			rp.color = Color("#fffdf5"); vis.add_child(rp)
+			# 文字行
+			for ly in [30, 38, 46, 54, 62]:
 				var l1 := ColorRect.new()
-				l1.position = Vector2(34, ly); l1.size = Vector2(26, 2)
+				l1.position = Vector2(32, ly); l1.size = Vector2(26, 2)
 				l1.color = Color("#aaa"); vis.add_child(l1)
 				var l2 := ColorRect.new()
-				l2.position = Vector2(70, ly); l2.size = Vector2(26, 2)
+				l2.position = Vector2(71, ly); l2.size = Vector2(24, 2)
 				l2.color = Color("#aaa"); vis.add_child(l2)
-		1:
-			var cl1 := ColorRect.new()
-			cl1.position = Vector2(36, 44); cl1.size = Vector2(58, 3)
-			cl1.color = color.darkened(0.4); vis.add_child(cl1)
-			var cl2 := ColorRect.new()
-			cl2.position = Vector2(42, 52); cl2.size = Vector2(46, 3)
-			cl2.color = color.darkened(0.4); vis.add_child(cl2)
-		2:
-			bg.color = Color("#ddd8c0")
-			var hp := ColorRect.new()
-			hp.position = Vector2(30, 24); hp.size = Vector2(36, 54)
-			hp.color = Color("#fff5e0"); vis.add_child(hp)
-			for ly in [32, 42, 52]:
-				var l := ColorRect.new()
-				l.position = Vector2(34, ly); l.size = Vector2(28, 2)
-				l.color = Color("#bbb"); vis.add_child(l)
+			# 红色书签绳
+			var ribbon := ColorRect.new()
+			ribbon.position = Vector2(62, 64); ribbon.size = Vector2(3, 14)
+			ribbon.color = Color("#cc4444"); vis.add_child(ribbon)
+
+		1:  # 合上 — 深红色精装书，金箔标题
+			var cv := ColorRect.new()
+			cv.position = Vector2(26, 20); cv.size = Vector2(78, 60)
+			cv.color = Color("#8b3a3a"); vis.add_child(cv)
+			# 金箔边框
+			var border := ColorRect.new()
+			border.position = Vector2(32, 26); border.size = Vector2(66, 48)
+			border.color = Color("#ddaa44", 0.3); vis.add_child(border)
+			# 书脊
+			var spine := ColorRect.new()
+			spine.position = Vector2(22, 20); spine.size = Vector2(8, 60)
+			spine.color = Color("#6a2020"); vis.add_child(spine)
+			# 金箔标题横线
+			for ti in range(3):
+				var gold_line := ColorRect.new()
+				gold_line.position = Vector2(38, 38 + ti * 12); gold_line.size = Vector2(54 - ti * 6, 3)
+				gold_line.color = Color("#ddaa44"); vis.add_child(gold_line)
+			# 封面装饰圆
+			var gem := ColorRect.new()
+			gem.position = Vector2(60, 54); gem.size = Vector2(8, 8)
+			gem.color = Color("#dd3344"); vis.add_child(gem)
+
+		2:  # 半开 — 翻到一半，露出书签和书页
+			var bg2 := ColorRect.new()
+			bg2.position = Vector2(24, 24); bg2.size = Vector2(80, 54)
+			bg2.color = Color("#a09070"); vis.add_child(bg2)
+			# 左半：闭合的封面
+			var lc := ColorRect.new()
+			lc.position = Vector2(26, 26); lc.size = Vector2(30, 50)
+			lc.color = Color("#d4b896"); vis.add_child(lc)
+			# 右半：打开的页面
+			var rp2 := ColorRect.new()
+			rp2.position = Vector2(58, 26); rp2.size = Vector2(42, 50)
+			rp2.color = Color("#fff8ee"); vis.add_child(rp2)
+			# 书脊
+			var spine2 := ColorRect.new()
+			spine2.position = Vector2(56, 24); spine2.size = Vector2(4, 54)
+			spine2.color = Color("#887766"); vis.add_child(spine2)
+			# 右页文字行
+			for ly2 in [32, 40, 48, 56, 64]:
+				var lt := ColorRect.new()
+				lt.position = Vector2(62, ly2); lt.size = Vector2(32, 2)
+				lt.color = Color("#bbb"); vis.add_child(lt)
+			# 蓝色书签
+			var mark := ColorRect.new()
+			mark.position = Vector2(80, 44); mark.size = Vector2(4, 14)
+			mark.color = Color("#4488cc"); vis.add_child(mark)
 
 
 # ════════════════════════════════════════════════════════════

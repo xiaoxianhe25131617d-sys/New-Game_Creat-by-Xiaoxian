@@ -44,6 +44,20 @@ func _ready() -> void:
 	show_login_screen()
 
 func _process(delta: float) -> void:
+	# 剧情滚动 — 优先级最高，漫画正在显示时暂停游戏逻辑
+	if _intro_layer != null and is_instance_valid(_intro_layer):
+		_intro_t += delta
+		var t01: float = clampf(_intro_t / _intro_duration, 0.0, 1.0)
+		# 进度条
+		if _intro_bar != null and is_instance_valid(_intro_bar):
+			_intro_bar.size.x = _intro_vp.x * t01
+		# 漫画向上滚动: y 从 0 → -comic_total_h（向上滚出屏幕）
+		if _intro_comic != null and is_instance_valid(_intro_comic):
+			_intro_comic.position.y = lerpf(0.0, -_intro_comic_total_h, t01)
+		if _intro_done or t01 >= 1.0:
+			_intro_finish()
+		return
+
 	if not game_running:
 		return
 	state["play_time"] = float(state.get("play_time", 0.0)) + delta
@@ -168,6 +182,18 @@ func _input(event: InputEvent) -> void:
 					return
 
 func _unhandled_input(event: InputEvent) -> void:
+	# 剧情滚动 — 任意键/鼠标按下立即跳过
+	if _intro_layer != null and is_instance_valid(_intro_layer):
+		if event is InputEventKey and event.pressed and not event.echo:
+			_intro_skip()
+			get_viewport().set_input_as_handled()
+			return
+		if event is InputEventMouseButton and event.pressed:
+			_intro_skip()
+			get_viewport().set_input_as_handled()
+			return
+		return
+
 	if not game_running:
 		return
 	# Don't handle game input while dialogue is open
@@ -397,51 +423,99 @@ func _normalize_state() -> void:
 	if not state.has("current_view") or not unlocked.has(str(state.get("current_view", "normal"))):
 		state["current_view"] = "normal"
 
+# ── 剧情滚动状态 (show_intro 用) ──
+var _intro_layer: Control = null
+var _intro_comic: TextureRect = null
+var _intro_bar: ColorRect = null
+var _intro_t: float = 0.0
+var _intro_done: bool = false
+var _intro_duration: float = 25.0
+var _intro_comic_total_h: float = 0.0
+var _intro_vp: Vector2 = Vector2.ZERO
+
 func show_intro() -> void:
 	player.controls_enabled = false
-	var intro := AcceptDialog.new()
-	intro.title = "心灵花园 · 序章"
-	intro.dialog_text = """━━━━━━ 心灵花园 Mindscape ━━━━━━
 
-五个人曾经是最好的朋友。
+	const COMIC := preload("res://assets/intro_comic.png")
+	var vp := get_viewport().get_visible_rect().size
 
-阿明——看不见光，但听得见风从湖面来的颜色。
-阿冲——总是停不下来，跑得最快的人不用解释自己。
-小静——安静地注视，只有她能看见被忽略的痕迹。
-小远——从细节中发现规律，把混乱变成秩序。
-而你——你学会了理解每个人眼中的风景。
+	# 全屏 Control 拦截输入
+	var layer := Control.new()
+	layer.name = "IntroComic"
+	layer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	layer.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(layer)
 
-后来，时间胶囊被封印了。
-怪物侵入了每个区域，把真正的感知
-变成了噪音、干扰和阴影。
+	# 全屏黑底
+	var bg := ColorRect.new()
+	bg.color = Color.BLACK
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(bg)
 
-要打开胶囊，你需要重新走入四种视角——
-在记忆长椅旁坐下来，切换感知方式。
+	# 漫画 — TextureRect，宽度撑满屏幕，从顶部开始显示
+	var comic_native_h := float(COMIC.get_height())
+	var comic_native_w := float(COMIC.get_width())
+	# 宽度撑满屏幕
+	var comic_w := vp.x
+	var scale := comic_w / comic_native_w
+	var comic_h := comic_native_h * scale  # 等比缩放后的实际高度（远超屏幕）
+	var comic := TextureRect.new()
+	comic.texture = COMIC
+	comic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	comic.stretch_mode = TextureRect.STRETCH_SCALE
+	comic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	comic.size = Vector2(comic_w, comic_h)
+	# 起始: 顶部对齐屏幕顶部（立即可见，从顶部开始向上滚）
+	comic.position = Vector2(0, 0)
+	layer.add_child(comic)
 
-━━━━━━━━━━━━━━━━━━
-【操作】
-A/D 左右移动    Space 跳跃
-E   互动（对话/解谜/收集）
-F   特殊能力（盲人回声探测/ADHD冲刺）
-TAB 视角轮盘    ESC 暂停
+	# 顶部 "按任意键跳过" 提示
+	var hint := Label.new()
+	hint.text = "按任意键 / 点击鼠标跳过 →"
+	hint.add_theme_color_override("font_color", Color(1, 1, 1, 0.8))
+	hint.add_theme_font_size_override("font_size", 18)
+	hint.position = Vector2(vp.x - 280, vp.y - 36)
+	hint.z_index = 10
+	layer.add_child(hint)
 
-【四种视角】
-盲人模式：画面全黑，靠F键回声定位
-ADHD模式：按方向键自动持续行走，跳跃更高
-自闭症模式：细节放大，能发现隐藏模式
-抑郁模式：画面灰暗，地面尖刺显露，能看到潜台词
+	# 底部进度条
+	var bar_bg := ColorRect.new()
+	bar_bg.color = Color(1, 1, 1, 0.2)
+	bar_bg.size = Vector2(vp.x, 3)
+	bar_bg.position = Vector2(0, vp.y - 3)
+	bar_bg.z_index = 10
+	layer.add_child(bar_bg)
+	var bar := ColorRect.new()
+	bar.color = Color("#c89933", 0.95)
+	bar.size = Vector2(0, 3)
+	bar.position = Vector2(0, vp.y - 3)
+	bar.z_index = 11
+	layer.add_child(bar)
 
-━━━━━━━━━━━━━━━━━━
-━━━━━━━━━━━━━━━━━━
+	# 保存状态 — _process 推进滚动, _unhandled_input 检测跳过
+	_intro_layer = layer
+	_intro_comic = comic
+	_intro_bar = bar
+	_intro_t = 0.0
+	_intro_done = false
+	_intro_vp = vp
+	# 需要滚动的距离：漫画总高度 - 一屏，向上滚
+	_intro_comic_total_h = maxf(0, comic_h - vp.y)
 
-风铃、手套、风筝、照片和纪念徽章，
-还在等你把它们带回家。"""
-	add_child(intro)
-	intro.confirmed.connect(func():
-		player.controls_enabled = true
-		show_toast("→ 沿地面金色光点向右走，触摸发光的回声共鸣石。", 4.0)
-	)
-	intro.popup_centered(Vector2(680, 580))
+func _intro_skip() -> void:
+	# 立即跳到末尾(完结状态)
+	_intro_done = true
+
+func _intro_finish() -> void:
+	# 结束: 销毁 layer, 恢复玩家控制, 提示引导
+	if is_instance_valid(_intro_layer):
+		_intro_layer.queue_free()
+	_intro_layer = null
+	_intro_comic = null
+	_intro_bar = null
+	player.controls_enabled = true
+	show_toast("→ 沿地面金色光点向右走，触摸发光的回声共鸣石。", 4.0)
 
 func clear_scene() -> void:
 	game_running = false

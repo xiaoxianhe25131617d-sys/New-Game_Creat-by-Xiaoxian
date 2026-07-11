@@ -3,7 +3,8 @@ class_name PuzzleNineGrid
 # ════════════════════════════════════════════════════════════
 #  石台拼图 (3x3 Sliding Puzzle)
 #  鼠标点击方块 → 滑入空位
-#  抑郁模式：全屏大号密码间隔性弹出供记忆
+#  使用切片图片纹理替代纯色方块
+#  抑郁模式：全屏大号正确答案间隔性弹出供记忆
 # ════════════════════════════════════════════════════════════
 
 signal puzzle_completed(reward_id: String)
@@ -16,18 +17,21 @@ var challenge_active: bool = false
 const CORRECT_LAYOUT: Array = [1, 2, 3, 4, 5, 6, 7, 8, 0]
 var current_layout: Array = []
 
-const TILE_COLORS: Array = [
-	Color.MAGENTA,
-	Color("#4a6c8f"), Color("#5b7da0"), Color("#4a7199"),
-	Color("#6b8eac"), Color("#5080a8"), Color("#3d6588"),
-	Color("#5a80a8"), Color("#406c94"),
+# ── 预加载切片图片纹理 ──
+const TILE_TEXTURES: Array = [
+	preload("res://assets/grid_tiles/tile_0.png"),   # 空位
+	preload("res://assets/grid_tiles/tile_1.png"),
+	preload("res://assets/grid_tiles/tile_2.png"),
+	preload("res://assets/grid_tiles/tile_3.png"),
+	preload("res://assets/grid_tiles/tile_4.png"),
+	preload("res://assets/grid_tiles/tile_5.png"),
+	preload("res://assets/grid_tiles/tile_6.png"),
+	preload("res://assets/grid_tiles/tile_7.png"),
+	preload("res://assets/grid_tiles/tile_8.png"),
 ]
+const FULL_IMAGE := preload("res://assets/grid_tiles/full.png")  # 完整图（抑郁模式展示）
 
-const TILE_SYMBOLS: Array = [
-	"", "☁", "🌧", "💧", "⏳", "🍂", "🖤", "🌑", "🔗",
-]
-
-const CELL_SIZE := 36
+const CELL_SIZE := 50  # 扩大格子以显示清楚图片
 var grid_container: Node2D
 var tile_nodes: Array = []
 var hint_label: Label
@@ -44,9 +48,9 @@ func _ready() -> void:
 	body_exited.connect(_on_body_exited)
 	var shape := CollisionShape2D.new()
 	var rect := RectangleShape2D.new()
-	rect.size = Vector2(160, 180)
+	rect.size = Vector2(190, 210)  # 配合 CELL_SIZE=50 的放大尺寸
 	shape.shape = rect
-	shape.position = Vector2(0, -20)
+	shape.position = Vector2(0, -30)
 	add_child(shape)
 	_solvable_shuffle()
 	_make_grid()
@@ -96,7 +100,7 @@ func _get_neighbors(idx: int) -> PackedInt32Array:
 func _make_grid() -> void:
 	grid_container = Node2D.new()
 	grid_container.name = "GridContainer"
-	grid_container.position = Vector2(0, -40)
+	grid_container.position = Vector2(0, -60)
 	add_child(grid_container)
 
 	var bs := CELL_SIZE * 3 + 12
@@ -120,7 +124,7 @@ func _make_grid() -> void:
 		var bg := ColorRect.new()
 		bg.position = Vector2(gx * CELL_SIZE - CELL_SIZE - CELL_SIZE/2.0, gy * CELL_SIZE - CELL_SIZE - CELL_SIZE/2.0)
 		bg.size = Vector2(CELL_SIZE, CELL_SIZE)
-		bg.color = Color("#242028")
+		bg.color = Color("#141218")
 		bg.z_index = -1
 		grid_container.add_child(bg)
 
@@ -128,7 +132,7 @@ func _make_grid() -> void:
 
 	var title := Label.new()
 	title.text = "[ 石台拼图 ]"
-	title.position = Vector2(-40, -105)
+	title.position = Vector2(-60, -120)
 	title.add_theme_font_size_override("font_size", 16)
 	title.add_theme_color_override("font_color", Color("#8ab4d8"))
 	add_child(title)
@@ -153,16 +157,17 @@ func _make_fullscreen_overlay() -> void:
 	var title := Label.new()
 	title.text = "记住这个排列"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.position = Vector2(290, 30)
-	title.size = Vector2(700, 50)
-	title.add_theme_font_size_override("font_size", 40)
+	title.position = Vector2(290, 20)
+	title.size = Vector2(700, 40)
+	title.add_theme_font_size_override("font_size", 36)
 	title.add_theme_color_override("font_color", Color("#ffd760"))
 	fullscreen_overlay.add_child(title)
 	
-	# 3x3 大号正确答案 (cell=160 铺满屏幕中央)
-	var big_cell := 160.0
+	# 3x3 大号正确答案 — 使用切片图片纹理
+	var big_cell := 150.0
 	var big_bs := big_cell * 3 + 20
-	var grid_origin := Vector2((1280 - big_bs) / 2.0, (720 - big_bs) / 2.0 - 30)
+	var grid_origin := Vector2((1280 - big_bs) / 2.0, (720 - big_bs) / 2.0 - 40)
+	
 	# 背景框
 	var grid_bg := ColorRect.new()
 	grid_bg.position = grid_origin - Vector2(6, 6)
@@ -177,43 +182,47 @@ func _make_fullscreen_overlay() -> void:
 		var px: float = grid_origin.x + gx * big_cell + 6
 		var py: float = grid_origin.y + gy * big_cell + 6
 		
-		var tile_bg := ColorRect.new()
-		tile_bg.position = Vector2(px, py)
-		tile_bg.size = Vector2(big_cell - 12, big_cell - 12)
-		tile_bg.color = Color("#12101a") if tile_num == 0 else TILE_COLORS[tile_num].lightened(0.25)
-		fullscreen_overlay.add_child(tile_bg)
-		
-		if tile_num != 0:
-			var sym := Label.new()
-			sym.text = TILE_SYMBOLS[tile_num]
-			sym.position = Vector2(px + big_cell/2 - 26, py + big_cell/2 - 26)
-			sym.add_theme_font_size_override("font_size", 48)
-			sym.add_theme_color_override("font_color", Color.WHITE)
-			fullscreen_overlay.add_child(sym)
+		if tile_num == 0:
+			# 空位
+			var empty_bg := ColorRect.new()
+			empty_bg.position = Vector2(px, py)
+			empty_bg.size = Vector2(big_cell - 12, big_cell - 12)
+			empty_bg.color = Color("#12101a")
+			fullscreen_overlay.add_child(empty_bg)
+		else:
+			# 用 TextureRect 显示切片纹理
+			var tile_rect := TextureRect.new()
+			tile_rect.texture = TILE_TEXTURES[tile_num]
+			tile_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			tile_rect.stretch_mode = TextureRect.STRETCH_SCALE
+			tile_rect.position = Vector2(px, py)
+			tile_rect.size = Vector2(big_cell - 12, big_cell - 12)
+			fullscreen_overlay.add_child(tile_rect)
 		
 		# 位置编号
 		var pos_label := Label.new()
 		pos_label.text = str(idx + 1)
-		pos_label.position = Vector2(px + 8, py + 6)
-		pos_label.add_theme_font_size_override("font_size", 18)
-		pos_label.add_theme_color_override("font_color", Color("#7777aa"))
+		pos_label.position = Vector2(px + 4, py + 2)
+		pos_label.add_theme_font_size_override("font_size", 14)
+		pos_label.add_theme_color_override("font_color", Color("#7777aa", 0.6))
 		fullscreen_overlay.add_child(pos_label)
 	
 	# 底部提示
 	var hint := Label.new()
 	hint.text = "记忆一段时间后会消失，稍后再次出现"
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	hint.position = Vector2(240, 640)
+	hint.position = Vector2(240, 650)
 	hint.size = Vector2(800, 30)
-	hint.add_theme_font_size_override("font_size", 20)
+	hint.add_theme_font_size_override("font_size", 18)
 	hint.add_theme_color_override("font_color", Color("#9999bb"))
 	fullscreen_overlay.add_child(hint)
 
 func _make_tile_visuals() -> void:
+	# 清除旧的可视节点（Sprite2D 图块和空位 ColorRect）
 	for ch in grid_container.get_children():
-		if ch is Polygon2D and ch.z_index >= 1 and ch.z_index <= 3:
+		if ch is Sprite2D and ch.name.begins_with("TileSprite_"):
 			ch.queue_free()
-		elif ch is Label and ch.z_index == 3:
+		elif ch is ColorRect and ch.name.begins_with("EmptySlot_"):
 			ch.queue_free()
 	tile_nodes.clear()
 
@@ -225,45 +234,35 @@ func _make_tile_visuals() -> void:
 		var cy: float = gy * CELL_SIZE - CELL_SIZE
 
 		if tile_num == 0:
-			var ev := Polygon2D.new()
-			ev.polygon = PackedVector2Array([
-				Vector2(-CELL_SIZE/2.0+2, -CELL_SIZE/2.0+2),
-				Vector2(CELL_SIZE/2.0-2, -CELL_SIZE/2.0+2),
-				Vector2(CELL_SIZE/2.0-2, CELL_SIZE/2.0-2),
-				Vector2(-CELL_SIZE/2.0+2, CELL_SIZE/2.0-2),
-			])
-			ev.color = Color("#121016")
-			ev.position = Vector2(cx, cy)
+			# 空位 — 深色填充
+			var ev := ColorRect.new()
+			ev.name = "EmptySlot_%d" % idx
+			ev.position = Vector2(cx - CELL_SIZE/2.0 + 2, cy - CELL_SIZE/2.0 + 2)
+			ev.size = Vector2(CELL_SIZE - 4, CELL_SIZE - 4)
+			ev.color = Color("#0e0c14")
 			ev.z_index = 1
 			grid_container.add_child(ev)
 			tile_nodes.append(ev)
 			continue
 
-		var tile := Polygon2D.new()
-		tile.polygon = PackedVector2Array([
-			Vector2(-CELL_SIZE/2.0+3, -CELL_SIZE/2.0+3),
-			Vector2(CELL_SIZE/2.0-3, -CELL_SIZE/2.0+3),
-			Vector2(CELL_SIZE/2.0-3, CELL_SIZE/2.0-3),
-			Vector2(-CELL_SIZE/2.0+3, CELL_SIZE/2.0-3),
-		])
-		tile.color = TILE_COLORS[tile_num]
+		# 有图块 — Sprite2D 显示切片纹理
+		var tile := Sprite2D.new()
+		tile.texture = TILE_TEXTURES[tile_num]
+		tile.centered = true
 		tile.position = Vector2(cx, cy)
+		var tex_w := float(TILE_TEXTURES[tile_num].get_width())
+		var tex_h := float(TILE_TEXTURES[tile_num].get_height())
+		var sc := (CELL_SIZE - 4) / maxf(tex_w, tex_h)
+		tile.scale = Vector2(sc, sc)
 		tile.z_index = 2
-		tile.name = "Tile_%d" % idx
+		tile.name = "TileSprite_%d" % idx
+		tile.texture_filter = TEXTURE_FILTER_LINEAR
 		grid_container.add_child(tile)
 		tile_nodes.append(tile)
 
-		var sym := Label.new()
-		sym.text = TILE_SYMBOLS[tile_num]
-		sym.position = Vector2(cx - 6, cy - 8)
-		sym.add_theme_font_size_override("font_size", 14)
-		sym.add_theme_color_override("font_color", Color.WHITE)
-		sym.z_index = 3
-		grid_container.add_child(sym)
-
 func _make_hint() -> void:
 	hint_label = Label.new()
-	hint_label.position = Vector2(-75, 65)
+	hint_label.position = Vector2(-90, 85)
 	hint_label.add_theme_font_size_override("font_size", 13)
 	hint_label.add_theme_color_override("font_color", Color("#ffe8a0"))
 	hint_label.text = "按 [E] 启动拼图"

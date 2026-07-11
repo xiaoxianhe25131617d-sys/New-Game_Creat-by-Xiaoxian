@@ -70,13 +70,14 @@ const WORLD_TILE_H := 281
 const TILESET_MAIN := preload("res://map/tileset.tres")
 const TILESET_DROP := preload("res://map/tileset_drop.tres")
 const SKY_MOUNTAINS_TEX := preload("res://assets/sky_user.png")
-const HOUSE_TEX := preload("res://assets/house_user.png")  # 精美白底版，不再用shader擦白
+const HOUSE_TEX := preload("res://assets/house_cute.png")  # 你的小房子
 const SLAB_TEX := preload("res://assets/slab.png")
+const SLAB_NEW_TEX := preload("res://assets/slab_new.png")  # 都市发布会图(扣掉绿幕+水印后的整条地平线)
 const DIRT_GRAD_TEX := preload("res://assets/dirt_gradient.png")
 const VINE_WALL_TEX := preload("res://assets/vine_wall.png")
 const MAZE_ENTRANCE_TEX := preload("res://assets/maze_entrance.png")
-const WIND_VANE_TEX_1 := preload("res://assets/wind_vane_1.png")
-const WIND_VANE_TEX_2 := preload("res://assets/wind_vane_2.png")
+const WIND_VANE_TEX_LEFT := preload("res://assets/wind_vane_left.png")
+const WIND_VANE_TEX_RIGHT := preload("res://assets/wind_vane_right.png")
 const BOOKSHELF_TEX := preload("res://assets/bookshelf.png")
 const STONE_CHEST_TEX := preload("res://assets/stone_chest.png")
 const CARD_SLOT_TEX := preload("res://assets/card_slot.png")
@@ -180,7 +181,7 @@ func _make_background_canvas() -> void:
 	palette_overlay.name = "ViewTint"
 	palette_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
 	palette_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	palette_overlay.color = Color(1.0, 0.9, 0.75, 0.08)
+	palette_overlay.color = Color(1.0, 0.93, 0.82, 0.1)
 	view_tint_canvas.add_child(palette_overlay)
 
 	# 盲人全黑覆盖层（最高优先级）
@@ -337,8 +338,8 @@ func _draw_distant_mountains(container: Node2D) -> void:
 		container.add_child(s)
 
 func _draw_mid_hills(container: Node2D) -> void:
-	# 远景山丘 — 用柔和的大地色系替代原来的绿色方块
-	var colors := [Color("#b0a890"), Color("#a89880"), Color("#b8a888"), Color("#a09078")]
+	# 远景山丘 — 暖调大地色，与像素风元素统一
+	var colors := [Color("#b8a888"), Color("#c8b898"), Color("#a89878"), Color("#b8a080")]
 	for i in range(14):
 		var hill := Polygon2D.new()
 		var x := i * 1200.0 - 200.0
@@ -352,7 +353,7 @@ func _draw_mid_hills(container: Node2D) -> void:
 			Vector2(x + w, 3400.0),
 		])
 		hill.color = colors[i % colors.size()]
-		hill.modulate.a = 0.4
+		hill.modulate.a = 0.5
 		container.add_child(hill)
 
 func _draw_clouds(container: Node2D) -> void:
@@ -399,11 +400,10 @@ func _draw_trees_near(container: Node2D) -> void:
 		container.add_child(s)
 
 func _draw_buildings_bg(container: Node2D) -> void:
-	var bld_colors := [Color("#8a7060"), Color("#9a8070"), Color("#7a6050"), Color("#a09080")]
-	# 灯塔位置 — 用用户的房子图（与原 cabin 位置对齐）
-	_spawn_house_sprite(container, Vector2(4600, GROUND_Y_PX), 260.0)
-	# 水坝已删除
-	# 许愿堂 — 改为书架 + 石台+宝箱（透明底 PNG，底边贴地）
+	# 背景建筑 — 暖调融入，与手绘水彩远山和像素元素统一
+	# 灯塔位置 — 用房子图（自动裁切透明边，底边贴地）
+	_spawn_house_sprite(container, Vector2(5500, GROUND_Y_PX), 320.0)
+	# 许愿堂 — 书架 + 宝箱
 	_spawn_wishplace_decor(container, Vector2(9800, GROUND_Y_PX))
 
 
@@ -419,6 +419,8 @@ func _spawn_wishplace_decor(container: Node2D, pos: Vector2) -> void:
 	var mat1 := ShaderMaterial.new()
 	mat1.shader = _get_alpha_white_shader()
 	shelf.material = mat1
+	# 视觉统一：暖色调
+	shelf.modulate = Color(1.02, 0.96, 0.85, 1.0)
 	container.add_child(shelf)
 
 	# 石台+宝箱：放在 pos 右侧 50px
@@ -431,6 +433,8 @@ func _spawn_wishplace_decor(container: Node2D, pos: Vector2) -> void:
 	var mat2 := ShaderMaterial.new()
 	mat2.shader = _get_alpha_white_shader()
 	chest_sprite.material = mat2
+	# 视觉统一：暖色调
+	chest_sprite.modulate = Color(1.02, 0.95, 0.84, 1.0)
 	container.add_child(chest_sprite)
 
 	# ── 书架交互区域（按E出现密码本） ──
@@ -459,23 +463,54 @@ func _spawn_wishplace_decor(container: Node2D, pos: Vector2) -> void:
 	add_child(chest_zone)
 	interactables.append(chest_zone)
 
-# 在指定位置放置用户提供的房子图（透明底 + 去白底shader）
-# pos 是房子底边中点（地面位置），height_px 是房子在世界中显示的高度
+# 在指定位置放置小房子（RGBA透明底，自动裁切边缘空白，底部贴地）
+# pos 是房子底边中点（地面位置），height_px 是房子在世界中显示的可见高度
 func _spawn_house_sprite(container: Node2D, pos: Vector2, height_px: float) -> void:
 	var s := Sprite2D.new()
 	s.texture = HOUSE_TEX
 	s.centered = false
-	# 原图 1024x1024 → 等比例缩放到指定高度
-	var aspect: float = float(HOUSE_TEX.get_width()) / float(HOUSE_TEX.get_height())
-	var width_px: float = height_px * aspect
-	s.position = Vector2(pos.x - width_px * 0.5, pos.y - height_px)
-	s.scale = Vector2(width_px / float(HOUSE_TEX.get_width()), height_px / float(HOUSE_TEX.get_height()))
 	s.texture_filter = TEXTURE_FILTER_LINEAR
-	s.z_index = 2  # 在前景石板、树、灌木之上
-	# 用去白底 shader（阈值很高，只过滤纯白，保留所有亮色装饰）
-	var mat := ShaderMaterial.new()
-	mat.shader = _get_alpha_white_shader()
-	s.material = mat
+	s.z_index = 2
+
+	# ── 裁切透明边缘：house_cute.png 实际内容仅占 23.8%..76.2%(水平), 15.0%..72.1%(垂直)
+	#    PNG 1024x1024, 实际内容 y:154..737, x:244..779
+	#    裁掉 27.9% 底部空白让房子真正"坐在地上"
+	# 内容包围盒 (预计算，避免每次启动扫像素)
+	const HOUSE_CONTENT_LEFT := 244
+	const HOUSE_CONTENT_TOP := 154
+	const HOUSE_CONTENT_RIGHT := 779
+	const HOUSE_CONTENT_BOTTOM := 737
+	var content_w: float = float(HOUSE_CONTENT_RIGHT - HOUSE_CONTENT_LEFT)  # 535
+	var content_h: float = float(HOUSE_CONTENT_BOTTOM - HOUSE_CONTENT_TOP)  # 583
+	# region_rect: x, y, w, h
+	s.region_enabled = true
+	s.region_rect = Rect2(float(HOUSE_CONTENT_LEFT), float(HOUSE_CONTENT_TOP), content_w, content_h)
+
+	# 实际渲染尺寸（按内容区域缩放）
+	var aspect: float = content_w / content_h
+	var width_px: float = height_px * aspect
+	# 缩放因子：屏幕像素 / 内容像素
+	var scale_x: float = width_px / content_w
+	var scale_y: float = height_px / content_h
+	s.scale = Vector2(scale_x, scale_y)
+	# position: region_rect 的左上角在画布坐标系中的位置
+	# 我们要内容底边 = pos.y，所以 region 顶 = pos.y - height_px
+	s.position = Vector2(pos.x - width_px * 0.5, pos.y - height_px)
+
+	# ── 视觉统一：给像素艺术小房子加暖色调，融入水彩远山的色彩基调 ──
+	# 全球调色盘 #f5d58e (金色) / #e8f4f8 (天空)，把房子的冷蓝窗色调暖
+	s.modulate = Color(1.04, 0.95, 0.82, 1.0)
+	# 阴影：底部多一道柔影，让房子"坐在"地上
+	var shadow := Polygon2D.new()
+	var sw: float = width_px * 0.55
+	shadow.polygon = PackedVector2Array([
+		Vector2(-sw * 0.5, 0), Vector2(sw * 0.5, 0),
+		Vector2(sw * 0.35, 6), Vector2(-sw * 0.35, 6)
+	])
+	shadow.color = Color(0, 0, 0, 0.18)
+	shadow.position = Vector2(pos.x, pos.y)
+	shadow.z_index = 1
+	container.add_child(shadow)
 	container.add_child(s)
 
 var __alpha_white_shader: Shader = null
@@ -496,6 +531,28 @@ void fragment() {
 }
 """
 	__alpha_white_shader = shader
+	return shader
+
+# 去除风向标 PNG 的浅灰背景 (RGB≈226~249)
+var __gray_bg_shader: Shader = null
+func _get_gray_bg_shader() -> Shader:
+	if __gray_bg_shader != null:
+		return __gray_bg_shader
+	var shader := Shader.new()
+	shader.code = """
+shader_type canvas_item;
+void fragment() {
+	vec4 c = texture(TEXTURE, UV);
+	// 浅灰背景（R,G,B 都 > 0.85 且接近彼此）→ 透明
+	float avg = (c.r + c.g + c.b) / 3.0;
+	float spread = max(max(abs(c.r-avg), abs(c.g-avg)), abs(c.b-avg));
+	if (avg > 0.85 && spread < 0.04) {
+		c.a = 0.0;
+	}
+	COLOR = c;
+}
+"""
+	__gray_bg_shader = shader
 	return shader
 
 # 去除 vine_wall.png 的半透明深棕底色 (RGB≈0.31,0.25,0.20, alpha<255)
@@ -687,58 +744,63 @@ func _paint_underground_maze_walls() -> void:
 		_B.set_cell(Vector2i(x, GROUND_ROW), 0, WR)
 
 # ════════════════════════════════════════════════════════════════
-#  地下剖面前景 — 石板路 → 泥土 → 深色渐变
-#  覆盖所有裸露地面，让地下看起来更自然，无可见接缝
+#  地下剖面前景 — 完整路面层（缩小显示 + 完整泥土层）
+#  石板路缩小为薄条贴在路面表面，可见完整栅栏纹理
 # ════════════════════════════════════════════════════════════════
 func _draw_ground_foreground() -> void:
 	var fg := Node2D.new()
 	fg.name = "GroundForeground"
-	fg.z_index = -27
+	fg.z_index = -1   # 在玩家(z=100)下面,在房子(z=2)下面
 	fg.z_as_relative = false
 	add_child(fg)
 
 	var world_w := float(WORLD_TILE_W * TILE_SIZE)         # 11200 px
-	var surface_y := GROUND_Y_PX                            # 3200
+	var surface_y := GROUND_Y_PX                            # 3200 (地表线)
 	var bottom_y := float(WORLD_TILE_H * TILE_SIZE)         # 4496
 
-	const SLAB_H  := 56.0   # 石板表层高度
-	const MUD_H   := 80.0   # 泥土层高度（大幅缩短）
-	var slab_y := surface_y + 4.0
-	var mud_y  := slab_y + SLAB_H
-	var grad_y := mud_y + MUD_H
-	var grad_h := bottom_y - grad_y
-
-	# ── 1. 石板路表层 ──
-	var slab_tex_w := float(SLAB_TEX.get_width())
-	var slab_tex_h := float(SLAB_TEX.get_height())
-	var slab_tile_w := SLAB_H
-	var slab_n := int(ceil(world_w / slab_tile_w)) + 2
-	for i in range(maxi(0, slab_n)):
+	# ── 1. 小栅栏(缩小放在地表，很小一层) ──
+	var tex_w := float(SLAB_NEW_TEX.get_width())   # 2848
+	var tex_h := float(SLAB_NEW_TEX.get_height())  # 50 (石板路面纹理)
+	var scale_y: float = 0.15                      # 大幅缩小，约7.5px高
+	var display_h := tex_h * scale_y               # 约 7.5px
+	var slab_y: float = surface_y - display_h
+	var n := int(ceil(world_w / tex_w)) + 1
+	for i in range(maxi(0, n)):
 		var s := Sprite2D.new()
-		s.texture = SLAB_TEX
+		s.texture = SLAB_NEW_TEX
 		s.centered = false
-		s.position = Vector2(i * slab_tile_w - slab_tile_w, slab_y)
-		s.scale = Vector2(slab_tile_w / slab_tex_w, SLAB_H / slab_tex_h)
-		s.texture_filter = TEXTURE_FILTER_LINEAR
+		s.position = Vector2(i * tex_w - tex_w * 0.5, slab_y)
+		s.scale = Vector2(1.0, scale_y)
+		s.texture_filter = TEXTURE_FILTER_NEAREST  # 像素清晰
+		s.z_index = 0
 		fg.add_child(s)
 
-	# ── 2. 泥土层 — 统一底色 + 少量深色条纹 ──
+	# ── 2. 表面下方:完整暖调泥土层(均匀铺满，不参杂条纹) ──
+	var mud_h: float = 220.0
+	var mud_y := surface_y
+	var grad_y := mud_y + mud_h
+	var grad_h := bottom_y - grad_y
+
+	# 完整泥土层（无条纹，均匀色块）
 	var base_mud := ColorRect.new()
 	base_mud.position = Vector2(-100, mud_y)
-	base_mud.size = Vector2(world_w + 200, MUD_H)
-	base_mud.color = Color("#8a5e38", 0.95)
+	base_mud.size = Vector2(world_w + 200, mud_h)
+	base_mud.color = Color("#9a6844", 0.92)
+	base_mud.z_index = -2
 	fg.add_child(base_mud)
 
-	# 只有少数几条深色条纹，不是大面积色块
-	for i in range(5):
-		var stripe_x := i * 2600.0 + 400.0
-		var stripe := ColorRect.new()
-		stripe.position = Vector2(stripe_x, mud_y)
-		stripe.size = Vector2(180.0, MUD_H)
-		stripe.color = Color("#6d4520", 0.45)
-		fg.add_child(stripe)
+	# 泥土纹理细节（细密均匀的水平纹路，不是粗条纹）
+	for i in range(22):
+		var line_y := mud_y + 10.0 + i * 10.0
+		if line_y >= mud_y + mud_h: break
+		var line := ColorRect.new()
+		line.position = Vector2(-100, line_y)
+		line.size = Vector2(world_w + 200, 2)
+		line.color = Color("#7d4f2a", 0.25)
+		line.z_index = -2
+		fg.add_child(line)
 
-	# ── 3. 大段渐变（泥土→深棕→黑），占据剩余全部空间 ──
+	# 渐变到深色
 	var grad_tex_w := float(DIRT_GRAD_TEX.get_width())
 	var grad_tex_h := float(DIRT_GRAD_TEX.get_height())
 	var grad_n := int(ceil(world_w / grad_tex_w)) + 2
@@ -749,6 +811,7 @@ func _draw_ground_foreground() -> void:
 		g.position = Vector2(i * grad_tex_w - grad_tex_w, grad_y)
 		g.scale = Vector2(1.0, grad_h / grad_tex_h)
 		g.texture_filter = TEXTURE_FILTER_LINEAR
+		g.z_index = -3
 		fg.add_child(g)
 
 
@@ -800,6 +863,8 @@ func _paint_texture_wall_blocker() -> void:
 	var mat := ShaderMaterial.new()
 	mat.shader = _get_vine_alpha_shader()
 	wall_sprite.material = mat
+	# ── 视觉统一：暖色调融入水彩远山 ──
+	wall_sprite.modulate = Color(1.0, 0.95, 0.85, 1.0)
 	add_child(wall_sprite)
 	_texture_wall_visual = wall_sprite
 
@@ -839,8 +904,8 @@ func _paint_decorations() -> void:
 func _make_beautiful_decor() -> void:
 	# 中央广场喷泉
 	_draw_fountain(Vector2(3400, GROUND_Y_PX - 20))
-	# 森林小屋
-	_draw_cabin(Vector2(4600, GROUND_Y_PX - 30))
+	# 森林小屋 — 移到森林深处 (x=2700)，不与新房子位置 (5500灯塔) 冲突
+	_draw_cabin(Vector2(2700, GROUND_Y_PX - 30))
 	# 车站
 	_draw_station(Vector2(6900, GROUND_Y_PX - 30))
 	# 游乐园摩天轮
@@ -856,25 +921,6 @@ func _make_beautiful_decor() -> void:
 		if rx < 11000:
 			_draw_rock(Vector2(rx, GROUND_Y_PX - 2), [Color("#888888"), Color("#999999"), Color("#777777")][i % 3])
 
-func _draw_fountain(pos: Vector2) -> void:
-	var p := Polygon2D.new()
-	var base := PackedVector2Array()
-	for i in range(20):
-		var a := TAU * i / 20.0
-		base.append(Vector2(pos.x + cos(a) * 30, pos.y + sin(a) * 30))
-	p.polygon = base
-	p.color = Color("#808890")
-	p.z_index = -5
-	add_child(p)
-	var water := Polygon2D.new()
-	var wp := PackedVector2Array()
-	for i in range(16):
-		var a := TAU * i / 16.0
-		wp.append(Vector2(pos.x + cos(a) * 18, pos.y + sin(a) * 18))
-	water.polygon = wp
-	water.color = Color("#5599cc", 0.6)
-	add_child(water)
-
 func _draw_cabin(pos: Vector2) -> void:
 	for row in range(4):
 		for col in range(3):
@@ -882,6 +928,7 @@ func _draw_cabin(pos: Vector2) -> void:
 			log.position = Vector2(pos.x - 24 + col * 16, pos.y - 60 + row * 15)
 			log.size = Vector2(14, 13)
 			log.color = Color("#8b6914") if (row + col) % 2 == 0 else Color("#7a5a10")
+			log.z_index = 5   # 在新地表图(z=0)之上,显示在地面
 			add_child(log)
 	var roof := Polygon2D.new()
 	roof.polygon = PackedVector2Array([
@@ -889,7 +936,7 @@ func _draw_cabin(pos: Vector2) -> void:
 		Vector2(pos.x, pos.y - 85)
 	])
 	roof.color = Color("#a04030")
-	roof.z_index = -5
+	roof.z_index = 6
 	add_child(roof)
 
 func _draw_station(pos: Vector2) -> void:
@@ -897,7 +944,7 @@ func _draw_station(pos: Vector2) -> void:
 	back.position = Vector2(pos.x - 60, pos.y - 50)
 	back.size = Vector2(120, 70)
 	back.color = Color("#b0a090")
-	back.z_index = -20
+	back.z_index = 5   # 在新地表图(z=0)之上
 	add_child(back)
 	var roof := Polygon2D.new()
 	roof.polygon = PackedVector2Array([
@@ -905,7 +952,7 @@ func _draw_station(pos: Vector2) -> void:
 		Vector2(pos.x, pos.y - 75)
 	])
 	roof.color = Color("#d04030")
-	roof.z_index = -5
+	roof.z_index = 6
 	add_child(roof)
 
 func _draw_ferris_wheel(pos: Vector2) -> void:
@@ -921,6 +968,7 @@ func _draw_ferris_wheel(pos: Vector2) -> void:
 		])
 		gondola.position = Vector2(cx, cy)
 		gondola.color = Color("#ff8855") if i % 2 == 0 else Color("#55aaff")
+		gondola.z_index = 5
 		add_child(gondola)
 	var center := Polygon2D.new()
 	var cp := PackedVector2Array()
@@ -929,7 +977,28 @@ func _draw_ferris_wheel(pos: Vector2) -> void:
 		cp.append(Vector2(cx + cos(a) * 8, cy + sin(a) * 8))
 	center.polygon = cp
 	center.color = Color("#ffd700")
+	center.z_index = 6
 	add_child(center)
+
+func _draw_fountain(pos: Vector2) -> void:
+	var p := Polygon2D.new()
+	var base := PackedVector2Array()
+	for i in range(20):
+		var a := TAU * i / 20.0
+		base.append(Vector2(pos.x + cos(a) * 30, pos.y + sin(a) * 30))
+	p.polygon = base
+	p.color = Color("#808890")
+	p.z_index = 5
+	add_child(p)
+	var water := Polygon2D.new()
+	var wp := PackedVector2Array()
+	for i in range(16):
+		var a := TAU * i / 16.0
+		wp.append(Vector2(pos.x + cos(a) * 18, pos.y + sin(a) * 18))
+	water.polygon = wp
+	water.color = Color("#5599cc", 0.6)
+	water.z_index = 6
+	add_child(water)
 
 func _draw_flower(pos: Vector2, color: Color) -> void:
 	for i in range(6):
@@ -942,7 +1011,7 @@ func _draw_flower(pos: Vector2, color: Color) -> void:
 			Vector2(pos.x + cos(a + 0.2) * 6, pos.y + sin(a + 0.2) * 6),
 		])
 		petal.color = color
-		petal.z_index = -3
+		petal.z_index = 5   # 在新地表图(z=0)之上,花在草地上可见
 		add_child(petal)
 
 func _draw_rock(pos: Vector2, color: Color) -> void:
@@ -955,7 +1024,7 @@ func _draw_rock(pos: Vector2, color: Color) -> void:
 		Vector2(pos.x + sz, pos.y),
 	])
 	rock.color = color
-	rock.z_index = -4
+	rock.z_index = 5   # 在新地表图(z=0)之上
 	add_child(rock)
 
 # ══════════════════════════════════════════════════════════════
@@ -985,6 +1054,8 @@ func _make_underground_maze_entrance() -> void:
 	var mat := ShaderMaterial.new()
 	mat.shader = _get_alpha_white_shader()
 	s.material = mat
+	# ── 视觉统一：暖色调融入水彩远山 ──
+	s.modulate = Color(1.0, 0.96, 0.86, 1.0)
 	add_child(s)
 
 	# ── [E] 进入 提示 ──
@@ -1482,7 +1553,7 @@ func set_view_palette(view: String) -> void:
 			blind_black.visible = false; blind_label.visible = false
 			blind_cursor.visible = false
 		_:
-			palette_overlay.color = Color(1.0, 0.9, 0.75, 0.06)
+			palette_overlay.color = Color(1.0, 0.92, 0.8, 0.08)
 			blind_black.visible = false; blind_label.visible = false
 			blind_cursor.visible = false
 
@@ -1575,9 +1646,9 @@ func _make_wind_vanes() -> void:
 	var vane2_pos: Vector2 = data["wind_vane_2"]["pos"] as Vector2
 	var treasure: Vector2 = data["treasure_pos"] as Vector2
 
-	# 计算正确角度
+	# 计算正确角度：左边自动算，右边固定8点钟（150° CW = 5π/6）
 	_correct_angle_1 = (treasure - vane1_pos).angle()
-	_correct_angle_2 = (treasure - vane2_pos).angle()
+	_correct_angle_2 = 5.0 * PI / 6.0  # 8点钟方向
 
 	_make_single_vane(vane1_pos, 1, _correct_angle_1)
 	_make_single_vane(vane2_pos, 2, _correct_angle_2)
@@ -1592,41 +1663,52 @@ func _make_single_vane(pos: Vector2, vane_idx: int, hint_angle: float) -> void:
 	add_child(vane)
 	_wind_vane_nodes.append(vane)
 
-	# PNG 柱子：地面以下 80px + 地面以上 336px
-	var tex: Texture2D = WIND_VANE_TEX_1 if vane_idx == 1 else WIND_VANE_TEX_2
+	# 风向标PNG：去灰底 + 底部贴地 + 正向显示
+	var tex: Texture2D = WIND_VANE_TEX_LEFT if vane_idx == 1 else WIND_VANE_TEX_RIGHT
 	var pole_sprite := Sprite2D.new()
 	pole_sprite.texture = tex
 	pole_sprite.centered = false
-	# PNG 80x416，GROUND_Y=80 在图中；锚点放在柱顶中心
-	pole_sprite.position = Vector2(-tex.get_width() * 0.5, -tex.get_height() + 80)  # 80 是图中地面位置
+	# 风向标加高加粗，与小房子协调 (从 300 增到 380)
+	var target_h: float = 380.0
+	var scale_v: float = target_h / float(tex.get_height())
+	var w: float = float(tex.get_width()) * scale_v
+	pole_sprite.scale = Vector2(scale_v, scale_v)
+	pole_sprite.position = Vector2(-w * 0.5, -target_h)  # 底部贴地
 	pole_sprite.texture_filter = TEXTURE_FILTER_LINEAR
+	# 去灰底shader（PNG背景是浅灰色，RGB≈230）
+	var mat := ShaderMaterial.new()
+	mat.shader = _get_gray_bg_shader()
+	pole_sprite.material = mat
+	# ── 视觉统一：暖色调融入水彩远山 (降低金属冷光) ──
+	pole_sprite.modulate = Color(1.05, 0.92, 0.74, 1.0)
 	vane.add_child(pole_sprite)
 
-	# 风向标头部箭头（可旋转，初始指向 hint_angle）
-	var arrow := Polygon2D.new()
-	var arr_len: float = 36.0
-	var arr_w: float = 9.0
-	arrow.polygon = PackedVector2Array([
-		Vector2(arr_len * 0.4, 0),     # 后端
-		Vector2(arr_len * 0.4, -arr_w * 0.5),
-		Vector2(arr_len, -arr_w * 0.5),  # 箭头尖端
-		Vector2(arr_len, 0),
-		Vector2(arr_len, arr_w * 0.5),
-		Vector2(arr_len * 0.4, arr_w * 0.5),
-		Vector2(arr_len * 0.4, arr_w),
-		Vector2(arr_len * 0.4 + 6, 0),   # 缺口
-		Vector2(arr_len * 0.4, -arr_w),
+	# ── 底部柔影：让风向标"坐"在地面上 ──
+	var shadow := Polygon2D.new()
+	var sw: float = w * 0.65
+	shadow.polygon = PackedVector2Array([
+		Vector2(-sw * 0.5, 0), Vector2(sw * 0.5, 0),
+		Vector2(sw * 0.35, 4), Vector2(-sw * 0.35, 4)
 	])
-	arrow.position = Vector2(0, -tex.get_height() + 60)  # 顶部上方
-	arrow.rotation = hint_angle
-	arrow.color = Color("#ff6644")
-	arrow.name = "Arrow"
-	vane.add_child(arrow)
+	shadow.color = Color(0, 0, 0, 0.16)
+	shadow.z_index = 9
+	vane.add_child(shadow)
+
+	# 激光方向指针（小细线，在杆顶）
+	var pointer := Line2D.new()
+	pointer.width = 3.0
+	pointer.default_color = Color("#ff6644", 0.9)
+	pointer.add_point(Vector2.ZERO)
+	pointer.add_point(Vector2(34, 0))  # 向右延伸，rotation控制方向
+	pointer.position = Vector2(0, -target_h - 8)
+	pointer.rotation = hint_angle
+	pointer.name = "LaserPointer"
+	vane.add_child(pointer)
 
 	# 标签
 	var label := Label.new()
 	label.text = "风向标%d" % vane_idx
-	label.position = Vector2(-30, -tex.get_height() + 30)
+	label.position = Vector2(-30, -target_h - 26)
 	label.add_theme_font_size_override("font_size", 14)
 	label.add_theme_color_override("font_color", Color("#ffe8a0"))
 	vane.add_child(label)
@@ -1742,6 +1824,12 @@ func _update_laser_beam(vane_idx: int) -> void:
 	var end := Vector2(cos(angle), sin(angle)) * LASER_BEAM_LENGTH
 	beam.set_point_position(0, Vector2.ZERO)
 	beam.set_point_position(1, end)
+	# 同步旋转风向标杆顶指针
+	if vane_idx <= _wind_vane_nodes.size():
+		var vane := _wind_vane_nodes[vane_idx - 1]
+		var ptr: Line2D = vane.get_node_or_null("LaserPointer") as Line2D
+		if ptr != null:
+			ptr.rotation = angle
 
 # ── 旋转激光装置 ──
 func rotate_placed_laser(vane_idx: int, delta_angle: float) -> void:
@@ -1769,37 +1857,43 @@ func is_laser_placed(vane_idx: int) -> bool:
 func _check_treasure_alignment() -> void:
 	if not _placed_lasers.has(1) or not _placed_lasers.has(2):
 		return
-	
-	var vane1_pos: Vector2 = GameData.LASER_SYSTEM["wind_vane_1"]["pos"] as Vector2
-	var vane2_pos: Vector2 = GameData.LASER_SYSTEM["wind_vane_2"]["pos"] as Vector2
-	var treasure: Vector2 = GameData.LASER_SYSTEM["treasure_pos"] as Vector2
-	
-	# 检查每条光束是否穿过 treasure_pos 附近
+
 	var a1: float = _laser_angles[1]
 	var a2: float = _laser_angles[2]
-	
-	# 光束1: vane1_pos + t*(cos(a1), sin(a1)) 是否经过treasure
-	var hit1 := _point_on_ray(vane1_pos, a1, treasure, 80.0)
-	var hit2 := _point_on_ray(vane2_pos, a2, treasure, 80.0)
-	
+
+	# 角度匹配检测（右边固定8点钟）
+	var tol: float = 0.04  # ~2.3°
+	var ok1 := _angle_near(a1, _correct_angle_1, tol)
+	var ok2 := _angle_near(a2, _correct_angle_2, tol)
+
 	var mark: Label = _treasure_marker.get_node_or_null("TreasureLabel") as Label
 	if mark == null:
 		return
-	
-	if hit1 and hit2:
+
+	if ok1 and ok2:
 		mark.modulate.a = 1.0
 		mark.add_theme_color_override("font_color", Color("#ffd700", 1.0))
 		if not _treasure_marker.has_meta("solved"):
 			_treasure_marker.set_meta("solved", true)
 			hint_updated.emit("✨ 两束激光在宝藏位置交汇！去那里看看吧！")
 	else:
-		# 距离越近，标记越亮
-		var d1 := _ray_point_dist(vane1_pos, a1, treasure)
-		var d2 := _ray_point_dist(vane2_pos, a2, treasure)
+		# 角度偏差越大，标记越亮
+		var d1 := _angle_diff(a1, _correct_angle_1)
+		var d2 := _angle_diff(a2, _correct_angle_2)
 		var max_d := maxf(d1, d2)
-		var alpha := clampf(1.0 - max_d / 300.0, 0.0, 0.4)
+		var alpha := clampf(1.0 - max_d / 0.8, 0.0, 0.4)
 		mark.modulate.a = alpha
 		mark.add_theme_color_override("font_color", Color("#ffd700", alpha * 0.6))
+
+# 计算两个角度的最短差（弧度，范围 [0, π]）
+func _angle_diff(a: float, b: float) -> float:
+	var d := fmod(abs(a - b), TAU)
+	if d > PI:
+		d = TAU - d
+	return d
+
+func _angle_near(a: float, target: float, tol: float) -> bool:
+	return _angle_diff(a, target) < tol
 
 func _point_on_ray(origin: Vector2, angle: float, point: Vector2, tolerance: float) -> bool:
 	return _ray_point_dist(origin, angle, point) < tolerance
