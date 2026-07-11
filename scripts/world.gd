@@ -36,6 +36,10 @@ func is_drop_through_tile(tile_pos: Vector2i) -> bool:
 			return true
 	return false
 
+func is_drop_through_at(point: Vector2) -> bool:
+	var tile_pos := Vector2i(floori(point.x / TILE_SIZE), floori(point.y / TILE_SIZE))
+	return is_drop_through_tile(tile_pos) or is_drop_through_tile(tile_pos + Vector2i(0, 1))
+
 func get_ladder_at_point(_p: Vector2) -> Area2D:
 	return null
 

@@ -96,20 +96,18 @@ func _physics_process(delta: float) -> void:
 	# 也支持 jump（S）+drop 组合 — 但 jump 优先级更高
 	if down_held and is_on_floor() and _drop_cooldown <= 0.0:
 		# 检查玩家脚下是否有可穿透地板
-		var world_node := get_tree().get_first_node_in_group("world") as MindscapeWorld
+		var world_node := get_tree().get_first_node_in_group("world")
 		if world_node != null:
-			var feet_x := floori(global_position.x / 16.0)
-			var feet_y := floori((global_position.y + 31) / 16.0)
-			# 玩家2tile宽，检测脚下多个位置
-			# 同时检测 feet_y 和 feet_y+1（浮点精度可能导致差1行）
 			var on_drop := false
-			for dx in range(-1, 2):
-				if world_node.is_drop_through_tile(Vector2i(feet_x + dx, feet_y)):
-					on_drop = true
-					break
-				if world_node.is_drop_through_tile(Vector2i(feet_x + dx, feet_y + 1)):
-					on_drop = true
-					break
+			var feet_point := global_position + Vector2(0, 31)
+			if world_node.has_method("is_drop_through_at"):
+				on_drop = bool(world_node.call("is_drop_through_at", feet_point))
+			elif world_node.has_method("is_drop_through_tile"):
+				var feet_tile := Vector2i(floori(feet_point.x / 16.0), floori(feet_point.y / 16.0))
+				for dx in range(-1, 2):
+					if bool(world_node.call("is_drop_through_tile", feet_tile + Vector2i(dx, 0))) or bool(world_node.call("is_drop_through_tile", feet_tile + Vector2i(dx, 1))):
+						on_drop = true
+						break
 			if on_drop:
 				# 暂时禁用穿透地板碰撞层 → drop tile 对玩家透明
 				set_collision_mask_value(2, false)
