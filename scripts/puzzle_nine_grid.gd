@@ -17,18 +17,8 @@ var challenge_active: bool = false
 const CORRECT_LAYOUT: Array = [1, 2, 3, 4, 5, 6, 7, 8, 0]
 var current_layout: Array = []
 
-# ── 预加载切片图片纹理 ──
-const TILE_TEXTURES: Array = [
-	preload("res://assets/grid_tiles/tile_0.png"),   # 空位
-	preload("res://assets/grid_tiles/tile_1.png"),
-	preload("res://assets/grid_tiles/tile_2.png"),
-	preload("res://assets/grid_tiles/tile_3.png"),
-	preload("res://assets/grid_tiles/tile_4.png"),
-	preload("res://assets/grid_tiles/tile_5.png"),
-	preload("res://assets/grid_tiles/tile_6.png"),
-	preload("res://assets/grid_tiles/tile_7.png"),
-	preload("res://assets/grid_tiles/tile_8.png"),
-]
+# ── 预加载切片图片纹理（用 var，Godot4 const 数组不支持 preload）──
+var TILE_TEXTURES: Array = []
 const FULL_IMAGE := preload("res://assets/grid_tiles/full.png")  # 完整图（抑郁模式展示）
 
 const CELL_SIZE := 50  # 扩大格子以显示清楚图片
@@ -42,8 +32,29 @@ var depression_timer: float = 0.0  # 抑郁模式间隔计时
 const DEPRESSION_SHOW_DURATION: float = 5.0   # 展示 5 秒
 const DEPRESSION_HIDE_DURATION: float = 10.0  # 隐藏 10 秒
 var depression_fullscreen_visible: bool = false
+var _was_in_depression: bool = false  # 上一帧是否在抑郁视角
+
+# ── 同时按3键驱散机制 ──
+var _keys_held: Dictionary = {}        # 当前按住的键集合 {keycode: true}
+var _dismiss_hint_label: Label = null  # 显示"挥手让负面回忆驱散"的标签
+
+# ── 闪动参数 ──
+var _flash_timer: float = 0.0
+const FLASH_PERIOD: float = 1.2       # 每隔 1.2 秒切换一次显隐（慢闪，容易看清）
 
 func _ready() -> void:
+	# 初始化纹理数组（必须在 _ready 里，不能在 const 数组中 preload）
+	TILE_TEXTURES = [
+		preload("res://assets/grid_tiles/tile_0.png"),
+		preload("res://assets/grid_tiles/tile_1.png"),
+		preload("res://assets/grid_tiles/tile_2.png"),
+		preload("res://assets/grid_tiles/tile_3.png"),
+		preload("res://assets/grid_tiles/tile_4.png"),
+		preload("res://assets/grid_tiles/tile_5.png"),
+		preload("res://assets/grid_tiles/tile_6.png"),
+		preload("res://assets/grid_tiles/tile_7.png"),
+		preload("res://assets/grid_tiles/tile_8.png"),
+	]
 	body_entered.connect(_on_body_entered)
 	body_exited.connect(_on_body_exited)
 	var shape := CollisionShape2D.new()
@@ -53,7 +64,9 @@ func _ready() -> void:
 	shape.position = Vector2(0, -30)
 	add_child(shape)
 	_solvable_shuffle()
-	_make_grid()
+	# 注意：_validate_layout 必须在 _make_grid 之后调用，否则 grid_container 为 null
+	_make_grid()       # 先建格子（初始化 grid_container）
+	_validate_layout() # 再验证/修复布局（此时 grid_container 已就绪）
 	_make_hint()
 	_make_fullscreen_overlay()
 
@@ -86,6 +99,25 @@ func _is_correct() -> bool:
 		if current_layout[i] != CORRECT_LAYOUT[i]:
 			return false
 	return true
+
+# ── 安全检查：确保布局中有且仅有一个 0（空格）──
+func _validate_layout() -> void:
+	var zero_count := 0
+	for v in current_layout:
+		if v == 0:
+			zero_count += 1
+	if zero_count != 1:
+		# 布局损坏，从正确答案重新生成可解布局
+		current_layout = CORRECT_LAYOUT.duplicate()
+		_solvable_shuffle()
+		zero_count = 0
+		for v in current_layout:
+			if v == 0:
+				zero_count += 1
+		if zero_count != 1:
+			# 极端情况：直接用正确答案，但保证有一个空格
+			current_layout = CORRECT_LAYOUT.duplicate()
+		_make_tile_visuals()
 
 func _get_neighbors(idx: int) -> PackedInt32Array:
 	var result: PackedInt32Array = []
@@ -149,7 +181,8 @@ func _make_fullscreen_overlay() -> void:
 
 	var fade_bg := ColorRect.new()
 	fade_bg.name = "FadeBG"
-	fade_bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	fade_bg.position = Vector2(0, 0)
+	fade_bg.size = Vector2(1280, 720)
 	fade_bg.color = Color(0, 0, 0, 0.88)
 	fullscreen_overlay.add_child(fade_bg)
 	
@@ -207,9 +240,9 @@ func _make_fullscreen_overlay() -> void:
 		pos_label.add_theme_color_override("font_color", Color("#7777aa", 0.6))
 		fullscreen_overlay.add_child(pos_label)
 	
-	# 底部提示
+	# 底部提示（静态说明）
 	var hint := Label.new()
-	hint.text = "记忆一段时间后会消失，稍后再次出现"
+	hint.text = "记忆一段时间后会消失，稍后再次出现 · 同时按住任意 3 个键可驱散"
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint.position = Vector2(240, 650)
 	hint.size = Vector2(800, 30)
@@ -217,15 +250,24 @@ func _make_fullscreen_overlay() -> void:
 	hint.add_theme_color_override("font_color", Color("#9999bb"))
 	fullscreen_overlay.add_child(hint)
 
+	# 驱散成功提示（初始隐藏）
+	_dismiss_hint_label = Label.new()
+	_dismiss_hint_label.text = "✦ 挥手让负面回忆驱散 ✦"
+	_dismiss_hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_dismiss_hint_label.position = Vector2(240, 600)
+	_dismiss_hint_label.size = Vector2(800, 40)
+	_dismiss_hint_label.add_theme_font_size_override("font_size", 28)
+	_dismiss_hint_label.add_theme_color_override("font_color", Color("#a8d8ff"))
+	_dismiss_hint_label.modulate.a = 0.0
+	fullscreen_overlay.add_child(_dismiss_hint_label)
+
 func _make_tile_visuals() -> void:
-	# 清除旧的可视节点（Sprite2D 图块和空位 ColorRect）
+	# 立即删除旧节点（free，而非queue_free，避免同帧出现"鬼影"复制）
 	for ch in grid_container.get_children():
-		if ch is Sprite2D and ch.name.begins_with("TileSprite_"):
-			ch.queue_free()
-		elif ch is ColorRect and ch.name.begins_with("EmptySlot_"):
-			ch.queue_free()
-		elif ch is Label and ch.name.begins_with("EmptyMark_"):
-			ch.queue_free()
+		var n: String = ch.name
+		if n.begins_with("TileSprite_") or n.begins_with("EmptySlot_") \
+				or n.begins_with("EmptyMark_"):
+			ch.free()
 	tile_nodes.clear()
 
 	for idx in range(9):
@@ -236,58 +278,28 @@ func _make_tile_visuals() -> void:
 		var cy: float = gy * CELL_SIZE - CELL_SIZE
 
 		if tile_num == 0:
-			# ── 空位：明显空白（深色底 + 亮色描边 + 大问号）──
+			# ── 空位：醒目深黑底 + 亮蓝边框（4条线，比其他格子明显不同）──
 			var ev := ColorRect.new()
 			ev.name = "EmptySlot_%d" % idx
-			ev.position = Vector2(cx - CELL_SIZE/2.0 + 2, cy - CELL_SIZE/2.0 + 2)
-			ev.size = Vector2(CELL_SIZE - 4, CELL_SIZE - 4)
-			ev.color = Color("#08080f")  # 接近纯黑，明显比图块深
+			ev.position = Vector2(cx - CELL_SIZE / 2.0 + 3, cy - CELL_SIZE / 2.0 + 3)
+			ev.size = Vector2(CELL_SIZE - 6, CELL_SIZE - 6)
+			ev.color = Color("#04040a")   # 比周围格子明显更暗
 			ev.z_index = 1
 			grid_container.add_child(ev)
-			# 描边（用第二个 ColorRect 当边框）
-			var border := ColorRect.new()
-			border.name = "EmptySlotBorder_%d" % idx
-			border.position = Vector2(cx - CELL_SIZE/2.0, cy - CELL_SIZE/2.0)
-			border.size = Vector2(CELL_SIZE, CELL_SIZE)
-			border.color = Color("#4a4a6a", 0.0)  # 透明
-			border.z_index = 0
-			# 用 StyleBoxFlat 不行（ColorRect 不支持），用4条细线模拟边框
-			var top := ColorRect.new()
-			top.position = Vector2(cx - CELL_SIZE/2.0, cy - CELL_SIZE/2.0)
-			top.size = Vector2(CELL_SIZE, 2)
-			top.color = Color("#5a78a0", 0.7)
-			top.name = "EmptyMark_%d_top" % idx
-			grid_container.add_child(top)
-			var bot := ColorRect.new()
-			bot.position = Vector2(cx - CELL_SIZE/2.0, cy + CELL_SIZE/2.0 - 2)
-			bot.size = Vector2(CELL_SIZE, 2)
-			bot.color = Color("#5a78a0", 0.7)
-			bot.name = "EmptyMark_%d_bot" % idx
-			grid_container.add_child(bot)
-			var left := ColorRect.new()
-			left.position = Vector2(cx - CELL_SIZE/2.0, cy - CELL_SIZE/2.0)
-			left.size = Vector2(2, CELL_SIZE)
-			left.color = Color("#5a78a0", 0.7)
-			left.name = "EmptyMark_%d_l" % idx
-			grid_container.add_child(left)
-			var right := ColorRect.new()
-			right.position = Vector2(cx + CELL_SIZE/2.0 - 2, cy - CELL_SIZE/2.0)
-			right.size = Vector2(2, CELL_SIZE)
-			right.color = Color("#5a78a0", 0.7)
-			right.name = "EmptyMark_%d_r" % idx
-			grid_container.add_child(right)
-			# 中央问号
-			var q := Label.new()
-			q.name = "EmptyMark_%d" % idx
-			q.text = "?"
-			q.position = Vector2(cx - 8, cy - 14)
-			q.size = Vector2(16, 24)
-			q.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			q.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-			q.add_theme_font_size_override("font_size", 22)
-			q.add_theme_color_override("font_color", Color("#7a9acf", 0.85))
-			q.z_index = 3
-			grid_container.add_child(q)
+			# 4条高亮边框线（EmptyMark_ 前缀，清除逻辑统一回收）
+			for line_data in [
+				["EmptyMark_%d_top" % idx, Vector2(cx - CELL_SIZE/2.0, cy - CELL_SIZE/2.0),         Vector2(CELL_SIZE, 3)],
+				["EmptyMark_%d_bot" % idx, Vector2(cx - CELL_SIZE/2.0, cy + CELL_SIZE/2.0 - 3),     Vector2(CELL_SIZE, 3)],
+				["EmptyMark_%d_l"   % idx, Vector2(cx - CELL_SIZE/2.0, cy - CELL_SIZE/2.0),          Vector2(3, CELL_SIZE)],
+				["EmptyMark_%d_r"   % idx, Vector2(cx + CELL_SIZE/2.0 - 3, cy - CELL_SIZE/2.0),     Vector2(3, CELL_SIZE)],
+			]:
+				var ln := ColorRect.new()
+				ln.name     = line_data[0]
+				ln.position = line_data[1]
+				ln.size     = line_data[2]
+				ln.color    = Color("#5ab4ff", 0.9)  # 明亮蓝色边框
+				ln.z_index  = 2
+				grid_container.add_child(ln)
 			tile_nodes.append(ev)
 			continue
 
@@ -302,7 +314,7 @@ func _make_tile_visuals() -> void:
 		tile.scale = Vector2(sc, sc)
 		tile.z_index = 2
 		tile.name = "TileSprite_%d" % idx
-		tile.texture_filter = TEXTURE_FILTER_LINEAR
+		tile.texture_filter = TEXTURE_FILTER_NEAREST  # pixel-perfect
 		grid_container.add_child(tile)
 		tile_nodes.append(tile)
 
@@ -328,21 +340,63 @@ func _on_body_exited(body: Node2D) -> void:
 func _input(event: InputEvent) -> void:
 	if not player_in_range or is_completed:
 		return
-	
+
 	# 启动拼图（E 键）
 	if event.is_action_pressed("interact"):
 		if not challenge_active:
 			_start_challenge()
 		get_viewport().set_input_as_handled()
 		return
-	
+
 	if not challenge_active:
 		return
-	
+
+	# ── 抑郁模式：同时按住3个及以上不同键驱散正确答案 ──
+	if depression_fullscreen_visible and event is InputEventKey:
+		var kcode: int = event.keycode
+		# 忽略修饰键本身
+		if kcode not in [KEY_SHIFT, KEY_CTRL, KEY_ALT, KEY_META, KEY_CAPSLOCK]:
+			if event.pressed and not event.echo:
+				_keys_held[kcode] = true
+			elif not event.pressed:
+				_keys_held.erase(kcode)
+			# 同时按住3个及以上键时驱散
+			if _keys_held.size() >= 3:
+				_dismiss_overlay_with_animation()
+				get_viewport().set_input_as_handled()
+				return
+
 	# ── 鼠标点击滑动方块 ──
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		_handle_mouse_click(event.position)
 		get_viewport().set_input_as_handled()
+
+
+## 驱散动画：淡出 overlay 并显示"挥手让负面回忆驱散"
+func _dismiss_overlay_with_animation() -> void:
+	depression_fullscreen_visible = false
+	# 重置间隔计时到隐藏周期（让下次出现等够 HIDE_DURATION）
+	depression_timer = 0.0
+	_keys_held.clear()
+	_flash_timer = 0.0
+
+	# 显示驱散提示
+	if _dismiss_hint_label != null and is_instance_valid(_dismiss_hint_label):
+		_dismiss_hint_label.modulate.a = 1.0
+
+	# 用 tween 做淡出效果
+	var tween := create_tween()
+	tween.tween_property(fullscreen_overlay, "modulate:a", 0.0, 0.5)
+	tween.tween_callback(func():
+		fullscreen_overlay.visible = false
+		fullscreen_overlay.modulate.a = 1.0
+	)
+
+	# 提示文字显示 2 秒后淡出
+	if _dismiss_hint_label != null and is_instance_valid(_dismiss_hint_label):
+		var tween2 := create_tween()
+		tween2.tween_interval(2.0)
+		tween2.tween_property(_dismiss_hint_label, "modulate:a", 0.0, 0.8)
 
 func _handle_mouse_click(screen_pos: Vector2) -> void:
 	if grid_container == null:
@@ -377,25 +431,44 @@ func _handle_mouse_click(screen_pos: Vector2) -> void:
 
 func _start_challenge() -> void:
 	challenge_active = true
-	fullscreen_overlay.visible = false
-	depression_timer = 0.0
-	depression_fullscreen_visible = false
 	hint_label.text = "点击方块滑动到空位"
 	hint_updated.emit("拼图启动！点击方块，把它们滑到正确位置。")
+	# 抑郁模式：立即弹出正确答案供记忆
+	if _get_view() == "depression":
+		fullscreen_overlay.visible = true
+		fullscreen_overlay.modulate.a = 1.0
+		depression_fullscreen_visible = true
+		depression_timer = 0.0
+		_flash_timer = 0.0
+	else:
+		fullscreen_overlay.visible = false
+		depression_timer = 0.0
+		depression_fullscreen_visible = false
 
 func _slide(from_idx: int) -> void:
 	var gap := current_layout.find(0)
+	if gap == -1:
+		_validate_layout()  # 布局损坏，修复
+		gap = current_layout.find(0)
+		if gap == -1:
+			return  # 无法修复，放弃
 	current_layout[gap] = current_layout[from_idx]
 	current_layout[from_idx] = 0
+	_validate_layout()  # 滑动后再次检查
 	_make_tile_visuals()
 	AudioManager.play_tone(440.0 + from_idx * 35, 0.1)
+	AudioManager.play_sfx("grid_slide")
 	if _is_correct():
 		_complete()
 
 func _complete() -> void:
 	is_completed = true
 	challenge_active = false
+	# 完成后永久关闭 overlay，不再出现
 	fullscreen_overlay.visible = false
+	fullscreen_overlay.modulate.a = 1.0
+	depression_fullscreen_visible = false
+	depression_timer = 0.0
 	hint_label.text = "✨ 获得激光装置2！"
 	hint_updated.emit("✨ 拼图完成！获得激光装置2！")
 	puzzle_completed.emit("laser_device_2")
@@ -406,28 +479,56 @@ func _complete() -> void:
 func _process(delta: float) -> void:
 	if is_completed or not challenge_active:
 		return
-	
-	if _get_view() == "depression":
+
+	var in_depression: bool = (_get_view() == "depression")
+
+	# 刚切入抑郁视角（上一帧不在）且拼图已激活 → 立即弹出答案
+	if in_depression and not _was_in_depression and not depression_fullscreen_visible:
+		fullscreen_overlay.visible = true
+		fullscreen_overlay.modulate.a = 1.0
+		depression_fullscreen_visible = true
+		depression_timer = 0.0
+		_flash_timer = 0.0
+	_was_in_depression = in_depression
+
+	if in_depression:
 		depression_timer += delta
-		
+
 		if depression_fullscreen_visible:
-			# 正在展示，等够展示时间后隐藏
+			# ── 闪动效果：overlay可见时每 FLASH_PERIOD 切换一次透明度 ──
+			_flash_timer += delta
+			if _flash_timer >= FLASH_PERIOD:
+				_flash_timer = 0.0
+				if fullscreen_overlay.modulate.a >= 1.0:
+					fullscreen_overlay.modulate.a = 0.35
+				else:
+					fullscreen_overlay.modulate.a = 1.0
+
+			# 等够展示时间后隐藏
 			if depression_timer >= DEPRESSION_SHOW_DURATION:
 				fullscreen_overlay.visible = false
+				fullscreen_overlay.modulate.a = 1.0
+				_flash_timer = 0.0
 				depression_fullscreen_visible = false
 				depression_timer = 0.0
+				_keys_held.clear()
 		else:
 			# 隐藏中，等够间隔后再次展示
 			if depression_timer >= DEPRESSION_HIDE_DURATION:
 				fullscreen_overlay.visible = true
+				fullscreen_overlay.modulate.a = 1.0
+				_flash_timer = 0.0
 				depression_fullscreen_visible = true
 				depression_timer = 0.0
-	else:
+				_keys_held.clear()
+	elif not in_depression:
 		# 非抑郁模式：确保全屏密码关掉
 		if fullscreen_overlay.visible:
 			fullscreen_overlay.visible = false
 		depression_timer = 0.0
 		depression_fullscreen_visible = false
+		_flash_timer = 0.0
+		_keys_held.clear()
 
 func _get_view() -> String:
 	for node in get_tree().get_nodes_in_group("world"):

@@ -64,7 +64,10 @@ var paint_canvas: Control = null
 var check_icon: Label = null
 var status_label: Label = null
 var button_glows: Array[ColorRect] = []
+var button_tops: Array[ColorRect] = []   # 每个按钮的顶面（踩下时下移）
 var step_dots: Array[ColorRect] = []
+var reset_zone: Area2D = null
+var near_reset: bool = false
 
 
 # ═══════════════ 骨骼姿势（6种舞步，方向用左右脚不对称表现）═══════════════
@@ -154,6 +157,7 @@ func _ready() -> void:
 	_build_painting()
 	_build_ground_buttons()
 	_build_status_ui()
+	_build_reset_pedestal()
 	# 一创建就开始循环示范动画，不需要走近触发
 	if not is_completed and not is_demo_playing and not is_waiting_input:
 		_start_demo()
@@ -236,6 +240,7 @@ func _build_ground_buttons() -> void:
 		top.size = Vector2(BTN_W, BTN_H)
 		top.color = MOVE_COLORS[i]; top.color.a = 0.25
 		body.add_child(top)
+		button_tops.append(top)
 		add_child(body)
 
 		# 高亮层
@@ -248,7 +253,7 @@ func _build_ground_buttons() -> void:
 		add_child(glow)
 		button_glows.append(glow)
 
-		# 感应区
+		# 感应区（缩小：只覆盖按钮正上方，防止空中路过误触）
 		var sensor := Area2D.new()
 		sensor.position = Vector2(bx, BTN_Y+BTN_H/2)
 		sensor.collision_layer = 0
@@ -256,15 +261,16 @@ func _build_ground_buttons() -> void:
 		sensor.set_meta("btn_idx", i)
 		var sshape := CollisionShape2D.new()
 		var srect := RectangleShape2D.new()
-		srect.size = Vector2(BTN_W+12, BTN_H+20)
+		# 宽度缩小到 BTN_W+4（去掉多余边距），高度缩小到 BTN_H+6（只检测站立）
+		srect.size = Vector2(BTN_W+4, BTN_H+6)
 		sshape.shape = srect
 		sensor.add_child(sshape)
+		var btn_idx_cap := i
+		var sensor_cap := sensor
 		sensor.body_entered.connect(func(b: Node2D):
-			if b.is_in_group("player") and not is_completed:
-				_on_button_stepped(i))
+			_on_sensor_entered(b, btn_idx_cap, sensor_cap))
 		sensor.body_exited.connect(func(b: Node2D):
-			if b.is_in_group("player") and _last_stepped == i:
-				_on_button_left())
+			_on_sensor_exited(b, btn_idx_cap))
 		add_child(sensor)
 
 
@@ -289,6 +295,16 @@ func _build_status_ui() -> void:
 	status_label.add_theme_font_size_override("font_size", 13)
 	status_label.add_theme_color_override("font_color", Color("#887766"))
 	add_child(status_label)
+
+	# 重置提示
+	var reset_tip := Label.new()
+	reset_tip.text = "旁边重置台：靠近按E重置当前输入"
+	reset_tip.position = Vector2(-200, BTN_Y+70)
+	reset_tip.size = Vector2(400, 20)
+	reset_tip.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	reset_tip.add_theme_font_size_override("font_size", 11)
+	reset_tip.add_theme_color_override("font_color", Color("#aaa080"))
+	add_child(reset_tip)
 
 
 # ═══════════════ 画布绘制 ═══════════════
@@ -366,9 +382,15 @@ func _on_body_exited(body: Node2D) -> void:
 
 
 func _input(event: InputEvent) -> void:
-	if not player_in_range or is_completed: return
+	if is_completed: return
 	if event.is_action_pressed("interact"):
-		if not is_waiting_input:
+		# 重置台优先
+		if near_reset:
+			_reset_sequence()
+			get_viewport().set_input_as_handled()
+			return
+		# 原有逻辑：靠近谜题后按E开始输入
+		if player_in_range and not is_waiting_input:
 			_stop_demo_start_input()
 
 
@@ -379,7 +401,7 @@ func _on_button_stepped(idx: int) -> void:
 	# 还没按E开始输入？只高亮，不记录
 	if not is_waiting_input:
 		_highlight_button(idx)
-		status_label.text = "按 [E] 开始踩按钮 · 示范轮数 %d" % (demo_complete_count + 1)
+		status_label.text = "按 [E] 开始踩按钮"
 		return
 	# 输入模式：记录踩踏，demo 同时在画布上继续循环
 	_highlight_button(idx)
@@ -393,6 +415,55 @@ func _on_button_stepped(idx: int) -> void:
 func _on_button_left() -> void:
 	for i in range(button_glows.size()):
 		button_glows[i].color.a = 0.0
+
+func _build_reset_pedestal() -> void:
+	# 在按钮区右侧放一个明显的重置台
+	reset_zone = Area2D.new()
+	reset_zone.position = Vector2(BTN_SPACING * 3.2, BTN_Y)
+	reset_zone.collision_layer = 0
+	reset_zone.collision_mask = 1
+	var sshape := CollisionShape2D.new()
+	var srect := RectangleShape2D.new()
+	srect.size = Vector2(120, 90)
+	sshape.shape = srect
+	reset_zone.add_child(sshape)
+
+	# 台面视觉
+	var base := ColorRect.new()
+	base.position = Vector2(-60, -10)
+	base.size = Vector2(120, 14)
+	base.color = Color("#3a3a4a")
+	reset_zone.add_child(base)
+	var top := ColorRect.new()
+	top.position = Vector2(-60, -14)
+	top.size = Vector2(120, 4)
+	top.color = Color("#5a5a6a")
+	reset_zone.add_child(top)
+	var label := Label.new()
+	label.text = "重置"
+	label.position = Vector2(-22, -48)
+	label.add_theme_font_size_override("font_size", 16)
+	label.add_theme_color_override("font_color", Color("#ffaa44"))
+	reset_zone.add_child(label)
+
+	reset_zone.body_entered.connect(func(b: Node2D):
+		if b.is_in_group("player"):
+			near_reset = true
+	)
+	reset_zone.body_exited.connect(func(b: Node2D):
+		if b.is_in_group("player"):
+			near_reset = false
+	)
+	add_child(reset_zone)
+
+func _reset_sequence() -> void:
+	step_buffer.clear()
+	_last_stepped = -1
+	for g in button_glows: g.color.a = 0.0
+	_update_progress_dots()
+	paint_canvas.queue_redraw()
+	status_label.text = "已重置 · 重新开始踩按钮"
+	status_label.add_theme_color_override("font_color", Color("#ffe8a0"))
 
 func _highlight_button(idx: int) -> void:
 	for i in range(button_glows.size()):
@@ -447,11 +518,7 @@ func _check_answer() -> void:
 		status_label.text = "不对……注意看画上的顺序！"
 		status_label.add_theme_color_override("font_color", Color("#ff6666"))
 		hint_updated.emit("舞步不对，重新尝试……")
-		step_buffer.clear()
-		_last_stepped = -1
-		for g in button_glows: g.color.a = 0.0
-		_update_progress_dots()
-		paint_canvas.queue_redraw()
+		_reset_sequence()
 		get_tree().create_timer(0.6).timeout.connect(func():
 			if not is_completed and is_waiting_input:
 				status_label.text = "踩按钮！（%d步）· 对照画上顺序" % ANSWER_LEN
@@ -495,8 +562,9 @@ func update_on_view_change(view: String) -> void:
 			status_label.text = "按 [E] 开始踩按钮 · 先看看舞步示范"
 			status_label.add_theme_color_override("font_color", Color("#ffe8a0"))
 		else:
-			status_label.text = "需要自闭症/抑郁视角"
-			status_label.add_theme_color_override("font_color", Color("#887766"))
+			# 任何模式都能踩，但舞蹈只在自闭/抑郁视角可见
+			status_label.text = "按 [E] 开始踩按钮（切换视角可看到舞步示范）"
+			status_label.add_theme_color_override("font_color", Color("#ffe8a0"))
 
 func _sync_initial_view() -> void:
 	var main = get_tree().get_first_node_in_group("main")
@@ -551,3 +619,30 @@ func _get_player() -> Node2D:
 
 func is_solved() -> bool:
 	return is_completed
+
+# ── 感应区辅助方法（避免嵌套 lambda 解析问题）──
+func _on_sensor_entered(b: Node2D, btn_idx: int, sensor: Area2D) -> void:
+	if not b.is_in_group("player") or is_completed:
+		return
+	# 立即凹陷视觉
+	if btn_idx < button_tops.size() and is_instance_valid(button_tops[btn_idx]):
+		button_tops[btn_idx].position.y = 2.0
+		button_tops[btn_idx].color.a = 0.55
+	if btn_idx < button_glows.size() and is_instance_valid(button_glows[btn_idx]):
+		button_glows[btn_idx].color.a = 0.6
+	call_deferred("_on_button_stepped_deferred", btn_idx)
+
+func _on_button_stepped_deferred(btn_idx: int) -> void:
+	_on_button_stepped(btn_idx)
+
+func _on_sensor_exited(b: Node2D, btn_idx: int) -> void:
+	if not b.is_in_group("player"):
+		return
+	# 恢复视觉
+	if btn_idx < button_tops.size() and is_instance_valid(button_tops[btn_idx]):
+		button_tops[btn_idx].position.y = 0.0
+		button_tops[btn_idx].color.a = 0.25
+	if btn_idx < button_glows.size() and is_instance_valid(button_glows[btn_idx]):
+		button_glows[btn_idx].color.a = 0.0
+	if _last_stepped == btn_idx:
+		_on_button_left()

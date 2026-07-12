@@ -40,9 +40,9 @@ const OBJECTS: Array[Dictionary] = [
 		"correct": 0, "color_a": Color("#77aa66"), "color_b": Color("#cc9966"), "color_c": Color("#9966cc"),
 	},
 	{
-		"id": "clock", "name": "时钟", "states": ["快", "慢", "准确"],
-		"views": {"normal": 2, "adhd": 1, "depression": 1, "autism": 0, "blind": 0},
-		"correct": 0, "color_a": Color("#ffcc00"), "color_b": Color("#aa8800"), "color_c": Color("#ffee66"),
+		"id": "clock", "name": "时钟", "states": ["12点整", "3点半", "8点"],
+		"views": {"normal": 2, "adhd": 1, "depression": 2, "autism": 0, "blind": 0},
+		"correct": 0, "color_a": Color("#3a6aaa"), "color_b": Color("#ffcc00"), "color_c": Color("#ffee66"),
 	},
 	{
 		"id": "window_obj", "name": "窗户", "states": ["打开", "关闭", "半开"],
@@ -98,11 +98,12 @@ func _ready() -> void:
 	body_entered.connect(_on_body_entered)
 	body_exited.connect(_on_body_exited)
 
+	# 碰撞区覆盖整个房子贴图（宽360×高260，向下偏移让底部贴地）
 	var shape := CollisionShape2D.new()
 	var rect := RectangleShape2D.new()
-	rect.size = Vector2(160, 100)
+	rect.size = Vector2(380, 280)
 	shape.shape = rect
-	shape.position = Vector2(0, 20)
+	shape.position = Vector2(0, -20)
 	add_child(shape)
 
 	for i in range(OBJECTS.size()):
@@ -124,15 +125,16 @@ func _make_exterior() -> void:
 	exterior.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	if texture != null:
 		var texture_size := texture.get_size()
-		var scale_factor := minf(180.0 / texture_size.x, 130.0 / texture_size.y)
+		# 扩大一倍：原来 180×130，现在 360×260
+		var scale_factor := minf(360.0 / texture_size.x, 260.0 / texture_size.y)
 		exterior.scale = Vector2(scale_factor, scale_factor)
-		_align_exterior_base(exterior, texture.get_image(), 30.0)
+		_align_exterior_base(exterior, texture.get_image(), 50.0)
 	add_child(exterior)
 
 	var title := Label.new()
 	title.text = "[ 找不同密室 ]"
-	title.position = Vector2(-70, -112)
-	title.size = Vector2(140, 24)
+	title.position = Vector2(-80, -220)
+	title.size = Vector2(160, 24)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.add_theme_font_size_override("font_size", 14)
 	title.add_theme_color_override("font_color", Color("#d4c4a4"))
@@ -140,7 +142,7 @@ func _make_exterior() -> void:
 
 	exterior_label = Label.new()
 	exterior_label.text = "按 [E] 进入密室"
-	exterior_label.position = Vector2(-50, 58)
+	exterior_label.position = Vector2(-60, 80)
 	exterior_label.add_theme_font_size_override("font_size", 12)
 	exterior_label.add_theme_color_override("font_color", Color("#ffe8a0"))
 	add_child(exterior_label)
@@ -168,16 +170,35 @@ func _align_exterior_base(sprite: Sprite2D, image: Image, target_y: float) -> vo
 # ════════════════════════════════════════════════════════════
 
 func _make_room_ui() -> void:
-	room_overlay = CanvasLayer.new()
-	room_overlay.layer = 100
-	room_overlay.visible = false
-	add_child(room_overlay)
+	# 注意：room_overlay 不在这里创建，改为在 _open_room 时动态创建并挂到 root
+	# 这样 CanvasLayer 不会受世界相机偏移影响，点击坐标才准确
+	pass
 
-	# 半透明背景
+
+func _build_room_overlay() -> void:
+	if room_overlay != null and is_instance_valid(room_overlay):
+		room_overlay.queue_free()
+		room_overlay = null
+	perspective_btns.clear()
+	obj_zones.clear()
+	obj_visuals.clear()
+	obj_state_labels.clear()
+	obj_view_labels.clear()
+	progress_label = null
+	mode_hint_label = null
+
+	room_overlay = CanvasLayer.new()
+	room_overlay.name = "FindDiffOverlay"
+	room_overlay.layer = 100
+	# 必须挂到场景根节点，Area2D子节点的CanvasLayer坐标会被世界相机偏移
+	get_tree().root.add_child(room_overlay)
+
+	# 半透明背景（PASS 让点击穿透到面板和按钮）
 	var shade := ColorRect.new()
 	shade.anchor_right = 1.0
 	shade.anchor_bottom = 1.0
 	shade.color = Color(0, 0, 0, 0.72)
+	shade.mouse_filter = Control.MOUSE_FILTER_PASS
 	shade.gui_input.connect(_on_shade_input)
 	room_overlay.add_child(shade)
 
@@ -209,14 +230,20 @@ func _make_room_ui() -> void:
 
 	# 说明
 	var desc := Label.new()
-	desc.text = "每个视角看到的物体状态不一样。对比各视角，相同状态最多的是正确答案。"
+	desc.text = "每个视角看到的物体状态不一样。退出后切换视角再进入，对比差异找到正确答案。"
 	desc.position = Vector2(20, 36)
 	desc.add_theme_font_size_override("font_size", 11)
 	desc.add_theme_color_override("font_color", Color("#998877"))
 	panel.add_child(desc)
 
-	# ── 5个视角按钮 ──
-	_make_perspective_btns(panel)
+	# ── 当前视角标识（只读，提示玩家去外面切换） ──
+	var cur_persp := PERSPECTIVES[selected_perspective]
+	var view_badge := Label.new()
+	view_badge.text = "当前视角：%s　（退出后按 Q/R/TAB 切换）" % cur_persp["label"]
+	view_badge.position = Vector2(20, 56)
+	view_badge.add_theme_font_size_override("font_size", 12)
+	view_badge.add_theme_color_override("font_color", cur_persp["color"])
+	panel.add_child(view_badge)
 
 	# ── 5个物体 ──
 	_make_objects(panel)
@@ -233,22 +260,27 @@ func _make_room_ui() -> void:
 	mode_hint_label.position = Vector2(280, OH - 30)
 	mode_hint_label.add_theme_font_size_override("font_size", 13)
 	mode_hint_label.add_theme_color_override("font_color", Color("#88cc88"))
-	mode_hint_label.text = "✓ 普通视角 — 点击物体切换状态"
+	if cur_persp["id"] == "normal":
+		mode_hint_label.text = "普通视角 — 点击物体切换状态作为你的答案"
+	else:
+		mode_hint_label.text = "%s视角 — 仅观察，退出后切换普通视角来作答" % cur_persp["label"]
+	mode_hint_label.add_theme_color_override("font_color", cur_persp["color"])
 	panel.add_child(mode_hint_label)
 
-	# 退出按钮
+	# 退出按钮（加大尺寸，确保可点击）
 	var exit_btn := Button.new()
-	exit_btn.text = "✕ 退出"
-	exit_btn.position = Vector2(OW - 80, 10)
-	exit_btn.size = Vector2(60, 28)
+	exit_btn.text = "× 退出"
+	exit_btn.position = Vector2(OW - 110, 8)
+	exit_btn.size = Vector2(100, 38)
 	var es := StyleBoxFlat.new()
-	es.bg_color = Color("#884444"); es.set_corner_radius_all(5)
+	es.bg_color = Color("#884444"); es.set_corner_radius_all(6)
 	exit_btn.add_theme_stylebox_override("normal", es)
 	var esh := StyleBoxFlat.new()
-	esh.bg_color = Color("#aa5555"); esh.set_corner_radius_all(5)
+	esh.bg_color = Color("#bb4444"); esh.set_corner_radius_all(6)
 	exit_btn.add_theme_stylebox_override("hover", esh)
 	exit_btn.add_theme_color_override("font_color", Color.WHITE)
-	exit_btn.add_theme_font_size_override("font_size", 13)
+	exit_btn.add_theme_font_size_override("font_size", 15)
+	exit_btn.mouse_filter = Control.MOUSE_FILTER_STOP
 	exit_btn.pressed.connect(_on_exit)
 	panel.add_child(exit_btn)
 
@@ -430,11 +462,20 @@ func _make_one_object(panel: Panel, idx: int) -> void:
 	nl.add_theme_color_override("font_color", Color("#ccaa88"))
 	panel.add_child(nl)
 
-	# 可点击区域
+	# 物体绘制容器（先加，让 zone 覆盖在上层）
+	var vis := Control.new()
+	vis.position = bp + Vector2(0, 6)
+	vis.size = Vector2(ow, 110)
+	vis.mouse_filter = Control.MOUSE_FILTER_PASS
+	panel.add_child(vis)
+	obj_visuals.append(vis)
+
+	# 可点击区域（后加，确保在最上层接收所有鼠标事件）
 	var zone := ColorRect.new()
 	zone.position = bp + Vector2(0, 2)
 	zone.size = Vector2(ow, 120)
 	zone.color = Color(1, 1, 1, 0.001)
+	zone.mouse_filter = Control.MOUSE_FILTER_STOP
 	zone.gui_input.connect(_on_obj_input.bind(idx))
 	zone.mouse_entered.connect(func():
 		if not is_completed and PERSPECTIVES[selected_perspective]["id"] == "normal":
@@ -445,13 +486,6 @@ func _make_one_object(panel: Panel, idx: int) -> void:
 	)
 	panel.add_child(zone)
 	obj_zones.append(zone)
-
-	# 物体绘制容器
-	var vis := Control.new()
-	vis.position = bp + Vector2(0, 6)
-	vis.size = Vector2(ow, 110)
-	panel.add_child(vis)
-	obj_visuals.append(vis)
 
 	# 视角小标签行
 	var view_row: Array[Label] = []
@@ -645,40 +679,112 @@ func _draw_frame(vis: Control, state: int, color: Color) -> void:
 
 
 # ── 时钟 ──
+# state 0 = 12点整（正确答案）：方形木框，米白表盘，正常大小
+# state 1 = 3点半：圆角金属框（用深灰边），浅蓝表盘，略小
+# state 2 = 8点：八角形框（用深棕边多层），米黄表盘，略大
 func _draw_clock(vis: Control, state: int, _color: Color) -> void:
-	var rim := ColorRect.new()
-	rim.position = Vector2(28, 8); rim.size = Vector2(74, 74); rim.color = Color("#8a6a44")
-	vis.add_child(rim)
-	var face := ColorRect.new()
-	face.position = Vector2(31, 11); face.size = Vector2(68, 68); face.color = Color("#f5f0e0")
-	vis.add_child(face)
+	match state:
+		0:
+			# ── state 0：方形蓝色外框时钟，蓝白表盘（正确答案） ──
+			var rim := ColorRect.new()
+			rim.position = Vector2(28, 8); rim.size = Vector2(74, 74)
+			rim.color = Color("#3a6aaa"); vis.add_child(rim)
+			var face := ColorRect.new()
+			face.position = Vector2(33, 13); face.size = Vector2(64, 64)
+			face.color = Color("#ddeeff"); vis.add_child(face)
+			# 表盘刻度线（4个主刻度）
+			for i in range(4):
+				var ang: float = i * PI * 0.5 - PI * 0.5
+				var tx := 65.0 + cos(ang) * 26; var ty := 45.0 + sin(ang) * 26
+				var tick := ColorRect.new()
+				tick.position = Vector2(tx - 2, ty - 2); tick.size = Vector2(4, 4)
+				tick.color = Color("#336688"); vis.add_child(tick)
+
+		1:
+			# ── state 1：圆形黄色外框，淡黄表盘，略小 ──
+			var ring := Polygon2D.new()
+			var rpts := PackedVector2Array()
+			var rcx := 57.0; var rcy := 48.0; var rr := 30.0
+			for j in range(24):
+				var a: float = j * TAU / 24.0
+				rpts.append(Vector2(rcx + cos(a) * rr, rcy + sin(a) * rr))
+			ring.polygon = rpts; ring.color = Color("#ffcc00"); vis.add_child(ring)
+			# 内表盘（淡黄色）
+			var face := Polygon2D.new()
+			var fpts := PackedVector2Array()
+			for j in range(24):
+				var a: float = j * TAU / 24.0
+				fpts.append(Vector2(rcx + cos(a) * 24.0, rcy + sin(a) * 24.0))
+			face.polygon = fpts; face.color = Color("#fff8cc"); vis.add_child(face)
+			# 刻度
+			for i in range(12):
+				var a: float = i * TAU / 12.0 - PI * 0.5
+				var tick := ColorRect.new()
+				var tr := 19.0 if i % 3 == 0 else 21.0
+				tick.position = Vector2(rcx + cos(a) * tr - 1.5, rcy + sin(a) * tr - 1.5)
+				tick.size = Vector2(3, 3); tick.color = Color("#886600"); vis.add_child(tick)
+
+		2:
+			# ── state 2：八角形厚边框（深棕），米黄表盘，略大 ──
+			var ocx := 67.0; var ocy := 50.0; var or_ := 38.0
+			var outer := Polygon2D.new()
+			var opts := PackedVector2Array()
+			for j in range(8):
+				var a: float = j * TAU / 8.0 - TAU / 16.0
+				opts.append(Vector2(ocx + cos(a) * or_, ocy + sin(a) * or_))
+			outer.polygon = opts; outer.color = Color("#5c3a1e"); vis.add_child(outer)
+			# 内表盘（米黄）
+			var inner := Polygon2D.new()
+			var ipts := PackedVector2Array()
+			for j in range(8):
+				var a: float = j * TAU / 8.0 - TAU / 16.0
+				ipts.append(Vector2(ocx + cos(a) * 29.0, ocy + sin(a) * 29.0))
+			inner.polygon = ipts; inner.color = Color("#f0e8d0"); vis.add_child(inner)
+			# 刻度
+			for i in range(4):
+				var a: float = i * PI * 0.5 - PI * 0.5
+				var tick := ColorRect.new()
+				tick.position = Vector2(ocx + cos(a) * 22 - 2, ocy + sin(a) * 22 - 2)
+				tick.size = Vector2(4, 4); tick.color = Color("#555"); vis.add_child(tick)
+
+	# ── 时钟指针（共用，覆盖在表盘上方）──
+	var ha: float; var ma: float
+	var cx: float; var cy: float
+	match state:
+		0:
+			ha = -PI * 0.5; ma = -PI * 0.5  # 12点整，两针都朝上
+			cx = 65.0; cy = 45.0
+		1:
+			ha = 0.5;  ma = 1.2             # 时针3点多，分针偏右下
+			cx = 57.0; cy = 48.0
+		2:
+			ha = -2.4; ma = -2.0            # 时针约8点，分针偏左下
+			cx = 67.0; cy = 50.0
+		_:
+			ha = 0.0; ma = 0.0; cx = 65.0; cy = 45.0
 
 	var dot := ColorRect.new()
-	dot.position = Vector2(63, 43); dot.size = Vector2(6, 6); dot.color = Color("#333")
-	vis.add_child(dot)
+	dot.position = Vector2(cx - 3, cy - 3); dot.size = Vector2(6, 6)
+	dot.color = Color("#222"); vis.add_child(dot)
 
-	var ha: float; var ma: float
-	match state:
-		0: ha = -1.8; ma = -2.5
-		1: ha = -0.3; ma = -0.6
-		2: ha = -0.9; ma = -1.6
+	var hlen := 18.0 if state == 1 else (22.0 if state == 2 else 20.0)
+	var mlen := 26.0 if state == 1 else (30.0 if state == 2 else 28.0)
 
-	var cx := 65.0; var cy := 45.0
 	var hh := Polygon2D.new()
 	hh.polygon = PackedVector2Array([
 		Vector2(cx, cy),
-		Vector2(cx + cos(ha) * 22, cy + sin(ha) * 22),
-		Vector2(cx + cos(ha + 0.1) * 15, cy + sin(ha + 0.1) * 15),
+		Vector2(cx + cos(ha) * hlen, cy + sin(ha) * hlen),
+		Vector2(cx + cos(ha + 0.12) * (hlen * 0.6), cy + sin(ha + 0.12) * (hlen * 0.6)),
 	])
-	hh.color = Color("#333"); vis.add_child(hh)
+	hh.color = Color("#222"); vis.add_child(hh)
 
 	var mh := Polygon2D.new()
 	mh.polygon = PackedVector2Array([
 		Vector2(cx, cy),
-		Vector2(cx + cos(ma) * 32, cy + sin(ma) * 32),
-		Vector2(cx + cos(ma + 0.08) * 16, cy + sin(ma + 0.08) * 16),
+		Vector2(cx + cos(ma) * mlen, cy + sin(ma) * mlen),
+		Vector2(cx + cos(ma + 0.09) * (mlen * 0.5), cy + sin(ma + 0.09) * (mlen * 0.5)),
 	])
-	mh.color = Color("#555"); vis.add_child(mh)
+	mh.color = Color("#444"); vis.add_child(mh)
 
 
 # ── 窗户 ──
@@ -777,19 +883,29 @@ func _input(event: InputEvent) -> void:
 
 func _open_room() -> void:
 	room_open = true
-	room_overlay.visible = true
 	_freeze_player(true)
 	room_toggled.emit(true)
+	AudioManager.play_sfx("door_open")
+	# 从全局 main 读取当前视角，映射到 PERSPECTIVES 索引
 	selected_perspective = 0
-	_refresh_perspective_btn_highlight()
+	var main_node = get_tree().get_first_node_in_group("main")
+	if main_node != null and main_node.has_method("get_view"):
+		var gv: String = main_node.get_view()
+		for i in range(PERSPECTIVES.size()):
+			if PERSPECTIVES[i]["id"] == gv:
+				selected_perspective = i
+				break
+	# 每次打开都重新构建 overlay（挂到 root，坐标不偏移）
+	_build_room_overlay()
 	_refresh_all()
-	_update_mode_hint()
 	_update_progress()
 
 
 func _close_room() -> void:
 	room_open = false
-	room_overlay.visible = false
+	if room_overlay != null and is_instance_valid(room_overlay):
+		room_overlay.queue_free()
+		room_overlay = null
 	_freeze_player(false)
 	room_toggled.emit(false)
 

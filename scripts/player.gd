@@ -26,6 +26,7 @@ var was_on_floor: bool = false
 var is_on_ladder: bool = false  # 梯子上（由 main.gd 设置）
 var facing_dir: float = 1.0
 var _drop_cooldown: float = 0.0  # 穿透地板冷却（防止反复触发）
+var _walk_sfx_timer: float = 0.0  # 走路音效冷却
 
 # ADHD 自动行走
 var adhd_auto_dir: float = 0.0     # -1向左, 0停止, 1向右
@@ -69,11 +70,16 @@ func _physics_process(delta: float) -> void:
 		_update_animation(hdir)
 		return
 
+	var just_landed: bool = false
 	if is_on_floor():
 		coyote_timer = COYOTE_TIME
+		if not was_on_floor:
+			just_landed = true
 	else:
 		coyote_timer = maxf(0.0, coyote_timer - delta)
 	was_on_floor = is_on_floor()
+	if just_landed:
+		AudioManager.play_sfx("land")
 
 	if not is_on_floor():
 		velocity.y += GRAVITY * delta
@@ -117,7 +123,7 @@ func _physics_process(delta: float) -> void:
 	var direction: float = 0.0
 	var spd_mult: float = VIEW_SPEED_MULT.get(current_view, 1.0)
 
-	if controls_enabled:
+	if controls_enabled and not get_meta("poop_stunned", false):
 		# 原始方向输入
 		var raw_dir: float = 0.0
 		if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
@@ -154,6 +160,7 @@ func _physics_process(delta: float) -> void:
 			jump_held = true
 			coyote_timer = 0.0
 			jump_buffer_timer = 0.0
+			AudioManager.play_sfx("jump")
 		if not space_now:
 			jump_held = false
 
@@ -177,6 +184,19 @@ func _physics_process(delta: float) -> void:
 			facing_dir = signf(direction)
 
 	move_and_slide()
+	# 走路音效：在地面且有水平速度时循环播放，停止/离地时立即停止
+	if is_on_floor() and abs(velocity.x) > 10.0:
+		# 盲人模式：用盲杖音效作为行走反馈，并做节奏限频（防止每帧重叠）
+		if current_view == "blind":
+			_walk_sfx_timer += delta
+			if _walk_sfx_timer >= 0.35:
+				AudioManager.play_sfx("blind_cane")
+				_walk_sfx_timer = 0.0
+		else:
+			AudioManager.play_sfx("walk")  # audio_manager内部保证不重复start
+	else:
+		AudioManager.stop_walk_sfx()
+		_walk_sfx_timer = 0.0
 	_update_animation(direction)
 
 func _update_animation(dir: float) -> void:

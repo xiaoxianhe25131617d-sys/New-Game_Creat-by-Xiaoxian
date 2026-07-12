@@ -29,6 +29,7 @@ const CHALLENGE_DURATION: float = 20.0
 
 # 自由模式自动熄灭定时器
 var off_timers: Array[SceneTreeTimer] = []
+var off_timer_callables: Array[Callable] = []  # 对应每个 timer 的 callback，用于正确 disconnect
 
 # ── 音色（盲人模式：正确灯发出不同音高）──
 const TONES: Array[float] = [
@@ -66,6 +67,8 @@ var end_zone: Area2D
 var start_glow_e: ColorRect
 var end_glow_e: ColorRect
 var _last_interact_frame: int = -1  # 防止同一帧 InputEventKey + InputEventAction 双重触发
+var _start_btn_top: ColorRect = null            # start 按钮顶面（凹陷动画）
+var _end_btn_top: ColorRect = null              # end 按钮顶面（凹陷动画）
 
 # ═══════════════════════════════════════════════════
 #  初始化
@@ -73,6 +76,7 @@ var _last_interact_frame: int = -1  # 防止同一帧 InputEventKey + InputEvent
 func _ready() -> void:
 	for i in range(9):
 		off_timers.append(null)
+		off_timer_callables.append(Callable())
 
 	body_entered.connect(_on_body_entered)
 	body_exited.connect(_on_body_exited)
@@ -122,7 +126,8 @@ func _build_platforms() -> void:
 			light.position = Vector2(px - 25, py - 37)
 			light.size = Vector2(50, 28)
 			light.color = Color("#1a0f25")
-			light.z_index = 5
+			light.z_index = 10   # 确保在背景和平台之上
+			light.pivot_offset = Vector2(25, 14)  # 居中 pivot
 			add_child(light)
 			light_nodes.append(light)
 
@@ -216,9 +221,10 @@ func _add_platform_sensor(px: float, py: float, idx: int, w: float) -> void:
 
 	var sshape := CollisionShape2D.new()
 	var srect := RectangleShape2D.new()
-	srect.size = Vector2(w + 44, 26)
+	# 宽度只比平台宽20px，避免相邻平台感应区重叠导致 platform_active 互相覆盖
+	srect.size = Vector2(w + 20, 48)
 	sshape.shape = srect
-	sshape.position = Vector2(0, -10)
+	sshape.position = Vector2(0, -18)
 	sensor.add_child(sshape)
 
 	sensor.body_entered.connect(func(b: Node2D):
@@ -237,55 +243,73 @@ func _add_platform_sensor(px: float, py: float, idx: int, w: float) -> void:
 # ═══════════════════════════════════════════════════
 func _build_buttons() -> void:
 	# ── START 按钮 ──
-	start_zone = _make_button(
-		Vector2(-110, 100),
-		"▶ 开始闯关",
-		Color("#44aa44"),
-		func(b: Node2D):
-			if b.is_in_group("player"):
-				start_glow_e.color = Color("#44aa44", 0.5),
-		func(b: Node2D):
-			if b.is_in_group("player"):
-				start_glow_e.color = Color("#44aa44", 0.0),
-	)
+	start_zone = _make_button(Vector2(-110, 100), "▶ 开始闯关", Color("#44aa44"))
 	start_zone.set_meta("button", "start")
 	add_child(start_zone)
 	start_glow_e = start_zone.get_node("Glow") as ColorRect
+	_start_btn_top = start_zone.get_node("BtnTop") as ColorRect
+
+	start_zone.body_entered.connect(func(b: Node2D):
+		if not b.is_in_group("player") or is_completed:
+			return
+		_press_button_visual(start_glow_e, _start_btn_top, Color("#44aa44"), true)
+		call_deferred("_on_start_btn_confirm")
+	)
+	start_zone.body_exited.connect(func(b: Node2D):
+		if not b.is_in_group("player"):
+			return
+		_press_button_visual(start_glow_e, _start_btn_top, Color("#44aa44"), false)
+	)
 
 	# ── END 按钮 ──
-	end_zone = _make_button(
-		Vector2(110, 100),
-		"■ 结束闯关",
-		Color("#cc4444"),
-		func(b: Node2D):
-			if b.is_in_group("player"):
-				end_glow_e.color = Color("#cc4444", 0.5),
-		func(b: Node2D):
-			if b.is_in_group("player"):
-				end_glow_e.color = Color("#cc4444", 0.0),
-	)
+	end_zone = _make_button(Vector2(110, 100), "■ 结束闯关", Color("#cc4444"))
 	end_zone.set_meta("button", "end")
 	add_child(end_zone)
 	end_glow_e = end_zone.get_node("Glow") as ColorRect
+	_end_btn_top = end_zone.get_node("BtnTop") as ColorRect
+
+	end_zone.body_entered.connect(func(b: Node2D):
+		if not b.is_in_group("player") or is_completed:
+			return
+		_press_button_visual(end_glow_e, _end_btn_top, Color("#cc4444"), true)
+		call_deferred("_on_end_btn_confirm")
+	)
+	end_zone.body_exited.connect(func(b: Node2D):
+		if not b.is_in_group("player"):
+			return
+		_press_button_visual(end_glow_e, _end_btn_top, Color("#cc4444"), false)
+	)
+
+# ── 凹陷视觉（按下/松开） ──
+func _press_button_visual(glow: ColorRect, top: ColorRect, color: Color, pressed: bool) -> void:
+	if glow != null and is_instance_valid(glow):
+		glow.color = Color(color, 0.6) if pressed else Color(color, 0.0)
+	if top != null and is_instance_valid(top):
+		# 凹陷：把顶面往下移2px，模拟被踩下去
+		top.position.y = 2.0 if pressed else 0.0
+		top.color = color.lightened(0.3) if pressed else color
+
+func _on_start_btn_confirm() -> void:
+	_start_challenge()
+
+func _on_end_btn_confirm() -> void:
+	if challenge_active:
+		_cancel_challenge()
 
 
-func _make_button(pos: Vector2, label_text: String, btn_color: Color,
-	on_enter: Callable, on_exit: Callable) -> Area2D:
+func _make_button(pos: Vector2, label_text: String, btn_color: Color) -> Area2D:
 	var area := Area2D.new()
 	area.position = pos
 	area.collision_layer = 0
-	area.collision_mask = 0
+	area.collision_mask = 1
 
 	var sshape := CollisionShape2D.new()
 	var srect := RectangleShape2D.new()
-	srect.size = Vector2(160, 36)
+	srect.size = Vector2(200, 80)
 	sshape.shape = srect
 	area.add_child(sshape)
 
-	area.body_entered.connect(on_enter)
-	area.body_exited.connect(on_exit)
-
-	# 按钮背景
+	# 发光背景（踩下时亮）
 	var bg := ColorRect.new()
 	bg.name = "Glow"
 	bg.position = Vector2(-80, -16)
@@ -294,13 +318,22 @@ func _make_button(pos: Vector2, label_text: String, btn_color: Color,
 	bg.z_index = 0
 	area.add_child(bg)
 
-	# 按钮边框
+	# 按钮边框（底座）
 	var border := ColorRect.new()
 	border.position = Vector2(-80, -16)
 	border.size = Vector2(160, 32)
 	border.color = Color(btn_color, 0.25)
 	border.z_index = 1
 	area.add_child(border)
+
+	# 按钮顶面（踩下时会下移 2px 模拟凹陷）
+	var top := ColorRect.new()
+	top.name = "BtnTop"
+	top.position = Vector2(-80, -20)
+	top.size = Vector2(160, 6)
+	top.color = btn_color
+	top.z_index = 3
+	area.add_child(top)
 
 	# 按钮文字
 	var label := Label.new()
@@ -350,7 +383,7 @@ func _build_ui() -> void:
 
 	# 操作提示
 	var tip := Label.new()
-	tip.text = "自由模式：灯 5秒后熄灭 | 按 R 开始闯关 | 侧面阶梯助你爬升"
+	tip.text = "自由模式：灯 1.5秒后熄灭 | 按 R 开始闯关 | 侧面阶梯助你爬升"
 	tip.position = Vector2(-260, 148)
 	tip.size = Vector2(520, 24)
 	tip.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -389,20 +422,25 @@ func _on_body_entered(body: Node2D) -> void:
 func _on_body_exited(body: Node2D) -> void:
 	if body.is_in_group("player"):
 		player_in_range = false
-		platform_active = -1
+		# 不在这里清 platform_active，由各平台感应区自己管理
 
 # ═══════════════════════════════════════════════════
 #  输入处理
 # ═══════════════════════════════════════════════════
 func _input(event: InputEvent) -> void:
-	if not player_in_range or is_completed:
+	if is_completed:
 		return
+	# player_in_range 有时因边界问题不准，用距离兜底
+	if not player_in_range:
+		var _p := get_tree().get_first_node_in_group("player")
+		if _p == null or global_position.distance_to(_p.global_position) > 550.0:
+			return
 
-	# 同时支持原始按键和 InputMap "interact" action
-	var is_e_press: bool = (event is InputEventKey and event.pressed and event.keycode == KEY_E)
-	var is_interact: bool = event.is_action_pressed("interact") and event.is_pressed()
-	var is_r_press: bool = (event is InputEventKey and event.pressed and event.keycode == KEY_R)
-	var is_esc_press: bool = (event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE)
+	# E 键 / interact action（排除 echo 重复事件）
+	var is_e_press: bool = (event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_E)
+	var is_interact: bool = (event.is_action_pressed("interact") and not event.is_echo())
+	var is_r_press: bool = (event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_R)
+	var is_esc_press: bool = (event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE)
 
 	if is_e_press or is_interact:
 		var cur := Engine.get_process_frames()
@@ -440,9 +478,34 @@ func _handle_e_key() -> void:
 			_cancel_challenge()
 		return
 
-	# 检查是否站在平台上
-	if platform_active >= 0 and platform_active < 9:
-		_interact_platform(platform_active)
+	# 优先用感应区检测到的平台，否则兜底找最近平台
+	var target_idx := platform_active
+	if target_idx < 0 or target_idx >= 9:
+		target_idx = _get_nearest_platform()
+	if target_idx >= 0:
+		_interact_platform(target_idx)
+
+# 兜底：找距离玩家最近（且在范围内）的灯板平台
+func _get_nearest_platform() -> int:
+	var player := get_tree().get_first_node_in_group("player")
+	if player == null:
+		return -1
+	var best_idx := -1
+	var best_dist := 120.0  # 扩大到 120px
+	for i in range(platform_bodies.size()):
+		if not is_instance_valid(platform_bodies[i]):
+			continue
+		var pb := platform_bodies[i] as Node2D
+		var gp: Vector2 = pb.global_position
+		# 用 X 距离 + Y 距离分别判断（玩家站上方 Y 约差 30-40px，X 要对齐）
+		var dx: float = abs(player.global_position.x - gp.x)
+		var dy: float = abs(player.global_position.y - gp.y)
+		if dx < 60.0 and dy < 80.0:
+			var d: float = player.global_position.distance_to(gp)
+			if d < best_dist:
+				best_dist = d
+				best_idx = i
+	return best_idx
 
 func _player_near_button(btn: String) -> bool:
 	var player := get_tree().get_first_node_in_group("player")
@@ -451,7 +514,7 @@ func _player_near_button(btn: String) -> bool:
 
 	var target: Area2D = start_zone if btn == "start" else end_zone
 	var dist: float = player.global_position.distance_to(target.global_position)
-	return dist < 80.0
+	return dist < 120.0  # 增大到 120px（之前 80px 太严苛）
 
 # ═══════════════════════════════════════════════════
 #  平台交互核心
@@ -467,6 +530,7 @@ func _interact_free(idx: int) -> void:
 	lights[idx] = 1 - lights[idx]
 	var is_on: bool = lights[idx] == 1
 
+
 	# 取消旧定时器
 	_cancel_off_timer(idx)
 
@@ -476,10 +540,13 @@ func _interact_free(idx: int) -> void:
 	# 视觉效果
 	if is_on:
 		_update_light_visual(idx, true)
-		# 5 秒后自动关闭
-		var tt := get_tree().create_timer(5.0)
-		tt.timeout.connect(_on_free_light_timeout.bind(idx))
+		# 1.5 秒后自动关闭
+		_cancel_off_timer(idx)
+		var cb := _on_free_light_timeout.bind(idx)
+		var tt := get_tree().create_timer(1.5)
+		tt.timeout.connect(cb)
 		off_timers[idx] = tt
+		off_timer_callables[idx] = cb
 	else:
 		_update_light_visual(idx, false)
 
@@ -497,8 +564,10 @@ func _on_free_light_timeout(idx: int) -> void:
 
 func _cancel_off_timer(idx: int) -> void:
 	if off_timers[idx] != null and is_instance_valid(off_timers[idx]):
-		off_timers[idx].timeout.disconnect(_on_free_light_timeout.bind(idx))
+		if off_timer_callables[idx].is_valid():
+			off_timers[idx].timeout.disconnect(off_timer_callables[idx])
 	off_timers[idx] = null
+	off_timer_callables[idx] = Callable()
 
 # ── 闯关模式：点亮常驻 → 错一个即失败 ──
 func _interact_challenge(idx: int) -> void:
@@ -627,19 +696,23 @@ func _update_light_visual(idx: int, is_on: bool) -> void:
 		return
 	
 	if is_on:
-		# 点亮：直接变黄色 + 外框金光 + 平台顶面发光
-		light_nodes[idx].color = Color("#ffdd44")
+		# 点亮：强制黄色（self_modulate 保证不受父节点影响）
+		light_nodes[idx].color = Color(1.0, 0.9, 0.2, 1.0)
+		light_nodes[idx].self_modulate = Color(1.0, 1.0, 1.0, 1.0)
 		if is_instance_valid(light_halos[idx]):
-			light_halos[idx].color = Color("#ffdd44", 0.7)
+			light_halos[idx].color = Color(1.0, 0.87, 0.27, 0.8)
+			light_halos[idx].self_modulate = Color(1.0, 1.0, 1.0, 1.0)
 		if is_instance_valid(platform_glows[idx]):
-			platform_glows[idx].color = Color("#ffdd44", 0.75)
-		# 简短膨胀反馈
+			platform_glows[idx].color = Color(1.0, 0.87, 0.27, 0.85)
+		# 简短膨胀反馈（pivot 居中）
+		light_nodes[idx].pivot_offset = light_nodes[idx].size / 2.0
 		var t := create_tween()
-		t.tween_property(light_nodes[idx], "scale", Vector2(1.25, 1.25), 0.05)
-		t.tween_property(light_nodes[idx], "scale", Vector2(1.0, 1.0), 0.12)
+		t.tween_property(light_nodes[idx], "scale", Vector2(1.3, 1.3), 0.06)
+		t.tween_property(light_nodes[idx], "scale", Vector2(1.0, 1.0), 0.15)
 	else:
 		# 熄灭：变暗 + 外框透明 + 平台发光消失
 		light_nodes[idx].color = Color("#1a0f25")
+		light_nodes[idx].self_modulate = Color(1.0, 1.0, 1.0, 1.0)
 		if is_instance_valid(light_halos[idx]):
 			light_halos[idx].color = Color("#ffdd44", 0.0)
 		if is_instance_valid(platform_glows[idx]):
@@ -655,12 +728,14 @@ func _play_sound_for_platform(idx: int) -> void:
 		# 盲人模式：每个平台有不同的音高
 		if CORRECT[idx] == 1:
 			AudioManager.play_tone(TONES[idx], 0.35)
+			AudioManager.play_sfx("blind_correct")
 		else:
 			# 按错灯——沉闷的泛音提示
 			AudioManager.play_tone(WRONG_TONE, 0.2)
+			AudioManager.play_sfx("blind_wrong")
 	else:
-		# 其他模式：统一的声音
-		AudioManager.play_sfx("collect")
+		# 其他模式：开灯声
+		AudioManager.play_sfx("light_on")
 
 func _is_blind_mode() -> bool:
 	var player := get_tree().get_first_node_in_group("player")

@@ -1,244 +1,226 @@
 extends Node
-## AudioManager - Handles BGM, SFX and environment sounds
-## Uses AudioStreamGenerators for procedural music since we can't bundle audio files
+## AudioManager - 使用真实MP3音效文件
+## BGM 循环播放，视角切换自动换曲
+
+const AUDIO_DIR := "res://assets/audio"
+
+# ── 音效映射表：sfx_type → 文件名 ──
+const SFX_MAP: Dictionary = {
+	"btn_click": "按钮被按下.MP3",
+	"jump": "落地.MP3",
+	"land": "落地.MP3",
+	"walk": "走路.MP3",
+	"laser_place": "把激光放到装置里.MP3",
+	"laser_rotate": "激光装置转动.MP3",
+	"laser_fire": "发射激光.MP3",
+	"chest_open": "宝箱开启.MP3",
+	"maze_correct": "黑色迷宫正确声音.MP3",
+	"maze_wrong": "黑色迷宫错误.MP3",
+	"grid_slide": "九宫格滑动声音.MP3",
+	"light_on": "开灯.MP3",
+	"blind_correct": "盲人模式灯的正确音效.MP3",
+	"blind_wrong": "盲人模式灯的错误音效.MP3",
+	"blind_cane": "盲杖.MP3",
+	"wall_correct": "墙按到正确的按钮.MP3",
+	"stone_door": "石门开启.MP3",
+	"lock_turn": "转动密码锁.MP3",
+	# 小鸟音效
+	"bird_chirp": "小鸟音效.MP3",
+	# 动物音效
+	"dog_bark":      "小狗叫.MP3",
+	"cat_meow":      "小猫叫.MP3",
+	"dog_triggered": "小狗被触发.MP3",
+	"cat_triggered": "小猫被触发.MP3",
+	# NPC 对话开始音
+	"npc_talk": "触发npc对话音效.MP3",
+	"npc_talk_depression": "抑郁模式npc被触发音效.MP3",
+	# 密码本/书翻开
+	"book_open": "转动密码锁.MP3",  # 翻书感
+	# 开门（点开房间/找不同等关卡）
+	"door_open": "开门（就是触发和房子有关系的关卡放置，比如找不同.MP3",
+	# 别名：某些代码用了简写或通用名
+	"collect": "宝箱开启.MP3",     # 收集物 → 宝箱音
+	"echo": "盲杖.MP3",            # 回声 → 盲杖音
+	"dash": "按钮被按下.MP3",      # 冲刺 → 按钮音暂代
+	# "save" 故意不加 → autosave 静默，避免随机出现"奇怪音效"
+}
+
+# 各音效类型的音量覆盖（db）：未配置则用默认 -5.0
+const SFX_VOLUME: Dictionary = {
+	"jump":       -14.0,   # 跳跃音不要太大
+	"land":       -12.0,
+	"grid_slide": -10.0,   # 九宫格滑动不要太响
+	"btn_click":  -10.0,
+	"npc_talk":   -2.0,
+	"book_open":  -8.0,
+	"door_open":  -6.0,
+	"stone_door": -6.0,
+}
+
+# ── BGM 映射 ──
+const BGM_MAP: Dictionary = {
+	"normal":     "正常模式的音乐.MP3",
+	"depression": "抑郁模式音乐.MP3",
+	"autism":     "自闭症模式背景音乐.MP3",
+	"adhd":       "ADHD背景音乐.MP3",
+	"blind":      "盲人模式背景音乐.MP3",
+}
 
 var bgm_player: AudioStreamPlayer
-var sfx_players: Array[AudioStreamPlayer] = []
-var current_region: String = "plaza"
-var target_volume: float = 1.0
+var sfx_pool: Array[AudioStreamPlayer] = []
+var sfx_cache: Dictionary = {}       # filename → AudioStream (预加载)
+var bgm_cache: Dictionary = {}       # view → AudioStream (预加载)
 var current_view: String = "normal"
+var current_region: String = "spawn"
 
-# Procedural audio generation using Godot's AudioStreamGenerator
-var generator_playback: AudioStreamGeneratorPlayback
-var generator_sample_rate: float = 44100.0
-var generator_phase: float = 0.0
-var generator_buffer: PackedVector2Array
+# 走路专用 channel（防止叠加）
+var _walk_channel: AudioStreamPlayer
+var _walk_should_loop: bool = false  # 控制 finished 信号是否触发循环
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	_preload_all()
 	_setup_bgm()
 	_setup_sfx_pool()
+
+func _preload_all() -> void:
+	# 预加载所有 SFX
+	for sfx_type in SFX_MAP:
+		var fname: String = SFX_MAP[sfx_type]
+		if not sfx_cache.has(fname):
+			var path := AUDIO_DIR + "/" + fname
+			if ResourceLoader.exists(path):
+				sfx_cache[fname] = load(path) as AudioStream
+			else:
+				push_warning("AudioManager: SFX not found: " + path)
+	# 预加载所有 BGM
+	for view_name in BGM_MAP:
+		var fname: String = BGM_MAP[view_name]
+		var path := AUDIO_DIR + "/" + fname
+		if ResourceLoader.exists(path):
+			bgm_cache[view_name] = load(path) as AudioStream
+		else:
+			push_warning("AudioManager: BGM not found: " + path)
+
+# 各视角 BGM 音量（db），未配置则用默认 -12.0
+const BGM_VOLUME: Dictionary = {
+	"normal":     -12.0,
+	"depression": -4.0,   # 抑郁模式调大
+	"adhd":       -4.0,   # ADHD模式调大
+	"autism":     -12.0,
+	"blind":      -12.0,
+}
 
 func _setup_bgm() -> void:
 	bgm_player = AudioStreamPlayer.new()
 	bgm_player.name = "BGM"
 	bgm_player.bus = "Master"
+	bgm_player.volume_db = BGM_VOLUME.get("normal", -12.0)
 	add_child(bgm_player)
-	
-	# Create a procedural audio generator
-	var generator := AudioStreamGenerator.new()
-	generator.mix_rate = generator_sample_rate
-	generator.buffer_length = 0.5
-	bgm_player.stream = generator
-	bgm_player.play()
-	
-	generator_playback = bgm_player.get_stream_playback()
-	generator_buffer = PackedVector2Array()
-	generator_buffer.resize(int(generator_sample_rate * 0.1))
+	# 预加载默认 BGM 并连接循环
+	var stream: AudioStream = bgm_cache.get("normal")
+	if stream:
+		bgm_player.stream = stream
+		bgm_player.finished.connect(_on_bgm_finished)
+		bgm_player.play()
+
+func _on_bgm_finished() -> void:
+	# BGM 播完后自动循环
+	if bgm_player != null and bgm_player.stream != null:
+		bgm_player.play()
 
 func _setup_sfx_pool() -> void:
-	for i in range(4):
+	# 走路专用 channel：音量单独控制，stop_walk() 专用停止
+	_walk_channel = AudioStreamPlayer.new()
+	_walk_channel.name = "SFX_Walk"
+	_walk_channel.bus = "Master"
+	_walk_channel.volume_db = -6.0   # 走路音量
+	add_child(_walk_channel)
+	# 用 finished 信号实现循环（比设置 loop 属性更可靠）
+	_walk_channel.finished.connect(_on_walk_finished)
+
+	for i in range(8):
 		var sfx := AudioStreamPlayer.new()
 		sfx.name = "SFX_%d" % i
 		sfx.bus = "Master"
+		sfx.volume_db = -5.0
 		add_child(sfx)
-		sfx_players.append(sfx)
+		sfx_pool.append(sfx)
 
-func _process(_delta: float) -> void:
-	if generator_playback == null:
-		return
-	_fill_generator_buffer()
+# ── SFX Methods ──
 
-func _fill_generator_buffer() -> void:
-	var to_fill := generator_playback.get_frames_available()
-	while to_fill > 0:
-		generator_playback.push_frame(_generate_sample())
-		to_fill -= 1
-
-func _generate_sample() -> Vector2:
-	generator_phase += 1.0 / generator_sample_rate
-	
-	var sample: float = 0.0
-	var view_mod: float = 1.0
-	
-	# Adjust music based on current view
-	match current_view:
-		"blind":
-			view_mod = 0.3  # quieter, more ambient
-		"autism":
-			view_mod = 0.7  # 安静专注
-		"adhd":
-			view_mod = 1.3  # more energetic
-		"depression":
-			view_mod = 0.6  # slower, softer
-	
-	# Region-based melody patterns
-	match current_region:
-		"plaza":
-			sample = _plaza_melody()
-		"forest":
-			sample = _forest_melody()
-		"lighthouse":
-			sample = _lighthouse_melody()
-		"station":
-			sample = _station_melody()
-		"park":
-			sample = _park_melody()
-		"dam":
-			sample = _dam_melody()
-		"observatory":
-			sample = _observatory_melody()
-		_:
-			sample = _plaza_melody()
-	
-	sample *= view_mod * 0.15  # master volume
-	return Vector2(sample, sample)
-
-# ─── REGION MELODIES ────────────────────────────────
-# Each generates a gentle ambient melody using sine waves
-
-func _plaza_melody() -> float:
-	var t := generator_phase
-	# Warm piano-like tones
-	var s: float = sin(t * 261.63 * TAU) * 0.5  # C4
-	s += sin(t * 329.63 * TAU) * 0.3  # E4
-	s += sin(t * 392.0 * TAU) * 0.25  # G4
-	s += sin(t * 130.81 * TAU) * 0.2  # C3 (bass)
-	# Gentle pad
-	s += sin(t * 261.63 * 0.5 * TAU) * 0.15
-	s += sin(t * 196.0 * 0.25 * TAU) * 0.1
-	return s
-
-func _forest_melody() -> float:
-	var t := generator_phase
-	# Woodwind-like, peaceful
-	var s: float = sin(t * 293.66 * TAU) * 0.4  # D4
-	s += sin(t * 369.99 * TAU) * 0.3  # F#4
-	s += sin(t * 440.0 * TAU) * 0.2  # A4
-	s += sin(t * 146.83 * TAU) * 0.2  # D3
-	# Bird-like high notes
-	s += sin(t * 880.0 * TAU + sin(t * 0.3) * 2.0) * 0.08
-	s += sin(t * 1108.73 * TAU) * 0.05
-	return s
-
-func _lighthouse_melody() -> float:
-	var t := generator_phase
-	# Echo-like, resonant
-	var s: float = sin(t * 220.0 * TAU) * 0.4  # A3
-	s += sin(t * 277.18 * TAU) * 0.3  # C#4
-	s += sin(t * 329.63 * TAU) * 0.25  # E4
-	# Echo/reverb effect
-	s += sin(t * 220.0 * TAU + 0.5) * 0.2 * abs(sin(t * 0.7))
-	s += sin(t * 440.0 * TAU) * 0.15 * abs(sin(t * 1.3))
-	return s
-
-func _station_melody() -> float:
-	var t := generator_phase
-	# Rhythmic, mechanical feel
-	var rhythm: bool = abs(sin(t * 2.0)) > 0.5
-	var s: float = sin(t * 196.0 * TAU) * 0.35  # G3
-	s += sin(t * 246.94 * TAU) * 0.3  # B3
-	s += sin(t * 293.66 * TAU) * 0.25  # D4
-	if rhythm:
-		s += sin(t * 392.0 * TAU) * 0.2  # G4 accent
-	s += sin(t * 98.0 * TAU) * 0.2  # G2 bass
-	return s
-
-func _park_melody() -> float:
-	var t := generator_phase
-	# Upbeat, playful
-	var s: float = sin(t * 349.23 * TAU) * 0.4  # F4
-	s += sin(t * 440.0 * TAU) * 0.3  # A4
-	s += sin(t * 523.25 * TAU) * 0.25  # C5
-	s += sin(t * 174.61 * TAU) * 0.2  # F3
-	# Playful arpeggios
-	var arp := sin(t * 4.0) * 0.5 + 0.5
-	s += sin(t * (349.23 + arp * 200.0) * TAU) * 0.12
-	return s
-
-func _dam_melody() -> float:
-	var t := generator_phase
-	# Flowing water feel
-	var s: float = sin(t * 233.08 * TAU) * 0.35  # Bb3
-	s += sin(t * 293.66 * TAU) * 0.3  # D4
-	s += sin(t * 349.23 * TAU) * 0.25  # F4
-	# Water flow effect
-	s += sin(t * 233.08 * TAU + sin(t * 0.5) * 3.0) * 0.15
-	s += sin(t * 116.54 * TAU) * 0.2  # Bb2
-	return s
-
-func _observatory_melody() -> float:
-	var t := generator_phase
-	# Mysterious, cosmic
-	var s: float = sin(t * 207.65 * TAU) * 0.35  # Ab3
-	s += sin(t * 261.63 * TAU) * 0.3  # C4
-	s += sin(t * 311.13 * TAU) * 0.25  # Eb4
-	# Star twinkle
-	s += sin(t * 1244.51 * TAU + sin(t * 0.2) * 2.0) * 0.06
-	s += sin(t * 1661.22 * TAU) * 0.04
-	s += sin(t * 103.83 * TAU) * 0.2  # Ab2
-	return s
-
-# ─── SFX METHODS ───────────────────────────────────
+## 播放指定类型的音效。走路使用专用 channel 防叠加。
 func play_sfx(sfx_type: String) -> void:
-	for sfx in sfx_players:
-		if not sfx.playing:
-			_play_sfx_on(sfx, sfx_type)
-			return
+	var fname: String = SFX_MAP.get(sfx_type, "")
+	if fname.is_empty():
+		return  # "save" 等故意留空 → 静默
+	var stream: AudioStream = sfx_cache.get(fname)
+	if stream == null:
+		return
 
-func _play_sfx_on(player: AudioStreamPlayer, sfx_type: String) -> void:
-	var generator := AudioStreamGenerator.new()
-	generator.mix_rate = 44100.0
-	generator.buffer_length = 0.3
-	player.stream = generator
-	player.play()
-	
-	# Simple procedural SFX
-	var playback := player.get_stream_playback()
-	var frames := int(44100.0 * 0.2)
-	var t: float = 0.0
-	
-	match sfx_type:
-		"jump":
-			for i in range(frames):
-				t = float(i) / 44100.0
-				var s: float = sin(t * 400.0 * TAU * (1.0 + t * 3.0)) * (1.0 - t / 0.2)
-				playback.push_frame(Vector2(s, s) * 0.3)
-		"collect":
-			for i in range(frames):
-				t = float(i) / 44100.0
-				var s: float = sin(t * 880.0 * TAU) * (1.0 - t / 0.2) + sin(t * 1320.0 * TAU) * (1.0 - t / 0.15) * 0.5
-				playback.push_frame(Vector2(s, s) * 0.25)
-		"echo":
-			for i in range(int(44100.0 * 0.4)):
-				t = float(i) / 44100.0
-				var s: float = sin(t * 220.0 * TAU * (1.0 + t * 0.5)) * exp(-t * 6.0)
-				playback.push_frame(Vector2(s, s) * 0.3)
-		"dash":
-			for i in range(int(44100.0 * 0.15)):
-				t = float(i) / 44100.0
-				var s: float = (randf() * 2.0 - 1.0) * (1.0 - t / 0.15) * 0.4
-				playback.push_frame(Vector2(s, s) * 0.25)
-		"save":
-			for i in range(int(44100.0 * 0.5)):
-				t = float(i) / 44100.0
-				var s: float = sin(t * 523.25 * TAU) * (1.0 - t / 0.5) * 0.3
-				s += sin(t * 659.25 * TAU) * (1.0 - t / 0.4) * 0.2
-				playback.push_frame(Vector2(s, s) * 0.2)
-		_:
-			for i in range(frames):
-				playback.push_frame(Vector2.ZERO)
+	var vol: float = SFX_VOLUME.get(sfx_type, -5.0)
+
+	# 走路专用 channel：循环播放（finished信号触发重播），停时由 stop_walk_sfx 中断
+	if sfx_type == "walk":
+		_walk_should_loop = true
+		if _walk_channel != null and not _walk_channel.playing:
+			_walk_channel.stream = stream
+			_walk_channel.play()
+		return
+
+	# 找一个空闲 channel
+	for sfx in sfx_pool:
+		if not sfx.playing:
+			sfx.volume_db = vol
+			sfx.stream = stream
+			sfx.play()
+			return
+	# 所有 channel 都在用 → 切到第一个（覆盖最旧的短音效）
+	var first := sfx_pool[0] as AudioStreamPlayer
+	first.stop()
+	first.volume_db = vol
+	first.stream = stream
+	first.play()
+
+## 走路音效播完后自动循环（只要 _walk_channel.stream 不为空且未被 stop）
+func _on_walk_finished() -> void:
+	# stop() 会触发 finished 信号，但此时 playing=false；重播前检查是否主动停止
+	# 用 _walk_should_loop 标志区分"循环继续"和"主动停止"
+	if _walk_should_loop and _walk_channel != null and _walk_channel.stream != null:
+		_walk_channel.play()
+
+## 立即停止走路音效（玩家停下时调用）
+func stop_walk_sfx() -> void:
+	_walk_should_loop = false
+	if _walk_channel != null and _walk_channel.playing:
+		_walk_channel.stop()
+
+# ── BGM Region / View ──
 
 func set_region(region: String) -> void:
 	current_region = region
 
+## 切换视角时切换 BGM，并确保循环
 func set_view(view: String) -> void:
+	if view == current_view:
+		return
 	current_view = view
+	var stream: AudioStream = bgm_cache.get(view)
+	if stream == null or bgm_player == null:
+		return
+	# 断开旧连接、切流、重播
+	if bgm_player.finished.is_connected(_on_bgm_finished):
+		bgm_player.finished.disconnect(_on_bgm_finished)
+	bgm_player.stop()
+	bgm_player.stream = stream
+	bgm_player.volume_db = BGM_VOLUME.get(view, -12.0)
+	bgm_player.finished.connect(_on_bgm_finished)
+	bgm_player.play()
 
-# ─── TONE GENERATOR (for puzzle audio feedback) ──
-# Plays a short sine wave tone at the given frequency and duration
+# ── TONE GENERATOR (保留，用于无法替代的谜题音高反馈) ──
+
 func play_tone(freq: float, duration: float = 0.3) -> void:
-	for sfx in sfx_players:
+	for sfx in sfx_pool:
 		if not sfx.playing:
 			_play_tone_on(sfx, freq, duration)
 			return
@@ -249,13 +231,10 @@ func _play_tone_on(player: AudioStreamPlayer, freq: float, duration: float) -> v
 	generator.buffer_length = maxf(duration + 0.05, 0.1)
 	player.stream = generator
 	player.play()
-	
 	var playback := player.get_stream_playback()
 	var frames := int(44100.0 * duration)
-	var t: float = 0.0
-	
 	for i in range(frames):
-		t = float(i) / 44100.0
-		var envelope: float = sin(t * PI / duration)  # smooth fade in/out
+		var t: float = float(i) / 44100.0
+		var envelope: float = sin(t * PI / duration)
 		var s: float = sin(t * freq * TAU) * envelope * 0.25
 		playback.push_frame(Vector2(s, s))

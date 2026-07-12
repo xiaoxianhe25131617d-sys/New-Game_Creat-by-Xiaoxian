@@ -452,11 +452,13 @@ func _on_digit_up(idx: int) -> void:
 	lock_digits[idx] = (lock_digits[idx] + 1) % 10
 	_refresh_lock_display()
 	_schedule_auto_check()
+	AudioManager.play_sfx("lock_turn")
 
 func _on_digit_down(idx: int) -> void:
 	lock_digits[idx] = (lock_digits[idx] + 9) % 10
 	_refresh_lock_display()
 	_schedule_auto_check()
+	AudioManager.play_sfx("lock_turn")
 
 func _refresh_lock_display() -> void:
 	var panel := lock_overlay.get_node_or_null("LockPanel") as Panel

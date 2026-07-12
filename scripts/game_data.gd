@@ -249,6 +249,8 @@ static func default_state() -> Dictionary:
 		"npc_subtexts_read": [],
 		"laser_1_placed": false,
 		"laser_2_placed": false,
+		"laser_focus_1_installed": false,
+		"laser_focus_2_installed": false,
 		"laser_1_angle": 0.0,
 		"laser_2_angle": 0.0,
 		"treasure_unlocked": false,

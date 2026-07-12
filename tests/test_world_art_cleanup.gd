@@ -10,6 +10,7 @@ func _ready() -> void:
 	_test_memory_anchors_use_benches()
 	_test_lighthouse_geometry_is_removed()
 	_test_npc_shoes_define_the_ground_line()
+	_test_required_key_count_matches_available_keys()
 	if failures.is_empty():
 		print("PASS: world art cleanup regression checks")
 		get_tree().quit(0)
@@ -120,3 +121,10 @@ func _test_npc_shoes_define_the_ground_line() -> void:
 		if absf(visual_shoe_y - MindscapeNPC.NPC_FOOT_Y) > 0.6:
 			failures.append("NPC %s shoes are %.1fpx away from the ground line" % [data["id"], visual_shoe_y - MindscapeNPC.NPC_FOOT_Y])
 		npc.free()
+
+func _test_required_key_count_matches_available_keys() -> void:
+	var main_script := load("res://scripts/main.gd") as Script
+	var constants := main_script.get_script_constant_map()
+	var required_key_count := int(constants.get("REQUIRED_KEY_COUNT", -1))
+	if required_key_count != GameData.KEYS.size():
+		failures.append("Required key count must match the number of obtainable keys")
