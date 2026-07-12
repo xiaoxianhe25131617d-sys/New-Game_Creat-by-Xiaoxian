@@ -369,7 +369,7 @@ func start_game(new_game: bool) -> void:
 	player.add_child(camera)
 	dialogue = DialogueBox.new()
 	add_child(dialogue)
-	dialogue.closed.connect(func(): player.controls_enabled = true)
+	dialogue.closed.connect(_on_dialogue_closed)
 	_make_hud()
 	world.set_view_palette(str(state.get("current_view", "normal")))
 	_set_blind_hud_visible(str(state.get("current_view", "normal")) == "blind")
@@ -984,7 +984,7 @@ func talk_to_npc(npc_node: MindscapeNPC) -> void:
 		if view == "depression" and line.has("subtext"):
 			filtered["text"] = str(line["text"]) + "\n[潜台词] " + str(line["subtext"])
 		lines.append(filtered)
-	player.controls_enabled = false
+	player.suspend_for_interaction()
 	dialogue.open(data, lines, view)
 	if npc_node.npc_id == "braille_scholar" and not state.get("album", []).has("盲文 A-D"):
 		state["album"].append("盲文 A-D")
@@ -998,13 +998,16 @@ func rest_at_anchor(anchor: Node) -> void:
 	state["position"] = player.global_position
 	autosave()
 	show_toast("你在记忆长椅旁坐下……", 2.0)
-	player.controls_enabled = false
+	player.suspend_for_interaction()
 	# Short delay before wheel to simulate "sitting down"
 	var timer := get_tree().create_timer(0.4)
 	timer.timeout.connect(func():
 		open_view_wheel()
-		player.controls_enabled = true
 	)
+
+func _on_dialogue_closed() -> void:
+	if is_instance_valid(player):
+		player.resume_after_interaction()
 
 func collect_item(node: Node) -> void:
 	var id: String = str(node.get_meta("id", ""))
@@ -1216,8 +1219,8 @@ func unlocked_all(views: Array) -> bool:
 
 func open_view_wheel() -> void:
 	# 视角轮盘随时可用（按 Tab）
-	if wheel_root != null and is_instance_valid(wheel_root):
-		wheel_root.queue_free()
+	if is_instance_valid(player):
+		player.suspend_for_interaction()
 	if wheel_root != null and is_instance_valid(wheel_root):
 		wheel_root.queue_free()
 	wheel_root = Panel.new()
@@ -1257,12 +1260,15 @@ func open_view_wheel() -> void:
 	close_btn.text = "起身"
 	close_btn.position = Vector2(70, 260)
 	close_btn.size = Vector2(260, 44)
-	close_btn.pressed.connect(func():
-		if wheel_root != null and is_instance_valid(wheel_root):
-			wheel_root.queue_free()
-			wheel_root = null
-	)
+	close_btn.pressed.connect(_close_view_wheel)
 	wheel_root.add_child(close_btn)
+
+func _close_view_wheel() -> void:
+	if wheel_root != null and is_instance_valid(wheel_root):
+		wheel_root.queue_free()
+	wheel_root = null
+	if is_instance_valid(player):
+		player.resume_after_interaction()
 
 func get_view() -> String:
 	return str(state.get("current_view", "normal"))
@@ -1369,7 +1375,7 @@ func _on_player_special(view: String) -> void:
 			show_toast("回声扩散——真实物体轮廓浮现。", 1.6)
 			AudioManager.play_sfx("echo")
 		"adhd":
-			show_toast("冲刺！——按住方向键持续奔跑。", 0.8)
+			show_toast("冲刺！——沿当前方向继续奔跑。", 0.8)
 			AudioManager.play_sfx("dash")
 		"autism":
 			show_toast("细节放大——模式变得清晰。", 1.6)
@@ -1485,8 +1491,7 @@ func _add_profile_button(parent: Control, text: String, profile_id: String) -> B
 func _add_view_button(parent: Control, view: String) -> Button:
 	return _add_button(parent, GameData.VIEW_NAMES[view], func():
 		try_switch_view(view)
-		if wheel_root != null and is_instance_valid(wheel_root):
-			wheel_root.queue_free()
+		_close_view_wheel()
 	)
 
 func _format_time(seconds: float) -> String:

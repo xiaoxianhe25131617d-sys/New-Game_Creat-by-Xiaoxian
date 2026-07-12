@@ -30,6 +30,9 @@ func _test_memory_bench_opens_view_wheel() -> void:
 	main.set("player", player)
 	main.set("dialogue", dialogue)
 	main.call("_make_hud")
+	player.set_view("adhd")
+	player.adhd_auto_dir = 1.0
+	player.velocity.x = MindscapePlayer.SPEED
 	if world == null or player == null or world.anchor_nodes.is_empty():
 		failures.append("Main game must create a player and memory bench anchors")
 		main.free()
@@ -44,4 +47,14 @@ func _test_memory_bench_opens_view_wheel() -> void:
 		failures.append("View wheel must be attached to the controls canvas")
 	elif not wheel.visible:
 		failures.append("View wheel must remain visible after memory bench interaction")
+	if player.controls_enabled:
+		failures.append("Memory bench view wheel must keep player controls suspended while open")
+	if player.velocity.x != 0.0 or player.adhd_auto_dir != 1.0:
+		failures.append("Memory bench must stop movement without clearing ADHD auto-walk direction")
+	if not main.has_method("_close_view_wheel"):
+		failures.append("View wheel must use one close path that restores player controls")
+	else:
+		main.call("_close_view_wheel")
+		if not player.controls_enabled or player.adhd_auto_dir != 1.0:
+			failures.append("Closing the view wheel must resume the saved ADHD auto-walk direction")
 	main.free()

@@ -129,9 +129,6 @@ func _physics_process(delta: float) -> void:
 		if current_view == "adhd":
 			if raw_dir != 0.0:
 				adhd_auto_dir = raw_dir
-			elif Input.is_action_just_pressed("interact") or Input.is_action_just_pressed("special"):
-				# E/F中断自动行走
-				adhd_auto_dir = 0.0
 			direction = adhd_auto_dir
 			spd_mult *= adhd_speed_mult
 		else:
@@ -227,6 +224,14 @@ func set_view(view: String) -> void:
 	# ADHD模式：重置自动行走
 	if view != "adhd":
 		adhd_auto_dir = 0.0
+
+func suspend_for_interaction() -> void:
+	controls_enabled = false
+	dash_time = 0.0
+	velocity.x = 0.0
+
+func resume_after_interaction() -> void:
+	controls_enabled = true
 
 func pulse_echo() -> void:
 	var tween: Tween = create_tween()

@@ -6,6 +6,7 @@ func _ready() -> void:
 	_test_blind_overlay_uses_screen_shader()
 	_test_blind_overlay_stays_fixed_to_screen()
 	_test_blind_vision_uses_compact_radius()
+	_test_view_effect_scale_tracks_stretch_transform()
 	_test_monsters_render_below_blind_overlay()
 	_test_blind_view_toggles_overlay_state()
 	_test_player_screen_position_uses_canvas_transform()
@@ -51,6 +52,23 @@ func _test_blind_vision_uses_compact_radius() -> void:
 		failures.append("Blind vision radius must be 80px")
 	if absf(feather - 16.0) > 0.01:
 		failures.append("Blind vision feather must scale down to 16px")
+	world.free()
+
+func _test_view_effect_scale_tracks_stretch_transform() -> void:
+	var world := MindscapeWorld.new()
+	if not world.has_method("_view_effect_scale_for_transform"):
+		failures.append("View effects must expose a shared stretch-transform scale helper")
+		world.free()
+		return
+	var half_transform := Transform2D.IDENTITY.scaled(Vector2(0.5, 0.5))
+	var full_transform := Transform2D.IDENTITY.scaled(Vector2(1.5, 1.5))
+	var half_scale := float(world.call("_view_effect_scale_for_transform", half_transform, 1.0))
+	var full_scale := float(world.call("_view_effect_scale_for_transform", full_transform, 1.0))
+	var zoomed_scale := float(world.call("_view_effect_scale_for_transform", Transform2D.IDENTITY, 1.5))
+	if absf(half_scale - 0.5) > 0.001 or absf(full_scale - 1.5) > 0.001:
+		failures.append("View effect radius must follow the actual viewport stretch transform")
+	if absf(zoomed_scale - 1.5) > 0.001:
+		failures.append("View effect radius must also follow camera zoom")
 	world.free()
 
 func _test_monsters_render_below_blind_overlay() -> void:

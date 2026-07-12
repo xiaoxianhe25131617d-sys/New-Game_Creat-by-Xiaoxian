@@ -18,16 +18,24 @@ var view_tint_canvas: CanvasLayer
 var palette_overlay: ColorRect
 var blind_vision: ColorRect
 var blind_vision_material: ShaderMaterial
+var adhd_attention: ColorRect
+var adhd_attention_material: ShaderMaterial
 var view_overlay_canvas: CanvasLayer
 var monster_canvas: CanvasLayer
 
 var current_palette_view: String = "normal"
 var view_pulse_time: float = 0.0
 var _spike_canvas: CanvasLayer
+var _adhd_attention_timer: float = 0.0
+var _adhd_attention_cue: Control
+var _adhd_rng := RandomNumberGenerator.new()
 
 const BLIND_VISION_WORLD_RADIUS: float = 80.0
 const BLIND_VISION_FEATHER: float = 16.0
 const BLIND_VISION_SHADER := preload("res://shaders/blind_vision.gdshader")
+const ADHD_FOCUS_RADIUS: float = 220.0
+const ADHD_FOCUS_FEATHER: float = 160.0
+const ADHD_ATTENTION_SHADER := preload("res://shaders/adhd_attention.gdshader")
 
 var _drop_through_tiles: Array[Vector2i] = []  # 可穿透地板位置列表
 var _ladder_zones: Array[Area2D] = []  # 梯子列表（玩家可爬）
@@ -134,6 +142,7 @@ func build(state: Dictionary) -> void:
 func _make_background_canvas() -> void:
 	# Run after normal gameplay nodes so the mask uses the latest camera canvas transform.
 	process_priority = 1000
+	_adhd_rng.randomize()
 	# 固定在视口后的像素天空背景。
 	bg_canvas = CanvasLayer.new()
 	bg_canvas.name = "BackgroundCanvas"
@@ -183,6 +192,21 @@ func _make_background_canvas() -> void:
 	blind_vision_material.set_shader_parameter("feather_px", BLIND_VISION_FEATHER)
 	blind_vision.material = blind_vision_material
 	view_tint_canvas.add_child(blind_vision)
+
+	adhd_attention = ColorRect.new()
+	adhd_attention.name = "ADHDAttention"
+	adhd_attention.set_anchors_preset(Control.PRESET_FULL_RECT)
+	adhd_attention.color = Color.WHITE
+	adhd_attention.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	adhd_attention.visible = false
+	adhd_attention.z_index = 126
+	adhd_attention_material = ShaderMaterial.new()
+	adhd_attention_material.shader = ADHD_ATTENTION_SHADER
+	adhd_attention_material.set_shader_parameter("player_screen_uv", Vector2(0.5, 0.5))
+	adhd_attention_material.set_shader_parameter("radius_px", ADHD_FOCUS_RADIUS)
+	adhd_attention_material.set_shader_parameter("feather_px", ADHD_FOCUS_FEATHER)
+	adhd_attention.material = adhd_attention_material
+	view_tint_canvas.add_child(adhd_attention)
 
 	view_overlay_canvas = CanvasLayer.new()
 	view_overlay_canvas.name = "ViewOverlayCanvas"
@@ -954,6 +978,8 @@ func _process(delta: float) -> void:
 	_animate_view_tint()
 	if current_palette_view == "blind" and is_instance_valid(blind_vision_material):
 		_update_blind_vision()
+	elif current_palette_view == "adhd" and is_instance_valid(adhd_attention_material):
+		_update_adhd_attention(delta)
 
 func set_view_palette(view: String) -> void:
 	if not is_instance_valid(palette_overlay): return
@@ -965,19 +991,30 @@ func set_view_palette(view: String) -> void:
 		"blind":
 			palette_overlay.color = Color(1, 1, 1, 0)
 			blind_vision.visible = true
+			adhd_attention.visible = false
 			_update_blind_vision()
 		"adhd":
-			palette_overlay.color = Color(1.0, 0.92, 0.4, 0.12)
+			palette_overlay.color = Color(1, 1, 1, 0)
 			blind_vision.visible = false
+			adhd_attention.visible = true
+			_adhd_attention_timer = _adhd_rng.randf_range(2.0, 4.0)
+			_update_adhd_attention_shader()
 		"autism":
 			palette_overlay.color = Color(0.6, 0.75, 1.0, 0.2)
 			blind_vision.visible = false
+			adhd_attention.visible = false
 		"depression":
 			palette_overlay.color = Color(0.12, 0.18, 0.28, 0.5)
 			blind_vision.visible = false
+			adhd_attention.visible = false
 		_:
 			palette_overlay.color = Color(1.0, 0.9, 0.75, 0.06)
 			blind_vision.visible = false
+			adhd_attention.visible = false
+
+	if view != "adhd" and is_instance_valid(_adhd_attention_cue):
+		_adhd_attention_cue.queue_free()
+		_adhd_attention_cue = null
 
 	if _spike_canvas: _spike_canvas.visible = (view == "depression")
 	_notify_monsters_view_changed(view)
@@ -985,12 +1022,9 @@ func set_view_palette(view: String) -> void:
 func get_current_view() -> String: return current_palette_view
 
 func _animate_view_tint() -> void:
-	if not is_instance_valid(palette_overlay) or current_palette_view == "blind": return
+	if not is_instance_valid(palette_overlay) or current_palette_view == "blind" or current_palette_view == "adhd": return
 	var base := palette_overlay.color
 	match current_palette_view:
-		"adhd":
-			var p := 1.0 + 0.04 * sin(view_pulse_time * 8.0)
-			palette_overlay.color = Color(base.r, base.g, base.b, clampf(0.12 * p, 0.08, 0.18))
 		"autism":
 			var p := 1.0 + 0.02 * sin(view_pulse_time * 2.5)
 			palette_overlay.color = Color(base.r, base.g, base.b, clampf(0.2 * p, 0.17, 0.25))
@@ -1008,13 +1042,105 @@ func _update_blind_vision() -> void:
 		screen_position.x / viewport_size.x,
 		screen_position.y / viewport_size.y
 	)
-	var camera := get_viewport().get_camera_2d()
-	var zoom_scale := 1.0
-	if camera != null:
-		zoom_scale = maxf(absf(camera.zoom.x), 0.001)
+	var screen_scale := _get_view_effect_screen_scale()
 	blind_vision_material.set_shader_parameter("player_screen_uv", player_screen_uv)
-	blind_vision_material.set_shader_parameter("radius_px", BLIND_VISION_WORLD_RADIUS * zoom_scale)
-	blind_vision_material.set_shader_parameter("feather_px", BLIND_VISION_FEATHER * zoom_scale)
+	blind_vision_material.set_shader_parameter("radius_px", BLIND_VISION_WORLD_RADIUS * screen_scale)
+	blind_vision_material.set_shader_parameter("feather_px", BLIND_VISION_FEATHER * screen_scale)
+
+func _update_adhd_attention(delta: float) -> void:
+	_update_adhd_attention_shader()
+	_adhd_attention_timer -= delta
+	if _adhd_attention_timer > 0.0:
+		return
+	_adhd_attention_timer = _adhd_rng.randf_range(2.0, 4.0)
+	_show_adhd_attention_cue()
+
+func _update_adhd_attention_shader() -> void:
+	var viewport_size := get_viewport_rect().size
+	if viewport_size.x <= 0.0 or viewport_size.y <= 0.0:
+		return
+	var screen_position := _get_player_screen_position()
+	adhd_attention_material.set_shader_parameter("player_screen_uv", Vector2(
+		screen_position.x / viewport_size.x,
+		screen_position.y / viewport_size.y
+	))
+	var screen_scale := _get_view_effect_screen_scale()
+	adhd_attention_material.set_shader_parameter("radius_px", ADHD_FOCUS_RADIUS * screen_scale)
+	adhd_attention_material.set_shader_parameter("feather_px", ADHD_FOCUS_FEATHER * screen_scale)
+	adhd_attention_material.set_shader_parameter("time_sec", view_pulse_time)
+
+static func _view_effect_scale_for_transform(stretch_transform: Transform2D, camera_zoom: float = 1.0) -> float:
+	var stretch_scale := stretch_transform.get_scale()
+	var window_scale := minf(absf(stretch_scale.x), absf(stretch_scale.y))
+	return maxf(window_scale * camera_zoom, 0.001)
+
+func _get_view_effect_screen_scale() -> float:
+	var camera_zoom := 1.0
+	var camera := get_viewport().get_camera_2d()
+	if camera != null:
+		camera_zoom = absf(camera.zoom.x)
+	return _view_effect_scale_for_transform(get_viewport().get_stretch_transform(), camera_zoom)
+
+func _get_adhd_attention_candidates() -> Array[Node2D]:
+	var candidates: Array[Node2D] = []
+	var viewport_rect := Rect2(Vector2.ZERO, get_viewport_rect().size).grow(24.0)
+	for node in get_tree().get_nodes_in_group("interactable"):
+		if not is_instance_valid(node) or not node is Node2D:
+			continue
+		var target := node as Node2D
+		if not target.is_visible_in_tree():
+			continue
+		if viewport_rect.has_point(target.get_global_transform_with_canvas().origin):
+			candidates.append(target)
+	return candidates
+
+func _show_adhd_attention_cue() -> void:
+	if is_instance_valid(_adhd_attention_cue):
+		return
+	var candidates := _get_adhd_attention_candidates()
+	if candidates.is_empty():
+		return
+	var player_screen := _get_player_screen_position()
+	var focus_radius := ADHD_FOCUS_RADIUS * _get_view_effect_screen_scale()
+	var peripheral: Array[Node2D] = []
+	for target in candidates:
+		if target.get_global_transform_with_canvas().origin.distance_to(player_screen) >= focus_radius:
+			peripheral.append(target)
+	var pool := peripheral if not peripheral.is_empty() else candidates
+	var target: Node2D = pool[_adhd_rng.randi_range(0, pool.size() - 1)]
+	var ring := Panel.new()
+	ring.name = "ADHDAttentionCue"
+	ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ring.z_index = 128
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(1.0, 0.86, 0.18, 0.08)
+	style.border_color = Color(1.0, 0.86, 0.18, 0.95)
+	style.set_border_width_all(3)
+	style.set_corner_radius_all(28)
+	ring.add_theme_stylebox_override("panel", style)
+	view_tint_canvas.add_child(ring)
+	_adhd_attention_cue = ring
+	var duration := _adhd_rng.randf_range(0.6, 1.0)
+	var tween := create_tween()
+	tween.tween_method(_adhd_attention_cue_step.bind(target, ring), 0.0, 1.0, duration)
+	tween.tween_callback(_finish_adhd_attention_cue.bind(ring))
+
+func _adhd_attention_cue_step(progress: float, target: Node2D, ring: Panel) -> void:
+	if not is_instance_valid(target) or not is_instance_valid(ring):
+		return
+	var size_px := lerpf(44.0, 58.0, sin(progress * PI))
+	ring.size = Vector2(size_px, size_px)
+	ring.position = target.get_global_transform_with_canvas().origin - ring.size * 0.5
+	var style := ring.get_theme_stylebox("panel") as StyleBoxFlat
+	if style != null:
+		style.border_color.a = sin(progress * PI)
+		style.bg_color.a = 0.08 * sin(progress * PI)
+
+func _finish_adhd_attention_cue(ring: Panel) -> void:
+	if is_instance_valid(ring):
+		ring.queue_free()
+	if _adhd_attention_cue == ring:
+		_adhd_attention_cue = null
 
 func trigger_echo_pulse(_center: Vector2) -> void:
 	if current_palette_view != "blind" or not is_instance_valid(view_overlay_canvas): return
