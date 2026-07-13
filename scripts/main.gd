@@ -1,5 +1,9 @@
 extends Node
 
+const MAZE_COMPASS_TEXTURE := preload("res://assets/ui/generated/maze_compass.png")
+const HIDDEN_DOOR_TEXTURE := preload("res://assets/ui/generated/hidden_stone_door.png")
+const UNDERGROUND_ENTRY_AUDIO := preload("res://assets/audio/enter_underground_maze.MP3")
+
 var world: MindscapeWorld
 var player: MindscapePlayer
 var camera: Camera2D
@@ -31,13 +35,29 @@ var drag_item_id: String = ""
 var drag_preview: Panel
 var drag_mouse_offset: Vector2
 var laser_owned: Dictionary = {"laser_device_1": false, "laser_device_2": false}
+var _laser_unlock_cutscene_played: bool = false
+var _maze_compass_texture: Texture2D = null
+var _hidden_door_texture: Texture2D = null
 
 # ── 拖放/激光常量 ──
 const LASER_ANGLE_STEP: float = 0.03  # 滚轮旋转步长(rad)
 const REQUIRED_KEY_COUNT: int = 3
 
 func _ready() -> void:
-	show_login_screen()
+	add_to_group("main")
+	_load_runtime_assets()
+	if get_tree().has_meta("mindscape_open_profiles_after_ending"):
+		get_tree().remove_meta("mindscape_open_profiles_after_ending")
+		call_deferred("show_profile_menu")
+		return
+	var profile: Dictionary = ProfileManager.get_current_profile()
+	var saved_state: Dictionary = profile.get("state", {}) as Dictionary
+	if bool(saved_state.get("return_to_game", false)):
+		saved_state["return_to_game"] = false
+		ProfileManager.save_state(saved_state)
+		call_deferred("start_game", false)
+	else:
+		show_login_screen()
 
 func _process(delta: float) -> void:
 	if not game_running:
@@ -53,6 +73,12 @@ func _process(delta: float) -> void:
 	_check_monsters()
 	_update_hud()
 	_update_audio_region()
+
+func _load_runtime_assets() -> void:
+	if _maze_compass_texture == null:
+		_maze_compass_texture = MAZE_COMPASS_TEXTURE
+	if _hidden_door_texture == null:
+		_hidden_door_texture = HIDDEN_DOOR_TEXTURE
 
 # ═══════════════════════════════════════════════════════
 #  梯子爬行：玩家在梯子内时禁用重力，按 W/↑ 持续上移，按 S/↓ 持续下移
@@ -258,8 +284,10 @@ func show_main_menu() -> void:
 	title.size = Vector2(440, 130)
 	title.add_theme_font_size_override("font_size", 54)
 	menu_root.add_child(title)
+	var current_profile: Dictionary = ProfileManager.get_current_profile()
+	var current_state: Dictionary = current_profile.get("state", {}) as Dictionary
 	var player_name := Label.new()
-	player_name.text = "玩家：%s" % ProfileManager.get_current_profile().get("display_name", "旅行者")
+	player_name.text = "玩家：%s%s" % [current_profile.get("display_name", "旅行者"), "  ·  已通关" if bool(current_state.get("finished", false)) else ""]
 	player_name.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	player_name.position = Vector2(330, 230)
 	player_name.size = Vector2(620, 32)
@@ -267,7 +295,7 @@ func show_main_menu() -> void:
 	player_name.modulate = Color("#ffe8a0")
 	menu_root.add_child(player_name)
 	var capsule := Label.new()
-	capsule.text = "中央广场的时间胶囊正在等待被重新理解"
+	capsule.text = "旅程已经完成，仍可继续寻找遗漏的纪念物" if bool(current_state.get("finished", false)) else "中央广场的时间胶囊正在等待被重新理解"
 	capsule.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	capsule.position = Vector2(330, 268)
 	capsule.size = Vector2(620, 42)
@@ -288,7 +316,7 @@ func show_main_menu() -> void:
 	_add_button(buttons, "退出", func(): get_tree().quit())
 
 func show_profile_menu() -> void:
-	menu_root.queue_free()
+	clear_scene()
 	menu_root = Control.new()
 	menu_root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(menu_root)
@@ -308,8 +336,11 @@ func show_profile_menu() -> void:
 	menu_root.add_child(list)
 	for profile in ProfileManager.list_profiles():
 		var stats: Dictionary = profile.get("stats", {})
-		var text := "%s  ·  完成度 %d%%  ·  相册 %d  ·  游玩 %s" % [
+		var profile_state: Dictionary = profile.get("state", {}) as Dictionary
+		var status := "已通关  ·  " if bool(profile_state.get("finished", false)) else ""
+		var text := "%s  ·  %s完成度 %d%%  ·  相册 %d  ·  游玩 %s" % [
 			profile.get("display_name", "旅行者"),
+			status,
 			stats.get("completion", 0),
 			stats.get("album_count", 0),
 			_format_time(stats.get("play_time", 0.0)),
@@ -340,6 +371,8 @@ func start_game(new_game: bool) -> void:
 	world.build(state)
 	# 恢复激光装置状态
 	_restore_laser_state()
+	# 恢复激光聚焦台安装状态
+	_restore_laser_focus_state()
 	# 连接新系统信号
 	world.puzzle_completed.connect(on_level_completed)
 	world.hint_updated.connect(func(txt: String): show_toast(txt, 3.0))
@@ -481,7 +514,7 @@ func _make_hud() -> void:
 	hud.add_child(objective_label)
 	prompt_label = Label.new()
 	prompt_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	prompt_label.position = Vector2(300, 642)
+	prompt_label.position = Vector2(300, 566)
 	prompt_label.size = Vector2(680, 44)
 	prompt_label.add_theme_font_size_override("font_size", 18)
 	prompt_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -559,6 +592,7 @@ func _describe_interactable(node: Node) -> String:
 	if node is PuzzleBanquetPainting: return "[关卡3] 宴会厅油画 — 舞蹈序列"
 	if node is PuzzleAmusementLights: return "[关卡4] 游乐园灯板 — 音频+速度"
 	if node is PuzzleNPCPassword:    return "[关卡5] NPC密码台 — 潜台词解码"
+	if node is PuzzleLaserFocus:     return "[关卡] 激光聚焦台 — 双激光校准挑战"
 	
 	match node.get_meta("kind", ""):
 		"npc":
@@ -589,6 +623,21 @@ func _describe_interactable(node: Node) -> String:
 
 func interact() -> void:
 	if current_near == null:
+		return
+	# 找不同密室：直接转发 interact（不走 meta 分发）
+	if current_near is PuzzleFindDifference:
+		var fd := current_near as PuzzleFindDifference
+		if fd.room_open:
+			fd._close_room()
+		else:
+			fd._open_room()
+		return
+	# 游乐园灯板：完全由灯板自己的 _input 处理，这里不介入
+	if current_near is PuzzleAmusementLights:
+		return
+	# 激光聚焦台：直接转发 interact → _try_start()（不走 meta 分发）
+	if current_near is PuzzleLaserFocus:
+		(current_near as PuzzleLaserFocus)._try_start()
 		return
 	match current_near.get_meta("kind", ""):
 		"npc":
@@ -622,98 +671,135 @@ func interact() -> void:
 				show_ending()
 			else:
 				show_toast("两束激光需要对到正确角度，交汇在一点...", 3.0)
+		"underground_entry":
+			enter_underground_maze()
 		_:
 			# 新式谜题实例（PuzzleTextureWall等）自带交互处理
 			if current_near.has_method("_input"):
 				pass  # 谜题自己处理输入
 
+func enter_underground_maze() -> void:
+	if player == null or not is_instance_valid(player):
+		return
+	state["position"] = player.global_position
+	state["return_to_game"] = false
+	ProfileManager.save_state(state)
+	player.suspend_for_interaction()
+	game_running = false
+
+	var fade_canvas := CanvasLayer.new()
+	fade_canvas.name = "UndergroundTransition"
+	fade_canvas.layer = 2000
+	add_child(fade_canvas)
+	var fade := ColorRect.new()
+	fade.set_anchors_preset(Control.PRESET_FULL_RECT)
+	fade.color = Color(0, 0, 0, 0)
+	fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	fade_canvas.add_child(fade)
+	var tween := create_tween()
+	tween.tween_property(fade, "color:a", 1.0, 0.42)
+	await tween.finished
+	var transition_audio := AudioStreamPlayer.new()
+	transition_audio.name = "UndergroundEntryAudio"
+	transition_audio.stream = UNDERGROUND_ENTRY_AUDIO
+	transition_audio.volume_db = -2.0
+	fade_canvas.add_child(transition_audio)
+	transition_audio.play()
+	await transition_audio.finished
+	get_tree().change_scene_to_file("res://maze/UndergroundMaze.tscn")
+
 # ══════════════════════════════════════════════════════════════
-#  侧边物品栏 + 拖放系统
+#  底部物品栏 + 拖放系统
 # ══════════════════════════════════════════════════════════════
 
-const SIDEBAR_W: float = 138.0
+const SIDEBAR_W: float = 1256.0
 const SLOT_W: float = 118.0
-const SLOT_H: float = 56.0
+const SLOT_H: float = 54.0
 
 func _create_sidebar_inventory() -> void:
 	sidebar = Panel.new()
-	sidebar.name = "SidebarInventory"
-	sidebar.position = Vector2(4, 4)                     # 左上角留一点间距
-	sidebar.size = Vector2(SIDEBAR_W, 530)               # 高530
+	sidebar.name = "BottomInventory"
+	sidebar.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	sidebar.offset_left = 12.0
+	sidebar.offset_top = -102.0
+	sidebar.offset_right = -12.0
+	sidebar.offset_bottom = -8.0
 	sidebar.z_index = 10
 	
 	var sbg := StyleBoxFlat.new()
-	sbg.bg_color = Color("#0a0a18", 0.78)
+	sbg.bg_color = Color("#0a0a18", 0.9)
+	sbg.border_color = Color("#4b5269")
+	sbg.set_border_width_all(2)
 	sbg.set_corner_radius_all(6)
 	sidebar.add_theme_stylebox_override("panel", sbg)
 	inventory_canvas.add_child(sidebar)
-	
-	var pad := 10.0
-	var y := 8.0
-	
-	# 标题
+
 	var title := Label.new()
-	title.text = "◆ 物品栏 ◆"
-	title.position = Vector2(0, y)
-	title.size = Vector2(SIDEBAR_W, 20)
+	title.text = "物品栏"
+	title.position = Vector2(14, 10)
+	title.size = Vector2(82, 70)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 14)
+	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 17)
 	title.add_theme_color_override("font_color", Color("#ffe8a0"))
 	sidebar.add_child(title)
-	y += 26
-	
-	# 分隔线
-	_add_sidebar_divider(y)
-	y += 6
-	
-	# ── 🔑 钥匙区 ──
+	_add_sidebar_divider(104.0)
+
 	var key_header := Label.new()
-	key_header.text = "🔑 钥匙"
-	key_header.position = Vector2(pad, y)
+	key_header.text = "钥匙"
+	key_header.position = Vector2(118, 4)
+	key_header.size = Vector2(496, 20)
 	key_header.add_theme_font_size_override("font_size", 13)
 	key_header.add_theme_color_override("font_color", Color("#ffd700"))
 	sidebar.add_child(key_header)
-	y += 20
-	
+
 	var key_data := [
 		{"id": "key_1", "name": "宴会厅钥匙", "icon": "🔑", "color": Color("#ffd700")},
 		{"id": "key_2", "name": "游乐园钥匙", "icon": "🔑", "color": Color("#ff6b6b")},
 		{"id": "key_4", "name": "天文台钥匙", "icon": "🔑", "color": Color("#a29bfe")},
+		{"id": "maze_key", "name": "迷宫钥匙", "icon": "🔑", "color": Color("#73d6d2")},
 	]
-	var cx := (SIDEBAR_W - SLOT_W) / 2.0
 	for i in range(key_data.size()):
-		var slot := _make_inv_slot(Vector2(cx, y), key_data[i], "key", false)
+		var slot := _make_inv_slot(Vector2(118 + i * 124, 26), key_data[i], "key", false)
 		inv_slots[key_data[i]["id"]] = slot
 		sidebar.add_child(slot)
-		y += SLOT_H + 4
-	
-	# 分隔线
-	_add_sidebar_divider(y)
-	y += 6
-	
-	# ── 💡 激光装置区 ──
+	_add_sidebar_divider(622.0)
+
 	var laser_header := Label.new()
-	laser_header.text = "💡 激光装置"
-	laser_header.position = Vector2(pad, y)
+	laser_header.text = "激光装置"
+	laser_header.position = Vector2(638, 4)
+	laser_header.size = Vector2(244, 20)
 	laser_header.add_theme_font_size_override("font_size", 13)
 	laser_header.add_theme_color_override("font_color", Color("#88ccff"))
 	sidebar.add_child(laser_header)
-	y += 20
-	
+
 	var laser_data := [
 		{"id": "laser_device_1", "name": "激光装置 1", "icon": "💡", "color": Color("#ff4444")},
 		{"id": "laser_device_2", "name": "激光装置 2", "icon": "💡", "color": Color("#44aaff")},
 	]
 	for i in range(2):
-		var slot := _make_inv_slot(Vector2(cx, y), laser_data[i], "laser", true)
+		var slot := _make_inv_slot(Vector2(638 + i * 124, 26), laser_data[i], "laser", true)
 		inv_slots[laser_data[i]["id"]] = slot
 		sidebar.add_child(slot)
-		y += SLOT_H + 4
+	_add_sidebar_divider(892.0)
 
-func _add_sidebar_divider(y: float) -> void:
+	var tool_header := Label.new()
+	tool_header.text = "探索工具"
+	tool_header.position = Vector2(908, 4)
+	tool_header.size = Vector2(300, 20)
+	tool_header.add_theme_font_size_override("font_size", 13)
+	tool_header.add_theme_color_override("font_color", Color("#8deaf0"))
+	sidebar.add_child(tool_header)
+
+	var compass_data := {"id": "maze_compass", "name": "地下指南针", "icon": "🧭", "color": Color("#8deaf0"), "texture": _maze_compass_texture}
+	var compass_slot := _make_inv_slot(Vector2(908, 26), compass_data, "tool", false)
+	inv_slots["maze_compass"] = compass_slot
+	sidebar.add_child(compass_slot)
+
+func _add_sidebar_divider(x: float) -> void:
 	var div := ColorRect.new()
-	div.position = Vector2(8, y)
-	div.size = Vector2(SIDEBAR_W - 16, 1)
+	div.position = Vector2(x, 10)
+	div.size = Vector2(1, 72)
 	div.color = Color("#3a3a5a")
 	sidebar.add_child(div)
 
@@ -746,6 +832,16 @@ func _make_inv_slot(pos: Vector2, item_data: Dictionary, category: String, dragg
 	icon.add_theme_color_override("font_color", Color("#444466"))
 	icon.name = "Icon"
 	slot.add_child(icon)
+
+	if item_data.has("texture"):
+		var tex := TextureRect.new()
+		tex.name = "TextureIcon"
+		tex.texture = item_data.get("texture")
+		tex.position = Vector2(6, 6)
+		tex.size = Vector2(28, 28)
+		tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		tex.visible = false
+		slot.add_child(tex)
 	
 	# 名称 — 初始显示 "空"
 	var name_label := Label.new()
@@ -790,8 +886,8 @@ func _on_slot_gui_input(event: InputEvent, slot: Panel) -> void:
 		
 func _can_drag(item_id: String) -> bool:
 	match item_id:
-		"laser_device_1": return laser_owned["laser_device_1"] and not state.get("laser_1_placed", false)
-		"laser_device_2": return laser_owned["laser_device_2"] and not state.get("laser_2_placed", false)
+		"laser_device_1": return laser_owned["laser_device_1"] and not state.get("laser_1_placed", false) and not state.get("laser_focus_1_installed", false)
+		"laser_device_2": return laser_owned["laser_device_2"] and not state.get("laser_2_placed", false) and not state.get("laser_focus_2_installed", false)
 		_: return false
 
 func _show_item_info(item_id: String) -> void:
@@ -800,6 +896,16 @@ func _show_item_info(item_id: String) -> void:
 		"key_1": info = "宴会厅钥匙 — 金色的钥匙"
 		"key_2": info = "游乐园钥匙 — 红色的钥匙"
 		"key_4": info = "天文台钥匙 — 紫色的钥匙"
+		"maze_key": info = "迷宫钥匙 — 从地下迷宫出口带回来的钥匙"
+		"maze_compass":
+			if bool(state.get("maze_compass_owned", false)):
+				info = "地下指南针 — 在地下迷宫中指向正确路线；进入地下后点击它或按 C 切换"
+				if bool(state.get("maze_compass_enabled", false)):
+					info += "\n当前：已启用"
+				else:
+					info += "\n当前：未启用"
+			else:
+				info = "地下指南针 — 完成激光聚焦后获得"
 		"laser_device_1":
 			if not laser_owned["laser_device_1"]: info = "在找不同密室获得"
 			elif state.get("laser_1_placed", false): info = "已放置在风向标1"
@@ -860,7 +966,7 @@ func _end_drag(screen_pos: Vector2) -> void:
 	var center := camera.get_screen_center_position()
 	var world_pos: Vector2 = center + (screen_pos - vs / 2.0) * zoom
 	
-	var vane_idx := world.get_nearest_vane_at(world_pos, 90.0)
+	var vane_idx: int = world.get_nearest_vane_at(world_pos, 90.0)
 	if vane_idx < 1:
 		drag_item_id = ""
 		return
@@ -872,7 +978,7 @@ func _end_drag(screen_pos: Vector2) -> void:
 		return
 	
 	# 放置装置
-	var ok := world.place_laser_device(drag_item_id, vane_idx)
+	var ok: bool = world.place_laser_device(drag_item_id, vane_idx)
 	if ok:
 		if drag_item_id == "laser_device_1":
 			state["laser_1_placed"] = true
@@ -908,6 +1014,7 @@ func _update_inventory_sidebar() -> void:
 		var name_lbl: Label = slot.get_node_or_null("Name") as Label
 		if icon_lbl == null:
 			continue
+		var tex_icon: TextureRect = slot.get_node_or_null("TextureIcon") as TextureRect
 		
 		var idata: Dictionary = slot.get_meta("item_data", {})
 		
@@ -930,6 +1037,8 @@ func _update_inventory_sidebar() -> void:
 				if name_lbl:
 					name_lbl.add_theme_color_override("font_color", Color("#444466"))
 					name_lbl.text = "空"
+				if tex_icon != null:
+					tex_icon.visible = false
 		elif item_id.begins_with("laser_"):
 			var owned: bool = laser_owned.get(item_id, false)
 			match item_id:
@@ -963,6 +1072,34 @@ func _update_inventory_sidebar() -> void:
 			else:
 				st.bg_color = Color("#181825")
 				st.border_color = Color("#2a2a40")
+				icon_lbl.add_theme_color_override("font_color", Color("#444466"))
+				icon_lbl.text = "?"
+				if name_lbl:
+					name_lbl.add_theme_color_override("font_color", Color("#444466"))
+					name_lbl.text = "空"
+				if tex_icon != null:
+					tex_icon.visible = false
+		elif item_id == "maze_compass":
+			var owned_compass := bool(state.get("maze_compass_owned", false))
+			var enabled_compass := bool(state.get("maze_compass_enabled", false))
+			if owned_compass:
+				st.bg_color = Color("#1f3940") if not enabled_compass else Color("#224d52")
+				st.border_color = Color("#5b8f96") if not enabled_compass else Color("#8deaf0")
+				icon_lbl.visible = false
+				if tex_icon != null:
+					tex_icon.visible = true
+					tex_icon.modulate = Color("#8deaf0")
+				icon_lbl.add_theme_color_override("font_color", Color("#8deaf0"))
+				icon_lbl.text = "🧭"
+				if name_lbl:
+					name_lbl.add_theme_color_override("font_color", Color("#8deaf0"))
+					name_lbl.text = "已启用" if enabled_compass else "地下指南针"
+			else:
+				st.bg_color = Color("#181825")
+				st.border_color = Color("#2a2a40")
+				icon_lbl.visible = true
+				if tex_icon != null:
+					tex_icon.visible = false
 				icon_lbl.add_theme_color_override("font_color", Color("#444466"))
 				icon_lbl.text = "?"
 				if name_lbl:
@@ -1101,6 +1238,10 @@ func on_level_completed(level_id: String, reward_id: String = "") -> void:
 			_update_inventory_sidebar()
 		"stone_door":
 			show_toast("石门打开了！左侧区域现已可通行。", 3.0)
+		"laser_focus_master":
+			_handle_laser_focus_reward(true)
+		"laser_focus_pass":
+			_handle_laser_focus_reward(false)
 		"treasure":
 			if state.get("collected_keys", []).size() >= REQUIRED_KEY_COUNT:
 				state["finished"] = true
@@ -1114,6 +1255,90 @@ func on_level_completed(level_id: String, reward_id: String = "") -> void:
 			pass  # 无特殊奖励
 	
 	autosave()
+
+func _handle_laser_focus_reward(perfect: bool) -> void:
+	var first_unlock := GameData.unlock_hidden_door(state)
+	_update_inventory_sidebar()
+	autosave()
+	if first_unlock and not _laser_unlock_cutscene_played:
+		_laser_unlock_cutscene_played = true
+		await _play_hidden_door_cutscene()
+	if perfect:
+		show_toast("🎉 激光聚焦挑战完美通关！地下隐藏门已打开。", 4.0)
+	else:
+		show_toast("👍 激光聚焦挑战完成！地下隐藏门已打开。", 3.0)
+	AudioManager.play_sfx("collect")
+
+func _play_hidden_door_cutscene() -> void:
+	if player != null:
+		player.suspend_for_interaction()
+	var overlay := CanvasLayer.new()
+	overlay.name = "LaserUnlockCutscene"
+	overlay.layer = 5000
+	add_child(overlay)
+	var fade := ColorRect.new()
+	fade.set_anchors_preset(Control.PRESET_FULL_RECT)
+	fade.color = Color(0, 0, 0, 0.0)
+	fade.mouse_filter = Control.MOUSE_FILTER_STOP
+	overlay.add_child(fade)
+	var stage := Panel.new()
+	stage.position = Vector2(430, 150)
+	stage.size = Vector2(420, 310)
+	stage.modulate.a = 0.0
+	var stage_style := StyleBoxFlat.new()
+	stage_style.bg_color = Color("#101922")
+	stage_style.border_color = Color("#526772")
+	stage_style.set_border_width_all(3)
+	stage_style.set_corner_radius_all(6)
+	stage.add_theme_stylebox_override("panel", stage_style)
+	overlay.add_child(stage)
+	var glow := ColorRect.new()
+	glow.position = Vector2(116, 54)
+	glow.size = Vector2(188, 190)
+	glow.color = Color("#8deaf0", 0.18)
+	stage.add_child(glow)
+	var door_atlas := AtlasTexture.new()
+	door_atlas.atlas = _hidden_door_texture
+	door_atlas.region = Rect2(0, 0, 790, 995)
+	var door_image := TextureRect.new()
+	door_image.texture = door_atlas
+	door_image.position = Vector2(116, 20)
+	door_image.size = Vector2(188, 226)
+	door_image.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	door_image.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	stage.add_child(door_image)
+	var label := Label.new()
+	label.text = "地下深处，某扇石门回应了光..."
+	label.position = Vector2(0, 258)
+	label.size = Vector2(420, 40)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", 20)
+	label.add_theme_color_override("font_color", Color("#8deaf0"))
+	stage.add_child(label)
+	var compass := TextureRect.new()
+	compass.texture = _maze_compass_texture
+	compass.position = Vector2(160, 82)
+	compass.size = Vector2(100, 100)
+	compass.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	compass.modulate = Color(1, 1, 1, 0)
+	stage.add_child(compass)
+	var tween := create_tween()
+	tween.tween_property(fade, "color:a", 0.86, 0.45)
+	tween.parallel().tween_property(stage, "modulate:a", 1.0, 0.45)
+	tween.tween_interval(0.7)
+	tween.tween_callback(func(): AudioManager.play_sfx("stone_door"))
+	tween.tween_property(door_image, "modulate", Color("#8deaf0", 0.55), 0.55)
+	tween.tween_callback(func(): door_atlas.region = Rect2(791, 0, 790, 995))
+	tween.tween_property(door_image, "modulate", Color.WHITE, 0.6)
+	tween.tween_callback(func(): label.text = "地下隐藏门已经打开\n获得：地下指南针")
+	tween.tween_property(compass, "modulate:a", 1.0, 0.4)
+	tween.tween_interval(1.25)
+	tween.tween_property(stage, "modulate:a", 0.0, 0.45)
+	tween.parallel().tween_property(fade, "color:a", 0.0, 0.45)
+	await tween.finished
+	overlay.queue_free()
+	if player != null and is_instance_valid(player):
+		player.resume_after_interaction()
 
 func solve_puzzle(node: Node) -> void:
 	var puzzle: Dictionary = _puzzle_by_id(str(node.get_meta("id", "")))
@@ -1183,28 +1408,14 @@ func show_memory(puzzle: Dictionary) -> void:
 	show_toast(text, 5.0)
 
 func show_ending() -> void:
-	player.controls_enabled = false
-	var ending := AcceptDialog.new()
-	ending.title = "时间胶囊开启"
-	ending.dialog_text = """风铃、手套、风筝、照片和纪念徽章——
-回到了它们该在的位置。
-
-旧照片、纸条和儿时玩具，安静地躺在光里。
-
-五位朋友重新聚在一起。
-怪物们化作了温暖的光点。
-中央广场恢复了完整的色彩。
-
-每个人都拥有看见世界的一种方式。
-而理解，是愿意停下来看看对方眼中的风景。
-
-—— 心灵视界 Mindscape ——"""
-	add_child(ending)
-	ending.confirmed.connect(func():
-		player.controls_enabled = true
-		show_toast("感谢你的旅程。")
-	)
-	ending.popup_centered(Vector2(640, 500))
+	if player != null and is_instance_valid(player):
+		player.suspend_for_interaction()
+	GameData.begin_ending(state, "time_capsule")
+	state["return_to_game"] = false
+	ProfileManager.save_state(state)
+	get_tree().set_meta("mindscape_play_formal_ending", true)
+	get_tree().set_meta("mindscape_ending_source", "time_capsule")
+	get_tree().change_scene_to_file("res://maze/UndergroundMaze.tscn")
 
 func unlock_view(view: String) -> void:
 	if not state.get("unlocked_views", []).has(view):
@@ -1310,6 +1521,9 @@ func toggle_pause() -> void:
 	pause_root.add_child(list)
 	_add_button(list, "继续", func(): toggle_pause())
 	_add_button(list, "纪念相册", func(): show_album())
+	if OS.is_debug_build():
+		var debug_label := "收回两个测试激光" if bool(state.get("debug_laser_loadout", false)) else "领取两个测试激光"
+		_add_button(list, debug_label, _toggle_debug_lasers)
 	_add_button(list, "保存并回主菜单", func():
 		autosave()
 		get_tree().paused = false
@@ -1317,13 +1531,24 @@ func toggle_pause() -> void:
 	)
 
 func show_album() -> void:
-	var album := AcceptDialog.new()
-	album.process_mode = Node.PROCESS_MODE_ALWAYS
-	album.title = "纪念相册"
-	var lines: PackedStringArray = PackedStringArray(state.get("album", []))
-	album.dialog_text = "还没有照片。" if lines.is_empty() else "\n".join(lines)
+	var album := AlbumPuzzleUI.new()
+	album.name = "AlbumPuzzleUI"
 	controls_canvas.add_child(album)
-	album.popup_centered(Vector2(520, 420))
+	album.setup(state, func(): ProfileManager.save_state(state))
+
+func _toggle_debug_lasers() -> void:
+	if not OS.is_debug_build():
+		return
+	state["debug_laser_loadout"] = not bool(state.get("debug_laser_loadout", false))
+	_restore_laser_state()
+	_update_inventory_sidebar()
+	ProfileManager.save_state(state)
+	var enabled := bool(state.get("debug_laser_loadout", false))
+	show_toast("已领取两个测试激光" if enabled else "已收回未安装的测试激光", 2.0)
+	if pause_root != null and is_instance_valid(pause_root):
+		pause_root.queue_free()
+		pause_root = null
+		get_tree().paused = false
 
 func _set_blind_hud_visible(is_blind: bool) -> void:
 	if hud_label != null:
@@ -1345,6 +1570,8 @@ func autosave_with_laser_angles() -> void:
 
 func _restore_laser_state() -> void:
 	# 恢复激光装置拥有状态
+	laser_owned["laser_device_1"] = bool(state.get("debug_laser_loadout", false))
+	laser_owned["laser_device_2"] = bool(state.get("debug_laser_loadout", false))
 	for level in GameData.LEVELS:
 		if state.get("completed_levels", []).has(level["id"]):
 			var reward: String = str(level.get("reward", ""))
@@ -1360,6 +1587,39 @@ func _restore_laser_state() -> void:
 	if state.get("laser_2_placed", false):
 		world.place_laser_device("laser_device_2", 2)
 		world.set_laser_angle(2, state.get("laser_2_angle", 0.0))
+
+func _restore_laser_focus_state() -> void:
+	# 找到场景中的 PuzzleLaserFocus 节点，恢复其安装状态
+	for node in get_tree().get_nodes_in_group("interactable"):
+		if node is PuzzleLaserFocus:
+			(node as PuzzleLaserFocus).restore_installation_state(state)
+
+
+## 激光聚焦台：检查指定激光装置是否可以安装到聚焦台（已拥有且尚未放置在风向标上）
+func is_laser_available_for_focus(id: String) -> bool:
+	if not laser_owned.get(id, false):
+		return false
+	var slot_index := 1 if id == "laser_device_1" else 2
+	if bool(state.get("laser_focus_%d_installed" % slot_index, false)):
+		return false
+	# 已拖放到世界中的风向标上则不可用
+	if id == "laser_device_1" and state.get("laser_1_placed", false):
+		return false
+	if id == "laser_device_2" and state.get("laser_2_placed", false):
+		return false
+	return true
+
+
+## 激光聚焦台：将装置安装到聚焦台（slot_idx=1或2），成功返回true
+func install_laser_in_focus(slot_idx: int) -> bool:
+	var id := "laser_device_%d" % slot_idx
+	if not is_laser_available_for_focus(id):
+		return false
+	# 记录安装状态（与风向标放置分开存储）
+	state["laser_focus_%d_installed" % slot_idx] = true
+	autosave()
+	return true
+
 
 func autosave() -> void:
 	if not game_running:

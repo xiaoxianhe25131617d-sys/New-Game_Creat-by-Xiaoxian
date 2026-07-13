@@ -3,15 +3,20 @@ extends Node
 var failures: Array[String] = []
 
 func _ready() -> void:
-	_test_world_boundary_preserves_collectibles()
+	_test_removed_world_boundary_stays_removed()
 	_test_laser_attempts_include_misses()
 	_test_laser_installation_has_one_owner()
-	await _test_bird_stun_preserves_control_lock()
+	_test_player_interaction_lock()
+	await _test_laser_unlock_cutscene_runs()
 	_finish()
 
-func _test_world_boundary_preserves_collectibles() -> void:
-	if MindscapeWorld.RIGHT_BOUNDARY_X <= 10800.0:
-		failures.append("Right world boundary must not block collectible_17")
+func _test_removed_world_boundary_stays_removed() -> void:
+	var world := MindscapeWorld.new()
+	add_child(world)
+	world.build(GameData.default_state())
+	if world.find_child("RightBoundary", true, false) != null:
+		failures.append("The removed right-side invisible boundary must not return")
+	world.free()
 
 func _test_laser_attempts_include_misses() -> void:
 	var puzzle: Node = (load("res://scripts/puzzle_laser_focus.gd") as Script).new()
@@ -31,24 +36,32 @@ func _test_laser_installation_has_one_owner() -> void:
 		failures.append("Laser device installed in focus puzzle must not remain draggable")
 	elif bool(main.call("install_laser_in_focus", 1)):
 		failures.append("Laser device must not install in two places at once")
-	main.call("release_lasers_from_focus")
-	if not bool(main.call("_can_drag", "laser_device_1")):
-		failures.append("Laser device must return to inventory after focus puzzle")
 	main.free()
 
-func _test_bird_stun_preserves_control_lock() -> void:
-	var main: Node = (load("res://scripts/main.gd") as Script).new()
+func _test_player_interaction_lock() -> void:
 	var player := MindscapePlayer.create()
-	add_child(main)
-	main.add_child(player)
-	main.set("game_running", true)
-	main.set("player", player)
-	player.controls_enabled = false
-	main.call("trigger_poop_stun", player)
-	main.set("game_running", false)
-	await get_tree().create_timer(0.6).timeout
+	player.suspend_for_interaction()
 	if player.controls_enabled:
-		failures.append("Bird stun must not release another system's control lock")
+		failures.append("Interaction suspension must keep player controls locked")
+	player.resume_after_interaction()
+	if not player.controls_enabled:
+		failures.append("Interaction resume must restore player controls")
+	player.free()
+
+func _test_laser_unlock_cutscene_runs() -> void:
+	var main: Node = (load("res://scripts/main.gd") as Script).new()
+	add_child(main)
+	var player := MindscapePlayer.create()
+	main.add_child(player)
+	main.set("player", player)
+	Engine.time_scale = 20.0
+	await main.call("_play_hidden_door_cutscene")
+	Engine.time_scale = 1.0
+	await get_tree().process_frame
+	if player == null or not player.controls_enabled:
+		failures.append("Laser unlock cutscene must restore player controls")
+	if main.get_node_or_null("LaserUnlockCutscene") != null:
+		failures.append("Laser unlock cutscene must clean up its overlay")
 	main.free()
 
 func _finish() -> void:

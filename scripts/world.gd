@@ -11,6 +11,8 @@ var anchor_nodes: Array = []
 var collectible_nodes: Dictionary = {}
 var parallax_layers: Array = []
 var world_shift: Vector2 = Vector2.ZERO
+var _parallax_camera_origin := Vector2.ZERO
+var _parallax_origin_set := false
 
 var bg_canvas: CanvasLayer
 var sky_background: TextureRect
@@ -39,6 +41,7 @@ const ADHD_ATTENTION_SHADER := preload("res://shaders/adhd_attention.gdshader")
 
 var _drop_through_tiles: Array[Vector2i] = []  # 可穿透地板位置列表
 var _ladder_zones: Array[Area2D] = []  # 梯子列表（玩家可爬）
+var _laser_focus_puzzle: PuzzleLaserFocus = null
 
 func is_drop_through_tile(tile_pos: Vector2i) -> bool:
 	for dt in _drop_through_tiles:
@@ -80,6 +83,17 @@ const TILESET_MAIN := preload("res://map/tileset.tres")
 const TILESET_DROP := preload("res://map/tileset_drop.tres")
 const SKY_TEXTURE := preload("res://assets/sky_user.png")
 const MEMORY_BENCH_TEXTURE_PATH := "res://assets/environment/generated/memory_bench.png"
+const MAZE_ENTRANCE_TEXTURE := preload("res://assets/maze_entrance.png")
+const TOWN_DISTANT_TREES_TEXTURE := preload("res://assets/town/town_distant_tree_line.png")
+const TOWN_FOREGROUND_CLUSTER_1 := preload("res://assets/town/foreground_cluster_01.png")
+const TOWN_FOREGROUND_CLUSTER_2 := preload("res://assets/town/foreground_cluster_02.png")
+const TOWN_FOREGROUND_CLUSTER_3 := preload("res://assets/town/foreground_cluster_03.png")
+const TOWN_FOREGROUND_CLUSTER_4 := preload("res://assets/town/foreground_cluster_04.png")
+const TOWN_FOREGROUND_CLUSTER_5 := preload("res://assets/town/foreground_cluster_05.png")
+const UNDERGROUND_PORTAL_POSITION := Vector2(9000.0, GROUND_Y_PX)
+const WORLD_WIDTH := WORLD_TILE_W * TILE_SIZE
+const TOWN_DISTANT_TREE_BASE_PX := 536.0
+const PARALLAX_EASE_SPEED := 6.0
 
 const T_GRASS_TL := Vector2i(4, 0)
 const T_GRASS_TR := Vector2i(5, 0)
@@ -127,14 +141,17 @@ func build(state: Dictionary) -> void:
 	_make_depression_spikes()
 	_make_parallax_backgrounds()
 	_make_tilemap_world()
+	_restore_texture_wall_state(state)
 	_make_beautiful_decor()
 	_make_regions_on_tilemap()
 	_make_npcs()
 	_make_puzzles(state)
+	_make_laser_focus_puzzle(state)
 	_make_collectibles(state)
 	_make_monsters(state)
 	_make_memory_anchors()
 	_make_wind_vanes()
+	_make_underground_portal()
 
 # ══════════════════════════════════════════════════════════════
 #  BACKGROUND CANVAS + VIEW TINT
@@ -514,6 +531,12 @@ func remove_texture_wall_blocker() -> void:
 	_texture_wall_body = null
 	hint_updated.emit("石门打开了！后面的区域现已可通行。")
 
+func _restore_texture_wall_state(state: Dictionary) -> void:
+	var completed: Array = state.get("completed_levels", []) as Array
+	if completed.has("texture_wall") and is_instance_valid(_texture_wall_body):
+		_texture_wall_body.queue_free()
+		_texture_wall_body = null
+
 func _paint_decorations() -> void:
 	# 树和灌木
 	for p in PLATFORMS:
@@ -532,6 +555,7 @@ func _paint_decorations() -> void:
 #  手绘装饰 — 各区域特色建筑
 # ══════════════════════════════════════════════════════════════
 func _make_beautiful_decor() -> void:
+	_make_town_art_layers()
 	# 中央广场喷泉
 	_draw_fountain(Vector2(3400, GROUND_Y_PX - 20))
 	# 森林小屋
@@ -550,6 +574,99 @@ func _make_beautiful_decor() -> void:
 		var rx := 300 + i * 280 + fmod(i * 1.3, 1.0) * 120
 		if rx < 11000:
 			_draw_rock(Vector2(rx, GROUND_Y_PX - 2), [Color("#888888"), Color("#999999"), Color("#777777")][i % 3])
+
+func _make_town_art_layers() -> void:
+	# The tree line is repeated with a small overlap, then eased with the camera
+	# as a single layer. It stays behind gameplay and never changes the terrain.
+	var tree_line_layer := Node2D.new()
+	tree_line_layer.name = "TownTreeLineParallax"
+	tree_line_layer.z_index = -1
+	add_child(tree_line_layer)
+	parallax_layers.append({"node": tree_line_layer, "factor": 0.40})
+
+	var back_x := -40.0
+	var back_index := 0
+	var back_scale := 0.42
+	var back_step := TOWN_DISTANT_TREES_TEXTURE.get_width() * back_scale - 8.0
+	while back_x < WORLD_WIDTH + back_step:
+		var back := Sprite2D.new()
+		back.name = "TownTreeLine_%02d" % back_index
+		back.texture = TOWN_DISTANT_TREES_TEXTURE
+		back.centered = false
+		back.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+		back.scale = Vector2(back_scale, back_scale)
+		back.position = Vector2(back_x, GROUND_Y_PX - TOWN_DISTANT_TREE_BASE_PX * back_scale)
+		back.flip_h = back_index % 2 == 1
+		tree_line_layer.add_child(back)
+		back_x += back_step
+		back_index += 1
+
+	var foreground_textures: Array[Texture2D] = [
+		TOWN_FOREGROUND_CLUSTER_1, TOWN_FOREGROUND_CLUSTER_2, TOWN_FOREGROUND_CLUSTER_3,
+		TOWN_FOREGROUND_CLUSTER_4, TOWN_FOREGROUND_CLUSTER_5,
+	]
+	var candidate_positions: Array[float] = [280.0, 1050.0, 1800.0, 2250.0, 3750.0, 5520.0, 7150.0, 8550.0, 10800.0]
+	var cluster_index := 0
+	for candidate_x in candidate_positions:
+		if not _is_foreground_position_safe(candidate_x):
+			continue
+		var foreground := Sprite2D.new()
+		foreground.name = "TownForegroundCluster_%02d" % cluster_index
+		foreground.texture = foreground_textures[cluster_index % foreground_textures.size()]
+		foreground.centered = false
+		foreground.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		var cluster_scale := 0.48 + float(cluster_index % 3) * 0.04
+		foreground.scale = Vector2(cluster_scale, cluster_scale)
+		foreground.position = Vector2(candidate_x, GROUND_Y_PX - foreground.texture.get_height() * cluster_scale)
+		foreground.flip_h = cluster_index % 2 == 1
+		foreground.modulate.a = 0.82
+		foreground.z_index = 6
+		add_child(foreground)
+		cluster_index += 1
+
+func _is_foreground_position_safe(candidate_x: float) -> bool:
+	const SAFE_GAP := 220.0
+	for level in GameData.LEVELS:
+		if absf(candidate_x - (level["pos"] as Vector2).x) < SAFE_GAP:
+			return false
+	for npc in GameData.NPCS:
+		if absf(candidate_x - (npc["pos"] as Vector2).x) < SAFE_GAP:
+			return false
+	for reserved_x in [3900.0, UNDERGROUND_PORTAL_POSITION.x]:
+		if absf(candidate_x - reserved_x) < SAFE_GAP:
+			return false
+	return true
+
+func _make_underground_portal() -> void:
+	var entry := Area2D.new()
+	entry.name = "UndergroundPortal"
+	entry.position = UNDERGROUND_PORTAL_POSITION
+	var entry_shape := CollisionShape2D.new()
+	var entry_rect := RectangleShape2D.new()
+	entry_rect.size = Vector2(150, 90)
+	entry_shape.shape = entry_rect
+	entry_shape.position = Vector2(0, -42)
+	entry.add_child(entry_shape)
+	var entrance_sprite := Sprite2D.new()
+	entrance_sprite.texture = MAZE_ENTRANCE_TEXTURE
+	entrance_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	entrance_sprite.scale = Vector2(1.15, 1.15)
+	entrance_sprite.position = Vector2(0, -112)
+	entrance_sprite.z_index = 5
+	entry.add_child(entrance_sprite)
+	var entry_label := Label.new()
+	entry_label.text = "地下管网\n按 E 进入"
+	entry_label.position = Vector2(-72, -270)
+	entry_label.size = Vector2(144, 48)
+	entry_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	entry_label.add_theme_font_size_override("font_size", 16)
+	entry_label.add_theme_color_override("font_color", Color("#9ed8dc"))
+	entry.add_child(entry_label)
+	entry.set_meta("kind", "underground_entry")
+	entry.set_meta("scene_path", "res://maze/UndergroundMaze.tscn")
+	entry.add_to_group("interactable")
+	add_child(entry)
+	interactables.append(entry)
 
 func _draw_fountain(pos: Vector2) -> void:
 	var p := Polygon2D.new()
@@ -778,6 +895,19 @@ func _make_puzzles(state: Dictionary) -> void:
 			puzzle_nodes[level_id] = puzzle_instance
 			interactables.append(puzzle_instance)
 
+func _make_laser_focus_puzzle(state: Dictionary) -> void:
+	var completed: Array = state.get("completed_levels", []) as Array
+	if completed.has("laser_focus"):
+		return
+	_laser_focus_puzzle = PuzzleLaserFocus.new()
+	_laser_focus_puzzle.name = "LaserFocusPuzzle"
+	_laser_focus_puzzle.position = Vector2(3900, GROUND_Y_PX - 32)
+	add_child(_laser_focus_puzzle)
+	_laser_focus_puzzle.puzzle_completed.connect(func(reward: String): _on_puzzle_completed("laser_focus", reward))
+	_laser_focus_puzzle.hint_updated.connect(func(text: String): hint_updated.emit(text))
+	puzzle_nodes["laser_focus"] = _laser_focus_puzzle
+	interactables.append(_laser_focus_puzzle)
+
 func _create_puzzle_instance(type: String, id: String, data: Dictionary) -> Node2D:
 	match type:
 		"texture_wall":    return PuzzleTextureWall.new()
@@ -808,6 +938,11 @@ func _make_collectibles(state: Dictionary) -> void:
 		{"i": 12, "pos": Vector2(8800, 3170)}, {"i": 13, "pos": Vector2(9200, 3170)},
 		{"i": 14, "pos": Vector2(9600, 3170)}, {"i": 15, "pos": Vector2(10000, 3170)},
 		{"i": 16, "pos": Vector2(10400, 3170)}, {"i": 17, "pos": Vector2(10800, 3170)},
+		{"i": 18, "pos": Vector2(2280, 2850)}, {"i": 19, "pos": Vector2(3320, 2690)},
+		{"i": 20, "pos": Vector2(4720, 2860)}, {"i": 21, "pos": Vector2(5480, 2530)},
+		{"i": 22, "pos": Vector2(6380, 2760)}, {"i": 23, "pos": Vector2(7040, 2500)},
+		{"i": 24, "pos": Vector2(8240, 2790)}, {"i": 25, "pos": Vector2(9460, 2570)},
+		{"i": 26, "pos": Vector2(10640, 2820)},
 	]
 	for p in placements:
 		var i: int = p["i"]
@@ -955,7 +1090,7 @@ func nearest_interactable(point: Vector2, max_distance: float = 110.0) -> Node2D
 		var dist: float = point.distance_to(node.global_position)
 		if dist > best_dist: continue
 		var priority: int = 0
-		if node is PuzzleTextureWall or node is PuzzleFindDifference or node is PuzzleBanquetPainting or node is PuzzleAmusementLights or node is PuzzleNPCPassword or node is PuzzleNineGrid:
+		if node is PuzzleTextureWall or node is PuzzleFindDifference or node is PuzzleBanquetPainting or node is PuzzleAmusementLights or node is PuzzleNPCPassword or node is PuzzleNineGrid or node is PuzzleLaserFocus:
 			priority = 4
 		match node.get_meta("kind", ""):
 			"puzzle": priority = 4
@@ -975,11 +1110,32 @@ func remove_interactable(node: Node) -> void:
 # ══════════════════════════════════════════════════════════════
 func _process(delta: float) -> void:
 	view_pulse_time += delta
+	_update_parallax(delta)
 	_animate_view_tint()
 	if current_palette_view == "blind" and is_instance_valid(blind_vision_material):
 		_update_blind_vision()
 	elif current_palette_view == "adhd" and is_instance_valid(adhd_attention_material):
 		_update_adhd_attention(delta)
+
+static func compute_parallax_offset(current: Vector2, camera_delta: Vector2, factor: float, delta: float) -> Vector2:
+	var target := Vector2(camera_delta.x * (1.0 - factor), camera_delta.y * (1.0 - factor))
+	var weight := 1.0 - exp(-PARALLAX_EASE_SPEED * maxf(delta, 0.0))
+	return current.lerp(target, weight)
+
+func _update_parallax(delta: float) -> void:
+	var camera := get_viewport().get_camera_2d()
+	if camera == null:
+		return
+	var camera_position := camera.get_screen_center_position()
+	if not _parallax_origin_set:
+		_parallax_camera_origin = camera_position
+		_parallax_origin_set = true
+	var camera_delta := camera_position - _parallax_camera_origin
+	for layer_data in parallax_layers:
+		var layer := layer_data.get("node") as Node2D
+		if not is_instance_valid(layer):
+			continue
+		layer.position = compute_parallax_offset(layer.position, camera_delta, float(layer_data.get("factor", 1.0)), delta)
 
 func set_view_palette(view: String) -> void:
 	if not is_instance_valid(palette_overlay): return
@@ -1018,6 +1174,12 @@ func set_view_palette(view: String) -> void:
 
 	if _spike_canvas: _spike_canvas.visible = (view == "depression")
 	_notify_monsters_view_changed(view)
+
+func set_find_difference_room_visible(visible: bool) -> void:
+	# Only the find-difference room may bypass the black blind overlay. All
+	# outdoor scenes keep the original blind presentation unchanged.
+	if current_palette_view == "blind" and is_instance_valid(blind_vision):
+		blind_vision.visible = not visible
 
 func get_current_view() -> String: return current_palette_view
 

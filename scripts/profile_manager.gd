@@ -2,30 +2,46 @@ extends Node
 
 const SAVE_VERSION: int = 1
 const STORAGE_PATH: String = "user://mindscape_profiles.json"
+const TEST_STORAGE_PATH: String = "user://mindscape_profiles_test.json"
+const TOTAL_COLLECTIBLES: float = 27.0
 
 var profiles: Array = []
 var current_profile_id: String = ""
 var pending_cloud_adapter: Object = null
+var storage_path: String = STORAGE_PATH
 
 func _ready() -> void:
+	for argument in OS.get_cmdline_args():
+		if str(argument).contains("tests/"):
+			storage_path = TEST_STORAGE_PATH
+			break
 	load_profiles()
 	if profiles.is_empty():
 		create_profile("旅行者", "sun")
 
 func load_profiles() -> void:
-	if not FileAccess.file_exists(STORAGE_PATH):
+	if not FileAccess.file_exists(storage_path):
 		profiles = []
 		return
-	var file := FileAccess.open(STORAGE_PATH, FileAccess.READ)
+	var file := FileAccess.open(storage_path, FileAccess.READ)
 	var parsed: Variant = JSON.parse_string(file.get_as_text())
 	if typeof(parsed) != TYPE_DICTIONARY:
 		profiles = []
 		return
 	profiles = _restore_vectors(parsed.get("profiles", [])) as Array
 	current_profile_id = str(parsed.get("current_profile_id", ""))
+	var migrated := false
+	for profile in profiles:
+		var state: Dictionary = profile.get("state", {}) as Dictionary
+		if GameData.migrate_state(state):
+			profile["state"] = state
+			profile["stats"] = compute_stats(state)
+			migrated = true
+	if migrated:
+		flush()
 
 func flush() -> void:
-	var file := FileAccess.open(STORAGE_PATH, FileAccess.WRITE)
+	var file := FileAccess.open(storage_path, FileAccess.WRITE)
 	file.store_string(JSON.stringify({
 		"version": SAVE_VERSION,
 		"current_profile_id": current_profile_id,
@@ -96,7 +112,7 @@ func compute_stats(state: Dictionary) -> Dictionary:
 	var collectibles: int = collectible_list.size()
 	var extra_views: int = maxi(view_list.size() - 1, 0)
 	var finished: bool = bool(state.get("finished", false))
-	var completion: int = int(round(((fragments / 8.0) * 45.0) + ((collectibles / 50.0) * 25.0) + ((extra_views / 4.0) * 20.0) + (10.0 if finished else 0.0)))
+	var completion: int = int(round(((fragments / 8.0) * 45.0) + ((collectibles / TOTAL_COLLECTIBLES) * 25.0) + ((extra_views / 4.0) * 20.0) + (10.0 if finished else 0.0)))
 	return {
 		"completion": clamp(completion, 0, 100),
 		"play_time": state.get("play_time", 0.0),

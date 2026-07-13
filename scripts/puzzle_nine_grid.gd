@@ -9,6 +9,7 @@ class_name PuzzleNineGrid
 
 signal puzzle_completed(reward_id: String)
 signal hint_updated(text: String)
+signal room_toggled(open: bool)
 
 var player_in_range: bool = false
 var is_completed: bool = false
@@ -34,13 +35,23 @@ const DEPRESSION_HIDE_DURATION: float = 10.0  # 隐藏 10 秒
 var depression_fullscreen_visible: bool = false
 var _was_in_depression: bool = false  # 上一帧是否在抑郁视角
 
-# ── 同时按3键驱散机制 ──
+# ── 同时按超过3键驱散机制 ──
 var _keys_held: Dictionary = {}        # 当前按住的键集合 {keycode: true}
 var _dismiss_hint_label: Label = null  # 显示"挥手让负面回忆驱散"的标签
+var _house_front: Sprite2D
+var _house_back: Sprite2D
+
+const HOUSE_FRONT_TEXTURE := preload("res://assets/houses/dam_workshop_front.png")
+const HOUSE_BACK_TEXTURE := preload("res://assets/houses/dam_workshop_back.png")
+const WORKSHOP_SCALE := Vector2(620.0 / 1528.0, 620.0 / 1528.0)
+const WORKSHOP_ORIGIN := Vector2(-310.0, -359.0)
 
 # ── 闪动参数 ──
 var _flash_timer: float = 0.0
 const FLASH_PERIOD: float = 1.2       # 每隔 1.2 秒切换一次显隐（慢闪，容易看清）
+
+static func should_dismiss_for_key_count(key_count: int) -> bool:
+	return key_count > 3
 
 func _ready() -> void:
 	# 初始化纹理数组（必须在 _ready 里，不能在 const 数组中 preload）
@@ -63,12 +74,39 @@ func _ready() -> void:
 	shape.shape = rect
 	shape.position = Vector2(0, -30)
 	add_child(shape)
+	_make_house_layers()
 	_solvable_shuffle()
 	# 注意：_validate_layout 必须在 _make_grid 之后调用，否则 grid_container 为 null
 	_make_grid()       # 先建格子（初始化 grid_container）
 	_validate_layout() # 再验证/修复布局（此时 grid_container 已就绪）
 	_make_hint()
 	_make_fullscreen_overlay()
+
+func _make_house_layers() -> void:
+	_house_back = Sprite2D.new()
+	_house_back.name = "HouseBackboard"
+	_house_back.texture = HOUSE_BACK_TEXTURE
+	_house_back.centered = false
+	_house_back.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	_house_back.scale = WORKSHOP_SCALE
+	_house_back.position = WORKSHOP_ORIGIN
+	_house_back.modulate.a = 0.0
+	_house_back.z_index = -6
+	add_child(_house_back)
+
+	_house_front = Sprite2D.new()
+	_house_front.name = "HouseFront"
+	_house_front.texture = HOUSE_FRONT_TEXTURE
+	_house_front.centered = false
+	_house_front.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	_house_front.scale = WORKSHOP_SCALE
+	_house_front.position = WORKSHOP_ORIGIN
+	_house_front.z_index = 12
+	add_child(_house_front)
+
+func _set_house_inside(inside: bool) -> void:
+	_house_front.modulate.a = 0.0 if inside else 1.0
+	_house_back.modulate.a = 1.0 if inside else 0.0
 
 # 保证可解性：从正确状态开始随机移动N次
 func _solvable_shuffle() -> void:
@@ -242,7 +280,7 @@ func _make_fullscreen_overlay() -> void:
 	
 	# 底部提示（静态说明）
 	var hint := Label.new()
-	hint.text = "记忆一段时间后会消失，稍后再次出现 · 同时按住任意 3 个键可驱散"
+	hint.text = "记忆一段时间后会消失，稍后再次出现"
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint.position = Vector2(240, 650)
 	hint.size = Vector2(800, 30)
@@ -329,10 +367,14 @@ func _make_hint() -> void:
 func _on_body_entered(body: Node2D) -> void:
 	if body.is_in_group("player"):
 		player_in_range = true
+		_set_house_inside(true)
+		room_toggled.emit(true)
 
 func _on_body_exited(body: Node2D) -> void:
 	if body.is_in_group("player"):
 		player_in_range = false
+		_set_house_inside(false)
+		room_toggled.emit(false)
 
 # ═══════════════════════════════════════════════════════
 #  输入处理：鼠标点击滑动方块
@@ -351,7 +393,7 @@ func _input(event: InputEvent) -> void:
 	if not challenge_active:
 		return
 
-	# ── 抑郁模式：同时按住3个及以上不同键驱散正确答案 ──
+	# ── 抑郁模式：同时按住四个及以上不同键驱散正确答案 ──
 	if depression_fullscreen_visible and event is InputEventKey:
 		var kcode: int = event.keycode
 		# 忽略修饰键本身
@@ -360,8 +402,8 @@ func _input(event: InputEvent) -> void:
 				_keys_held[kcode] = true
 			elif not event.pressed:
 				_keys_held.erase(kcode)
-			# 同时按住3个及以上键时驱散
-			if _keys_held.size() >= 3:
+			# 严格超过三个键（四键及以上）时驱散。
+			if should_dismiss_for_key_count(_keys_held.size()):
 				_dismiss_overlay_with_animation()
 				get_viewport().set_input_as_handled()
 				return

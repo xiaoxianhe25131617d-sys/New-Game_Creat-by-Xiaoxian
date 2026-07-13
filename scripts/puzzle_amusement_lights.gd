@@ -69,6 +69,16 @@ var end_glow_e: ColorRect
 var _last_interact_frame: int = -1  # 防止同一帧 InputEventKey + InputEventAction 双重触发
 var _start_btn_top: ColorRect = null            # start 按钮顶面（凹陷动画）
 var _end_btn_top: ColorRect = null              # end 按钮顶面（凹陷动画）
+var _house_front: Sprite2D
+var _house_back: Sprite2D
+
+const HOUSE_FRONT_TEXTURE := preload("res://assets/houses/lightboard_factory_matched_front.png")
+const HOUSE_BACK_TEXTURE := preload("res://assets/houses/lightboard_factory_matched_back.png")
+const FACTORY_DISPLAY_SIZE := Vector2(920.0, 620.0)
+# Both layers share the same source canvas and transform. The alpha bottom of
+# that canvas lands on the existing park floor (y = 3200) without changing the
+# size of the playable light-board when the player enters it.
+const FACTORY_DISPLAY_ORIGIN := Vector2(-460.0, -524.5)
 
 # ═══════════════════════════════════════════════════
 #  初始化
@@ -89,9 +99,37 @@ func _ready() -> void:
 	shape.position = Vector2(0, -60)
 	add_child(shape)
 
+	_make_house_layers()
 	_build_platforms()
 	_build_buttons()
 	_build_ui()
+
+func _make_house_layers() -> void:
+	_house_back = Sprite2D.new()
+	_house_back.name = "HouseBackboard"
+	_house_back.texture = HOUSE_BACK_TEXTURE
+	_house_back.centered = false
+	_house_back.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	_house_back.scale = FACTORY_DISPLAY_SIZE / HOUSE_BACK_TEXTURE.get_size()
+	_house_back.position = FACTORY_DISPLAY_ORIGIN
+	_house_back.modulate.a = 0.0
+	_house_back.z_index = -6
+	add_child(_house_back)
+	_house_front = Sprite2D.new()
+	_house_front.name = "HouseFront"
+	_house_front.texture = HOUSE_FRONT_TEXTURE
+	_house_front.centered = false
+	_house_front.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	_house_front.scale = FACTORY_DISPLAY_SIZE / HOUSE_FRONT_TEXTURE.get_size()
+	_house_front.position = FACTORY_DISPLAY_ORIGIN
+	_house_front.z_index = 12
+	add_child(_house_front)
+
+func _set_house_inside(inside: bool) -> void:
+	if is_instance_valid(_house_front):
+		_house_front.modulate.a = 0.0 if inside else 1.0
+	if is_instance_valid(_house_back):
+		_house_back.modulate.a = 1.0 if inside else 0.0
 
 # ═══════════════════════════════════════════════════
 #  构建 3×3 灯板平台 + 侧面阶梯平台
@@ -418,10 +456,12 @@ func _process(delta: float) -> void:
 func _on_body_entered(body: Node2D) -> void:
 	if body.is_in_group("player"):
 		player_in_range = true
+		_set_house_inside(true)
 
 func _on_body_exited(body: Node2D) -> void:
 	if body.is_in_group("player"):
 		player_in_range = false
+		_set_house_inside(false)
 		# 不在这里清 platform_active，由各平台感应区自己管理
 
 # ═══════════════════════════════════════════════════

@@ -23,6 +23,7 @@ const SFX_MAP: Dictionary = {
 	"blind_cane": "盲杖.MP3",
 	"wall_correct": "墙按到正确的按钮.MP3",
 	"stone_door": "石门开启.MP3",
+	"enter_underground": "enter_underground_maze.MP3",
 	"lock_turn": "转动密码锁.MP3",
 	# 小鸟音效
 	"bird_chirp": "小鸟音效.MP3",

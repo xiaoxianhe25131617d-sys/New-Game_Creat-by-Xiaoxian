@@ -16,7 +16,7 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 
 config/name="心灵视界 Mindscape"
 run/main_scene="res://scenes/Main.tscn"
-config/features=PackedStringArray("4.7")
+config/features=PackedStringArray("4.5")
 config/icon="res://assets/ui/icon.svg"
 
 [autoload]
@@ -85,6 +85,11 @@ advance_dialogue={
 pause_menu={
 "deadzone": 0.5,
 "events": [Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":4194305,"physical_keycode":4194305,"key_label":0,"unicode":0,"location":0,"echo":false,"script":null)
+]
+}
+toggle_compass={
+"deadzone": 0.5,
+"events": [Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":67,"physical_keycode":67,"key_label":0,"unicode":0,"location":0,"echo":false,"script":null)
 ]
 }
 
