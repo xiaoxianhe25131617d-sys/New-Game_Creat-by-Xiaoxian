@@ -15,13 +15,37 @@ func _ready() -> void:
 	_expect(world.is_in_group("world"), "world registers its runtime group")
 	_expect(world.get_node_or_null("Markers/monsters/distractor_park") == null, "distractor marker is removed from the authored world")
 	_expect(world.get_node_or_null("MonsterCanvas/Monster_distractor_park") == null, "distractor is not created at runtime")
+	_expect(world.get_node_or_null("MonsterCanvas/Monster_mouth_station") == null, "silent mouth is not created at runtime")
+	for monster_node in get_tree().get_nodes_in_group("monster"):
+		var monster := monster_node as MindscapeMonster
+		_expect(monster == null or monster.monster_type != "silent_mouth", "no silent mouth monster remains in the world")
 	_expect(not world.collectible_nodes.has("collectible_05"), "left banquet hall collectible is not created at runtime")
 	_expect(not world.collectible_nodes.has("collectible_06"), "right banquet hall collectible is not created at runtime")
 	for anchor in world.anchor_nodes:
 		_expect(str(anchor.get_meta("id", "")) != "dam", "banquet hall memory bench is not created at runtime")
 	_expect(world.interactables.size() > GameData.NPCS.size(), "runtime interactables are created")
 	_expect(world.get_node_or_null("NPC_guide_old_man") != null, "NPCs are created from markers")
+	_expect(world.get_node_or_null("NPC_npc_cipher_1") == null, "underground entrance guard is not created at runtime")
 	_expect(world.get_node_or_null("UndergroundPortal") != null, "underground portal is created from its marker")
+	var tree_line := world.get_node_or_null("Visuals/Decorations/TownTreeLineParallax") as Node2D
+	_expect(tree_line != null, "authored town tree line exists")
+	if tree_line != null:
+		var tree_parallax_factor := -1.0
+		for layer_data in world.parallax_layers:
+			if layer_data.get("node") == tree_line:
+				tree_parallax_factor = float(layer_data.get("factor", -1.0))
+				break
+		_expect(tree_parallax_factor > 0.0 and tree_parallax_factor < 1.0, "town tree line uses background parallax")
+		var tree_sprites: Array[Sprite2D] = []
+		for child in tree_line.get_children():
+			if child is Sprite2D:
+				tree_sprites.append(child as Sprite2D)
+		tree_sprites.sort_custom(func(a: Sprite2D, b: Sprite2D): return a.position.x < b.position.x)
+		for index in range(1, tree_sprites.size()):
+			var previous := tree_sprites[index - 1]
+			var visible_width := previous.texture.get_image().get_used_rect().size.x * absf(previous.scale.x)
+			var repeat_step := tree_sprites[index].position.x - previous.position.x
+			_expect(repeat_step <= visible_width, "town tree clusters overlap without a visible gap")
 	var portal := world.get_node_or_null("UndergroundPortal") as Area2D
 	if portal != null:
 		var entrance_back := portal.get_node_or_null("EntranceBack") as Sprite2D

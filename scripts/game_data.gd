@@ -324,6 +324,11 @@ static func toggle_maze_compass(state: Dictionary) -> bool:
 static func open_hidden_chest(state: Dictionary) -> bool:
 	if bool(state.get("ending_seen", false)) or bool(state.get("hidden_chest_opened", false)):
 		return false
+	var keys: Array = state.get("collected_keys", []) as Array
+	if not keys.has("maze_key"):
+		return false
+	keys.erase("maze_key")
+	state["collected_keys"] = keys
 	state["hidden_chest_opened"] = true
 	state["finished"] = true
 	state["maze_compass_enabled"] = false

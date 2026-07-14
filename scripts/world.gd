@@ -190,6 +190,7 @@ const MEMORY_BENCH_TEXTURE_PATH := "res://assets/environment/generated/memory_be
 const MEMORY_BENCH_SIZE_RATIO := 2.0 / 3.0
 const REMOVED_BANQUET_COLLECTIBLE_IDS := [&"collectible_05", &"collectible_06"]
 const REMOVED_BANQUET_ANCHOR_IDS := [&"dam"]
+const REMOVED_WORLD_NPC_IDS := [&"npc_cipher_1"]
 const MAZE_ENTRANCE_SIZE_RATIO := 2.0 / 3.0
 const MAZE_ENTRANCE_BACK_TEXTURE := preload("res://assets/environment/generated/maze_entrance_back.png")
 const MAZE_ENTRANCE_FRONT_TEXTURE := preload("res://assets/environment/generated/maze_entrance_front.png")
@@ -203,6 +204,8 @@ const BUSH_CLUE_TEXTURE := preload("res://assets/environment/generated/autism_bu
 const UNDERGROUND_PORTAL_POSITION := Vector2(9000.0, GROUND_Y_PX)
 const WORLD_WIDTH := WORLD_TILE_W * TILE_SIZE
 const TOWN_DISTANT_TREE_BASE_PX := 536.0
+const TOWN_TREE_PARALLAX_FACTOR := 0.40
+const TOWN_TREE_REPEAT_OVERLAP_PX := 24.0
 
 const T_GRASS_TL := Vector2i(4, 0)
 const T_GRASS_TR := Vector2i(5, 0)
@@ -304,6 +307,30 @@ func _bind_authored_layout() -> void:
 				continue
 			var factor := float(str(layer.name).trim_prefix("Parallax_").replace("_", "."))
 			parallax_layers.append({"node": layer, "factor": factor, "base_position": layer.position})
+	_configure_authored_tree_line()
+
+
+func _configure_authored_tree_line() -> void:
+	var tree_line := get_node_or_null("Visuals/Decorations/TownTreeLineParallax") as Node2D
+	if tree_line == null:
+		return
+	parallax_layers.append({
+		"node": tree_line,
+		"factor": TOWN_TREE_PARALLAX_FACTOR,
+		"base_position": tree_line.position,
+	})
+	var tree_sprites: Array[Sprite2D] = []
+	for child in tree_line.get_children():
+		if child is Sprite2D:
+			tree_sprites.append(child as Sprite2D)
+	if tree_sprites.is_empty():
+		return
+	tree_sprites.sort_custom(func(a: Sprite2D, b: Sprite2D): return a.position.x < b.position.x)
+	var repeat_x := tree_sprites[0].position.x
+	for sprite in tree_sprites:
+		sprite.position.x = repeat_x
+		if sprite.texture != null:
+			repeat_x += sprite.texture.get_width() * absf(sprite.scale.x) - TOWN_TREE_REPEAT_OVERLAP_PX
 
 # ══════════════════════════════════════════════════════════════
 #  BACKGROUND CANVAS + VIEW TINT
@@ -724,18 +751,18 @@ func _make_beautiful_decor() -> void:
 			_draw_rock(Vector2(rx, GROUND_Y_PX - 2), [Color("#888888"), Color("#999999"), Color("#777777")][i % 3])
 
 func _make_town_art_layers() -> void:
-	# The tree line is repeated with a small overlap, then eased with the camera
+	# The tree line is repeated with a small overlap, then moved with the camera
 	# as a single layer. It stays behind gameplay and never changes the terrain.
 	var tree_line_layer := Node2D.new()
 	tree_line_layer.name = "TownTreeLineParallax"
 	tree_line_layer.z_index = -33
 	add_child(tree_line_layer)
-	parallax_layers.append({"node": tree_line_layer, "factor": 0.40, "base_position": tree_line_layer.position})
+	parallax_layers.append({"node": tree_line_layer, "factor": TOWN_TREE_PARALLAX_FACTOR, "base_position": tree_line_layer.position})
 
 	var back_x := -40.0
 	var back_index := 0
 	var back_scale := 0.42
-	var back_step := TOWN_DISTANT_TREES_TEXTURE.get_width() * back_scale - 8.0
+	var back_step := TOWN_DISTANT_TREES_TEXTURE.get_width() * back_scale - TOWN_TREE_REPEAT_OVERLAP_PX
 	while back_x < WORLD_WIDTH + back_step:
 		var back := Sprite2D.new()
 		back.name = "TownTreeLine_%02d" % back_index
@@ -951,6 +978,8 @@ func _add_zone_marker(pos: Vector2, text: String, color: Color) -> void:
 func _make_npcs() -> void:
 	for data in GameData.NPCS:
 		var npc_id := str(data.get("id", ""))
+		if StringName(npc_id) in REMOVED_WORLD_NPC_IDS:
+			continue
 		var runtime_data: Dictionary = data.duplicate(true)
 		runtime_data["pos"] = get_marker_position(&"npcs", StringName(npc_id))
 		var npc := MindscapeNPC.new()
@@ -1346,7 +1375,6 @@ func _make_monsters(state: Dictionary) -> void:
 	var completed: Array = state.get("completed_regions", [])
 	var data: Array = [
 		{"id": "noise_lighthouse", "type": "noise", "region": "lighthouse"},
-		{"id": "mouth_station", "type": "silent_mouth", "region": "station"},
 		{"id": "shadow_forest", "type": "shadow", "region": "forest"},
 	]
 	for item in data:

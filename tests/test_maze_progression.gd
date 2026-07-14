@@ -11,6 +11,7 @@ func _ready() -> void:
 	_test_compass_route_advances_only_near_waypoints()
 	_test_route_distance_and_progress()
 	_test_route_feedback_gain_is_obvious()
+	_test_hidden_chest_requires_maze_key()
 	_test_hidden_chest_completion_is_idempotent()
 	_test_interrupted_ending_can_resume()
 	_test_finished_profile_keeps_real_completion()
@@ -88,6 +89,7 @@ func _test_route_feedback_gain_is_obvious() -> void:
 
 func _test_hidden_chest_completion_is_idempotent() -> void:
 	var state := GameData.default_state()
+	state["collected_keys"] = ["maze_key"]
 	state["maze_compass_enabled"] = true
 	if not GameData.open_hidden_chest(state):
 		failures.append("Opening the hidden chest for the first time must start the ending")
@@ -101,8 +103,24 @@ func _test_hidden_chest_completion_is_idempotent() -> void:
 	if (state.get("album", []) as Array).size() != album_count:
 		failures.append("Repeated hidden-chest interaction must not duplicate album entries")
 
+func _test_hidden_chest_requires_maze_key() -> void:
+	var locked_state := GameData.default_state()
+	if GameData.open_hidden_chest(locked_state):
+		failures.append("The hidden chest must stay locked without the maze key")
+	if bool(locked_state.get("hidden_chest_opened", false)) or bool(locked_state.get("ending_pending", false)):
+		failures.append("A failed hidden-chest attempt must not mutate story progress")
+
+	var unlocked_state := GameData.default_state()
+	unlocked_state["collected_keys"] = ["key_1", "maze_key"]
+	if not GameData.open_hidden_chest(unlocked_state):
+		failures.append("The maze key must unlock the hidden chest")
+	var remaining_keys: Array = unlocked_state.get("collected_keys", []) as Array
+	if remaining_keys.has("maze_key") or not remaining_keys.has("key_1"):
+		failures.append("Opening the hidden chest must consume only the maze key")
+
 func _test_interrupted_ending_can_resume() -> void:
 	var state := GameData.default_state()
+	state["collected_keys"] = ["maze_key"]
 	GameData.open_hidden_chest(state)
 	if not bool(state.get("ending_pending", false)):
 		failures.append("Opening the hidden chest must persist a pending ending before playback")
@@ -115,6 +133,7 @@ func _test_interrupted_ending_can_resume() -> void:
 
 func _test_finished_profile_keeps_real_completion() -> void:
 	var state := GameData.default_state()
+	state["collected_keys"] = ["maze_key"]
 	GameData.open_hidden_chest(state)
 	var stats: Dictionary = ProfileManager.compute_stats(state)
 	if int(stats.get("completion", 100)) >= 100:

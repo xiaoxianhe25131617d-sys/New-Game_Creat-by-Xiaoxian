@@ -18,6 +18,7 @@ func _test_locked_and_unlocked_runtime_states() -> void:
 		failures.append("Locked maze must create a physical hidden-door collision")
 	if locked_maze.compass_button == null or not locked_maze.compass_button.disabled:
 		failures.append("Locked maze must show the compass as unavailable")
+	_test_key_marker_interaction(locked_maze)
 	_test_spawn_return_interaction(locked_maze)
 	locked_maze.queue_free()
 	await get_tree().process_frame
@@ -64,6 +65,7 @@ func _test_underground_audio(maze: UndergroundMaze) -> void:
 		failures.append("AudioManager must expose explicit stop/resume controls for scene transitions")
 
 func _test_spawn_return_interaction(maze: UndergroundMaze) -> void:
+	maze.runtime_player.global_position = maze.player_spawn.global_position
 	var interact_event := InputEventAction.new()
 	interact_event.action = "interact"
 	interact_event.pressed = true
@@ -76,6 +78,29 @@ func _test_spawn_return_interaction(maze: UndergroundMaze) -> void:
 	var return_position := saved_state.get("position", Vector2.ZERO) as Vector2
 	if not return_position.is_equal_approx(UndergroundMaze.MAIN_RETURN_POSITION):
 		failures.append("Maze spawn exit must return beside the overworld underground entrance")
+
+func _test_key_marker_interaction(maze: UndergroundMaze) -> void:
+	var key_marker := maze.get_node_or_null("Markers/Key") as Marker2D
+	var exit_marker := maze.get_node_or_null("Markers/PortalExit") as Marker2D
+	if key_marker == null:
+		failures.append("The maze key needs an authored Key marker")
+		return
+	if maze.maze_key_sprite == null or maze.maze_key_sprite.global_position.distance_to(key_marker.global_position) > 1.0:
+		failures.append("The maze key visual must be anchored to the Key marker")
+	if exit_marker != null:
+		maze.runtime_player.global_position = exit_marker.global_position
+		maze._update_maze_key_prompt()
+		if (maze.maze_state.get("collected_keys", []) as Array).has("maze_key"):
+			failures.append("Reaching the maze exit must not collect the key automatically")
+	maze.runtime_player.global_position = key_marker.global_position
+	var interact_event := InputEventAction.new()
+	interact_event.action = "interact"
+	interact_event.pressed = true
+	maze._unhandled_input(interact_event)
+	if not (maze.maze_state.get("collected_keys", []) as Array).has("maze_key"):
+		failures.append("Pressing E beside the Key marker must collect the maze key")
+	if maze.maze_key_sprite != null and maze.maze_key_sprite.visible:
+		failures.append("The maze key visual must disappear after collection")
 
 func _finish() -> void:
 	if failures.is_empty():

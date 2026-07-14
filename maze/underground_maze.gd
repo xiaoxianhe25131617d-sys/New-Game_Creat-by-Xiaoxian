@@ -45,6 +45,7 @@ const ROUTE_WRONG_DISTANCE := 56.0
 const ROUTE_ADVANCE_DISTANCE := 64.0
 const EXIT_TRIGGER_RADIUS := 140.0
 const SPAWN_RETURN_INTERACT_RADIUS := 120.0
+const KEY_INTERACT_RADIUS := 112.0
 const NAVIGATION_SOURCE_DISTANCE := 180.0
 const DEBUG_SPAWN_OFFSETS := {
 	"PlayerSpawn": Vector2.ZERO,
@@ -210,8 +211,8 @@ var hidden_door_overlay: Polygon2D
 var hidden_door_label: Label
 var hidden_chest_sprite: Sprite2D
 var hidden_chest_label: Label
-var exit_key_sprite: Sprite2D
-var exit_key_label: Label
+var maze_key_sprite: Sprite2D
+var maze_key_label: Label
 var underground_inventory_canvas: CanvasLayer
 var compass_button: Button
 var compass_hud_canvas: CanvasLayer
@@ -251,12 +252,12 @@ func _ready() -> void:
 	_make_blind_vision()
 	_make_hidden_door()
 	_make_hidden_chest()
-	_make_exit_key()
+	_make_maze_key()
 	_make_underground_inventory()
 	_make_compass_hud()
 	_make_compass_audio()
 	_make_debug_toolbar()
-	_update_exit_key_prompt()
+	_update_maze_key_prompt()
 	exit_route_segment_index = nearest_route_segment_index(runtime_player.global_position, EXIT_GUIDANCE_ROUTE)
 	compass_route_index = clampi(int(maze_state.get("maze_compass_route_index", 0)), 0, COMPASS_ROUTE.size() - 2)
 	process_priority = 1000
@@ -298,10 +299,10 @@ func _process(delta: float) -> void:
 	_update_navigation_cue(delta)
 	_update_route_feedback(delta)
 	_update_compass(delta)
-	_update_exit_key_prompt()
+	_update_maze_key_prompt()
 	_update_spawn_return_prompt()
 	if not _leaving_maze and runtime_player.global_position.distance_to($Markers/PortalExit.global_position) < EXIT_TRIGGER_RADIUS:
-		_leave_to_main(MAIN_EXIT_RETURN_POSITION, true)
+		_leave_to_main(MAIN_EXIT_RETURN_POSITION)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if Engine.is_editor_hint() or runtime_player == null or _leaving_maze or _ending_playing:
@@ -311,12 +312,16 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 	if event.is_action_pressed("interact"):
+		if runtime_player.global_position.distance_to($Markers/Key.global_position) < KEY_INTERACT_RADIUS:
+			_collect_maze_key()
+			get_viewport().set_input_as_handled()
+			return
 		if runtime_player.global_position.distance_to($Markers/Chest.global_position) < 112.0:
 			_try_open_hidden_chest()
 			get_viewport().set_input_as_handled()
 			return
 		if runtime_player.global_position.distance_to(player_spawn.global_position) < SPAWN_RETURN_INTERACT_RADIUS:
-			_leave_to_main(MAIN_RETURN_POSITION, false)
+			_leave_to_main(MAIN_RETURN_POSITION)
 			get_viewport().set_input_as_handled()
 
 func _update_spawn_return_prompt() -> void:
@@ -441,26 +446,25 @@ func _make_hidden_chest() -> void:
 	hidden_chest_label.z_index = 5
 	add_child(hidden_chest_label)
 
-func _make_exit_key() -> void:
-	var marker: Marker2D = $Markers/PortalExit
-	exit_key_sprite = Sprite2D.new()
-	exit_key_sprite.name = "MazeExitKey"
-	exit_key_sprite.texture = _make_key_texture()
-	exit_key_sprite.position = marker.position + Vector2(0, -52)
-	exit_key_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	exit_key_sprite.z_index = 4
-	add_child(exit_key_sprite)
+func _make_maze_key() -> void:
+	var marker: Marker2D = $Markers/Key
+	maze_key_sprite = Sprite2D.new()
+	maze_key_sprite.name = "MazeKey"
+	maze_key_sprite.texture = _make_key_texture()
+	maze_key_sprite.position = marker.position
+	maze_key_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	maze_key_sprite.z_index = 4
+	add_child(maze_key_sprite)
 
-	exit_key_label = Label.new()
-	exit_key_label.position = marker.position + Vector2(-88, 10)
-	exit_key_label.size = Vector2(176, 34)
-	exit_key_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	exit_key_label.add_theme_font_size_override("font_size", 14)
-	exit_key_label.add_theme_color_override("font_color", Color("#ffe8a0"))
-	exit_key_label.text = "出口钥匙已收入物品栏" if bool(_get_maze_keys().has("maze_key")) else "靠近这里可自动获得钥匙"
-	exit_key_label.visible = true
-	exit_key_label.z_index = 5
-	add_child(exit_key_label)
+	maze_key_label = Label.new()
+	maze_key_label.position = marker.position + Vector2(-88, 28)
+	maze_key_label.size = Vector2(176, 34)
+	maze_key_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	maze_key_label.add_theme_font_size_override("font_size", 14)
+	maze_key_label.add_theme_color_override("font_color", Color("#ffe8a0"))
+	maze_key_label.text = "按 E 拾取迷宫钥匙"
+	maze_key_label.z_index = 5
+	add_child(maze_key_label)
 
 func _make_underground_inventory() -> void:
 	underground_inventory_canvas = CanvasLayer.new()
@@ -609,6 +613,12 @@ func _refresh_compass_ui() -> void:
 func _update_compass(delta: float) -> void:
 	if hidden_chest_label != null:
 		hidden_chest_label.visible = _hidden_door_is_open() and runtime_player.global_position.distance_to($Markers/Chest.global_position) < 150.0
+		if bool(maze_state.get("hidden_chest_opened", false)):
+			hidden_chest_label.text = "旧物已经回到相册"
+		elif _get_maze_keys().has("maze_key"):
+			hidden_chest_label.text = "按 E 使用迷宫钥匙打开宝箱"
+		else:
+			hidden_chest_label.text = "宝箱已锁，需要迷宫钥匙"
 	if not bool(maze_state.get("maze_compass_owned", false)) or not bool(maze_state.get("maze_compass_enabled", false)) or bool(maze_state.get("hidden_chest_opened", false)):
 		return
 	compass_route_index = advance_ordered_route(runtime_player.global_position, COMPASS_ROUTE, compass_route_index, COMPASS_REACH_DISTANCE)
@@ -761,6 +771,9 @@ func _try_open_hidden_chest() -> void:
 	if not _hidden_door_is_open():
 		_show_maze_toast("石门仍然封闭，远处的激光装置也许能唤醒它。")
 		return
+	if not _get_maze_keys().has("maze_key"):
+		_show_maze_toast("宝箱锁住了。先找到迷宫里的钥匙，再回来打开它。")
+		return
 	var first_open := GameData.open_hidden_chest(maze_state)
 	var ending_pending := bool(maze_state.get("ending_pending", false))
 	if not first_open and not ending_pending:
@@ -775,21 +788,13 @@ func _try_open_hidden_chest() -> void:
 	AudioManager.play_sfx("chest_open")
 	await _play_formal_ending()
 
-func _update_exit_key_prompt() -> void:
-	if exit_key_label == null:
+func _update_maze_key_prompt() -> void:
+	if maze_key_label == null:
 		return
-	var keys := _get_maze_keys()
-	var has_key := keys.has("maze_key")
-	if runtime_player != null and runtime_player.global_position.distance_to($Markers/PortalExit.global_position) < 180.0 and not has_key:
-		_grant_maze_key()
-		keys = _get_maze_keys()
-		has_key = true
-		exit_key_sprite.modulate = Color(1, 1, 1, 1)
-		_show_maze_toast("🔑 获得迷宫钥匙")
-	exit_key_label.text = "出口钥匙已收入物品栏" if has_key else "靠近这里可自动获得钥匙"
-	if exit_key_sprite != null:
-		exit_key_sprite.visible = true
-		exit_key_sprite.modulate = Color(1, 1, 1, 1 if has_key else 0.92)
+	var key_available := not _get_maze_keys().has("maze_key") and not bool(maze_state.get("hidden_chest_opened", false))
+	maze_key_label.visible = key_available and runtime_player != null and runtime_player.global_position.distance_to($Markers/Key.global_position) < 150.0
+	if maze_key_sprite != null:
+		maze_key_sprite.visible = key_available
 
 func _play_formal_ending() -> void:
 	if _ending_playing:
@@ -958,13 +963,11 @@ func _make_light_particle(color: Color) -> Polygon2D:
 	light.color = color
 	return light
 
-func _leave_to_main(target_position: Vector2, grant_key: bool) -> void:
+func _leave_to_main(target_position: Vector2) -> void:
 	if _leaving_maze:
 		return
 	_leaving_maze = true
 	_stop_maze_bgm()
-	if grant_key:
-		_grant_maze_key()
 	var profile: Dictionary = ProfileManager.get_current_profile()
 	var state: Dictionary = profile.get("state", {}) as Dictionary
 	state["position"] = target_position
@@ -984,8 +987,10 @@ func _leave_to_main(target_position: Vector2, grant_key: bool) -> void:
 	await tween.finished
 	get_tree().change_scene_to_file(MAIN_SCENE_PATH)
 
-func _grant_maze_key() -> void:
+func _collect_maze_key() -> void:
 	if _maze_key_granted:
+		return
+	if bool(maze_state.get("hidden_chest_opened", false)):
 		return
 	_maze_key_granted = true
 	var state := maze_state
@@ -994,6 +999,8 @@ func _grant_maze_key() -> void:
 		keys.append("maze_key")
 		state["collected_keys"] = keys
 		ProfileManager.save_state(state)
+		_show_maze_toast("🔑 获得迷宫钥匙")
+	_update_maze_key_prompt()
 
 func _get_maze_keys() -> Array:
 	var keys: Array = maze_state.get("collected_keys", []) as Array
