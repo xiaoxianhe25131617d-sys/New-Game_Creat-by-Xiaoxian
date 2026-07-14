@@ -3,6 +3,7 @@ extends Node
 const MAZE_COMPASS_TEXTURE := preload("res://assets/ui/generated/maze_compass.png")
 const HIDDEN_DOOR_TEXTURE := preload("res://assets/ui/generated/hidden_stone_door.png")
 const UNDERGROUND_ENTRY_AUDIO := preload("res://assets/audio/enter_underground_maze.MP3")
+const MAIN_WORLD_SCENE := preload("res://map/MainWorld.tscn")
 
 var world: MindscapeWorld
 var player: MindscapePlayer
@@ -135,24 +136,9 @@ func _update_ladder_climb(delta: float) -> void:
 	player.global_position.y = clampf(player.global_position.y, top_y - 4.0, bot_y + 4.0)
 
 func _update_audio_region() -> void:
-	if player == null:
+	if player == null or world == null:
 		return
-	var px := player.global_position.x
-	var region := "spawn"
-	if px < 2200:                    # 左侧森林（纹理墙+找不同+宴会场）
-		region = "forest"
-	elif px < 4200:                  # 出生点/中央广场
-		region = "spawn"
-	elif px < 5600:                  # 湖泊灯塔区
-		region = "lighthouse"
-	elif px < 6800:                  # 水坝工业区
-		region = "dam"
-	elif px < 8400:                  # 旧车站
-		region = "station"
-	elif px < 9800:                  # 游乐园
-		region = "park"
-	else:                              # 许愿堂
-		region = "observatory"
+	var region := world.get_region_at(player.global_position)
 	AudioManager.set_region(region)
 	AudioManager.set_view(str(state.get("current_view", "normal")))
 
@@ -350,7 +336,10 @@ func start_game(new_game: bool) -> void:
 	var loaded_state: Dictionary = profile.get("state", GameData.default_state()) as Dictionary
 	state = loaded_state.duplicate(true)
 	_normalize_state()
-	world = MindscapeWorld.new()
+	world = MAIN_WORLD_SCENE.instantiate() as MindscapeWorld
+	if world == null:
+		push_error("MainWorld.tscn root must use scripts/world.gd")
+		return
 	add_child(world)
 	world.build(state)
 	# 恢复激光装置状态
@@ -361,14 +350,12 @@ func start_game(new_game: bool) -> void:
 	world.puzzle_completed.connect(on_level_completed)
 	world.hint_updated.connect(func(txt: String): show_toast(txt, 3.0))
 	player = MindscapePlayer.create()
-	var start_position: Vector2 = state.get("position", GameData.PLAYER_START) as Vector2
-	# Safety: if saved position is out of world bounds, reset to safe spawn
-	var world_max_y: float = GameData.WORLD_SIZE.y - 80.0
-	var world_max_x: float = GameData.WORLD_SIZE.x - 80.0
-	if start_position.y > world_max_y or start_position.y < 200.0:
-		start_position = GameData.PLAYER_START
-	if start_position.x < 0.0 or start_position.x > world_max_x:
-		start_position = GameData.PLAYER_START
+	var spawn_position := world.get_player_spawn()
+	var start_position: Vector2 = state.get("position", spawn_position) as Vector2
+	# Safety: reset stale/out-of-map saves to the scene-authored spawn.
+	var authored_bounds := world.get_world_bounds()
+	if not authored_bounds.grow(-80.0).has_point(start_position):
+		start_position = spawn_position
 	player.global_position = start_position
 	add_child(player)
 	player.add_to_group("player")
@@ -379,10 +366,10 @@ func start_game(new_game: bool) -> void:
 	camera.zoom = Vector2(1.0, 1.0)
 	camera.position_smoothing_enabled = true
 	camera.position_smoothing_speed = 8.0
-	camera.limit_left = 0
-	camera.limit_top = 0
-	camera.limit_right = int(GameData.WORLD_SIZE.x)
-	camera.limit_bottom = int(GameData.WORLD_SIZE.y)
+	camera.limit_left = int(authored_bounds.position.x)
+	camera.limit_top = int(authored_bounds.position.y)
+	camera.limit_right = int(authored_bounds.end.x)
+	camera.limit_bottom = int(authored_bounds.end.y)
 	player.add_child(camera)
 	dialogue = DialogueBox.new()
 	add_child(dialogue)
@@ -1598,10 +1585,10 @@ func _open_debug_tools() -> void:
 	grid.add_theme_constant_override("v_separation", 10)
 	scroll.add_child(grid)
 	_add_debug_header(grid, "主世界传送")
-	_add_button(grid, "中央广场", func(): _debug_restart_main(GameData.PLAYER_START, "central"))
-	_add_button(grid, "九宫格", func(): _debug_restart_main(Vector2(6600, 3165), "nine_grid"))
-	_add_button(grid, "激光聚焦", func(): _debug_restart_main(Vector2(3900, 3168), "laser_focus"))
-	_add_button(grid, "地下入口", func(): _debug_restart_main(Vector2(9000, 3168), "underground_entry"))
+	_add_button(grid, "中央广场", func(): _debug_restart_main(world.get_player_spawn(), "central"))
+	_add_button(grid, "九宫格", func(): _debug_restart_main(world.get_marker_position(&"puzzles", &"nine_grid"), "nine_grid"))
+	_add_button(grid, "激光聚焦", func(): _debug_restart_main(world.get_marker_position(&"puzzles", &"laser_focus"), "laser_focus"))
+	_add_button(grid, "地下入口", func(): _debug_restart_main(world.get_marker_position(&"specials", &"underground_portal"), "underground_entry"))
 	_add_debug_header(grid, "地下 Marker 传送")
 	_add_button(grid, "地下起点", func(): _debug_enter_maze("PlayerSpawn"))
 	_add_button(grid, "隐藏门", func(): _debug_enter_maze("HiddenDoor"))
@@ -1639,7 +1626,7 @@ func _create_debug_profile() -> void:
 	ProfileManager.save_state(state)
 	var clone := ProfileManager.create_debug_clone(state)
 	state = (clone.get("state", GameData.default_state()) as Dictionary).duplicate(true)
-	_debug_restart_main(state.get("position", GameData.PLAYER_START) as Vector2, "cloned")
+	_debug_restart_main(state.get("position", world.get_player_spawn()) as Vector2, "cloned")
 
 func _debug_require_profile() -> bool:
 	return OS.is_debug_build() and ProfileManager.is_current_profile_debug()
@@ -1679,11 +1666,11 @@ func _debug_apply_preset(preset: String) -> void:
 			if not (state.get("unlocked_views", []) as Array).has("depression"):
 				(state.get("unlocked_views", []) as Array).append("depression")
 			state["current_view"] = "depression"
-			_debug_restart_main(Vector2(6600, 3165), preset)
+			_debug_restart_main(world.get_marker_position(&"puzzles", &"nine_grid"), preset)
 			return
 		"lasers":
 			state["debug_laser_loadout"] = true
-			_debug_restart_main(Vector2(3900, 3168), preset)
+			_debug_restart_main(world.get_marker_position(&"puzzles", &"laser_focus"), preset)
 			return
 		"hidden_door", "compass", "ending":
 			GameData.unlock_hidden_door(state)
@@ -1701,7 +1688,7 @@ func _debug_apply_preset(preset: String) -> void:
 			state["finished"] = true
 			state["ending_seen"] = true
 			state["ending_pending"] = false
-			_debug_restart_main(GameData.PLAYER_START, preset)
+			_debug_restart_main(world.get_player_spawn(), preset)
 
 func _debug_toggle_lasers() -> void:
 	state["debug_laser_loadout"] = not bool(state.get("debug_laser_loadout", false))
@@ -1725,11 +1712,12 @@ func _debug_reset_nearest_puzzle() -> void:
 	var nearest_position := player.global_position
 	var nearest_distance := INF
 	for level in GameData.LEVELS:
-		var level_position: Vector2 = level.get("pos", Vector2.ZERO) as Vector2
+		var level_id := str(level.get("id", ""))
+		var level_position := world.get_marker_position(&"puzzles", StringName(level_id))
 		var distance := player.global_position.distance_squared_to(level_position)
 		if distance < nearest_distance:
 			nearest_distance = distance
-			nearest_id = str(level.get("id", ""))
+			nearest_id = level_id
 			nearest_position = level_position
 	(state.get("completed_levels", []) as Array).erase(nearest_id)
 	if nearest_id == "nine_grid":

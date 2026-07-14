@@ -74,5 +74,5 @@ texture = ExtResource("1")
 4:5/0 = 0
 
 [resource]
-physics_layer_0/collision_layer = 1
+physics_layer_0/collision_layer = 2
 sources/0 = SubResource("TileSetAtlasSource_drop01")

@@ -44,6 +44,105 @@ var _drop_through_tiles: Array[Vector2i] = []  # 可穿透地板位置列表
 var _ladder_zones: Array[Area2D] = []  # 梯子列表（玩家可爬）
 var _laser_focus_puzzle: PuzzleLaserFocus = null
 
+const REQUIRED_MARKER_CATEGORIES: PackedStringArray = [
+	"spawns", "puzzles", "npcs", "collectibles", "monsters", "anchors", "specials", "bush_clues",
+]
+const SUPPORTED_PUZZLE_TYPES: PackedStringArray = [
+	"texture_wall", "find_diff", "dance_sequence", "light_board", "npc_cipher", "nine_grid",
+]
+
+
+func get_player_spawn() -> Vector2:
+	return get_marker_position(&"spawns", &"player_start")
+
+
+func get_world_bounds() -> Rect2:
+	var top_left := get_node_or_null("WorldBounds/top_left") as Marker2D
+	var bottom_right := get_node_or_null("WorldBounds/bottom_right") as Marker2D
+	if top_left == null or bottom_right == null:
+		return Rect2()
+	var start := to_local(top_left.global_position)
+	var end := to_local(bottom_right.global_position)
+	return Rect2(start, end - start)
+
+
+func get_region_at(global_point: Vector2) -> String:
+	var regions := get_node_or_null("Regions")
+	if regions == null:
+		return "spawn"
+	for area_node in regions.get_children():
+		var area := area_node as Area2D
+		if area == null:
+			continue
+		for child in area.get_children():
+			var collision := child as CollisionShape2D
+			if collision == null or collision.disabled:
+				continue
+			var rectangle := collision.shape as RectangleShape2D
+			if rectangle == null:
+				continue
+			var local_point := collision.to_local(global_point)
+			if absf(local_point.x) <= rectangle.size.x * 0.5 and absf(local_point.y) <= rectangle.size.y * 0.5:
+				return str(area.name)
+	return "spawn"
+
+
+func get_marker_position(category: StringName, marker_id: StringName) -> Vector2:
+	var marker := get_node_or_null(NodePath("Markers/%s/%s" % [category, marker_id])) as Marker2D
+	if marker == null:
+		return Vector2.ZERO
+	return marker.global_position
+
+
+func validate_layout() -> PackedStringArray:
+	var errors := PackedStringArray()
+	for category in REQUIRED_MARKER_CATEGORIES:
+		var category_root := get_node_or_null("Markers/%s" % category)
+		if category_root == null:
+			errors.append("missing marker category: %s" % category)
+			continue
+		var seen_ids := {}
+		for marker_node in category_root.get_children():
+			var normalized_id := str(marker_node.name).to_lower()
+			if seen_ids.has(normalized_id):
+				errors.append("duplicate marker ID in %s: %s" % [category, marker_node.name])
+			seen_ids[normalized_id] = true
+	if get_node_or_null("Markers/spawns/player_start") == null:
+		errors.append("missing marker: spawns/player_start")
+	var bounds := get_world_bounds()
+	if bounds.size.x <= 0.0 or bounds.size.y <= 0.0:
+		errors.append("WorldBounds must contain top_left and bottom_right markers")
+	for level in GameData.LEVELS:
+		var level_id := str(level.get("id", ""))
+		if not SUPPORTED_PUZZLE_TYPES.has(str(level.get("type", ""))):
+			errors.append("unknown puzzle type for %s: %s" % [level_id, level.get("type", "")])
+		if get_node_or_null("Markers/puzzles/%s" % level_id) == null:
+			errors.append("missing puzzle marker: %s" % level_id)
+	for npc in GameData.NPCS:
+		var npc_id := str(npc.get("id", ""))
+		if get_node_or_null("Markers/npcs/%s" % npc_id) == null:
+			errors.append("missing NPC marker: %s" % npc_id)
+	for special_id in ["underground_portal", "wind_vane_1", "wind_vane_2", "treasure"]:
+		if get_node_or_null("Markers/specials/%s" % special_id) == null:
+			errors.append("missing special marker: %s" % special_id)
+	if get_node_or_null("Markers/puzzles/laser_focus") == null:
+		errors.append("missing puzzle marker: laser_focus")
+	var regions := get_node_or_null("Regions")
+	for region_id in GameData.REGIONS.keys():
+		if region_id == "plaza":
+			continue
+		var area: Area2D = regions.get_node_or_null(str(region_id)) as Area2D if regions != null else null
+		var has_shape := false
+		if area != null:
+			for child in area.get_children():
+				var collision := child as CollisionShape2D
+				if collision != null and collision.shape != null and not collision.disabled:
+					has_shape = true
+					break
+		if not has_shape:
+			errors.append("missing region shape: %s" % region_id)
+	return errors
+
 func is_drop_through_tile(tile_pos: Vector2i) -> bool:
 	for dt in _drop_through_tiles:
 		if dt == tile_pos:
@@ -51,6 +150,10 @@ func is_drop_through_tile(tile_pos: Vector2i) -> bool:
 	return false
 
 func is_drop_through_at(point: Vector2) -> bool:
+	if is_instance_valid(_drop_layer):
+		var local_point := _drop_layer.to_local(point)
+		var cell := _drop_layer.local_to_map(local_point)
+		return _drop_layer.get_cell_source_id(cell) >= 0 or _drop_layer.get_cell_source_id(cell + Vector2i(0, 1)) >= 0
 	var tile_pos := Vector2i(floori(point.x / TILE_SIZE), floori(point.y / TILE_SIZE))
 	return is_drop_through_tile(tile_pos) or is_drop_through_tile(tile_pos + Vector2i(0, 1))
 
@@ -139,14 +242,13 @@ var _memory_bench_visual_position := Vector2.ZERO
 
 func build(state: Dictionary) -> void:
 	add_to_group("world")
+	_ensure_authored_layout()
+	_bind_authored_layout()
+	for layout_error in validate_layout():
+		push_error("MainWorld layout: %s" % layout_error)
 	_make_background_canvas()
 	_make_depression_spikes()
-	_make_parallax_backgrounds()
-	_make_tilemap_world()
-	_make_world_bounds()
 	_restore_texture_wall_state(state)
-	_make_beautiful_decor()
-	_make_regions_on_tilemap()
 	_make_npcs()
 	_make_puzzles(state)
 	_make_laser_focus_puzzle(state)
@@ -155,6 +257,49 @@ func build(state: Dictionary) -> void:
 	_make_memory_anchors()
 	_make_underground_portal()
 	_make_hidden_color_clues()
+
+
+func _ensure_authored_layout() -> void:
+	if get_node_or_null("Markers") != null:
+		return
+	# Compatibility for existing tests/tools that still construct MindscapeWorld.new().
+	# Spatial data still comes from MainWorld.tscn; this path never regenerates it.
+	var packed := load("res://map/MainWorld.tscn") as PackedScene
+	if packed == null:
+		push_error("MainWorld.tscn could not be loaded")
+		return
+	var authored_world := packed.instantiate()
+	for child in authored_world.get_children().duplicate():
+		_clear_scene_owner_recursive(child)
+		child.reparent(self)
+	authored_world.free()
+
+
+func _clear_scene_owner_recursive(node: Node) -> void:
+	node.owner = null
+	for child in node.get_children():
+		_clear_scene_owner_recursive(child)
+
+
+func _bind_authored_layout() -> void:
+	_ground_layer = get_node_or_null("Visuals/TileMaps/Ground") as TileMapLayer
+	_water_layer = get_node_or_null("Visuals/TileMaps/Water") as TileMapLayer
+	_bridge_layer = get_node_or_null("Visuals/TileMaps/Bridge") as TileMapLayer
+	_deco_layer = get_node_or_null("Visuals/TileMaps/Deco") as TileMapLayer
+	_pickup_layer = get_node_or_null("Visuals/TileMaps/Pickups") as TileMapLayer
+	_block_layer = get_node_or_null("Visuals/TileMaps/Blocks") as TileMapLayer
+	_bg_layer = get_node_or_null("Visuals/TileMaps/Background") as TileMapLayer
+	_drop_layer = get_node_or_null("DropThroughPlatforms/DropThrough") as TileMapLayer
+	_texture_wall_body = get_node_or_null("Collisions/TextureWallBlocker") as StaticBody2D
+	parallax_layers.clear()
+	var parallax_root := get_node_or_null("Visuals/Parallax")
+	if parallax_root != null:
+		for child in parallax_root.get_children():
+			var layer := child as Node2D
+			if layer == null:
+				continue
+			var factor := float(str(layer.name).trim_prefix("Parallax_").replace("_", "."))
+			parallax_layers.append({"node": layer, "factor": factor, "base_position": layer.position})
 
 # ══════════════════════════════════════════════════════════════
 #  BACKGROUND CANVAS + VIEW TINT
@@ -252,14 +397,15 @@ func _make_depression_spikes() -> void:
 	_spike_canvas.visible = false
 	add_child(_spike_canvas)
 
-	for x_tile in range(0, WORLD_TILE_W, 4):
-		var sx := x_tile * TILE_SIZE
+	var authored_bounds := get_world_bounds()
+	var ground_y := get_player_spawn().y + 32.0
+	for sx in range(int(authored_bounds.position.x), int(authored_bounds.end.x), 64):
 		var spike := Polygon2D.new()
 		var h: float = 8.0 + fmod(sx * 0.13, 6.0)
 		spike.polygon = PackedVector2Array([
 			Vector2(-3, h), Vector2(3, h), Vector2(0, -3)
 		])
-		spike.position = Vector2(sx, GROUND_Y_PX)
+		spike.position = Vector2(sx, ground_y)
 		spike.color = Color("#ff3333")
 		spike.modulate.a = 0.7
 		spike.z_index = 10
@@ -638,7 +784,7 @@ func _is_foreground_position_safe(candidate_x: float) -> bool:
 func _make_underground_portal() -> void:
 	var entry := Area2D.new()
 	entry.name = "UndergroundPortal"
-	entry.position = UNDERGROUND_PORTAL_POSITION
+	entry.position = get_marker_position(&"specials", &"underground_portal")
 	var entry_shape := CollisionShape2D.new()
 	var entry_rect := RectangleShape2D.new()
 	entry_rect.size = Vector2(150, 90)
@@ -800,17 +946,14 @@ func _add_zone_marker(pos: Vector2, text: String, color: Color) -> void:
 #  NPCs / PUZZLES / COLLECTIBLES
 # ══════════════════════════════════════════════════════════════
 func _make_npcs() -> void:
-	var spawned: Array[Node2D] = []
 	for data in GameData.NPCS:
+		var npc_id := str(data.get("id", ""))
+		var runtime_data: Dictionary = data.duplicate(true)
+		runtime_data["pos"] = get_marker_position(&"npcs", StringName(npc_id))
 		var npc := MindscapeNPC.new()
-		npc.setup(data)
+		npc.setup(runtime_data)
 		add_child(npc)
 		interactables.append(npc)
-		spawned.append(npc)
-	# 反堆叠：推开重叠的NPC
-	_separate_npcs(spawned)
-	# 把NPC从谜题位置推开
-	_push_npcs_away_from_puzzles(spawned)
 
 func _push_npcs_away_from_puzzles(npcs: Array[Node2D]) -> void:
 	# 收集所有谜题位置
@@ -852,7 +995,7 @@ func _separate_npcs(npcs: Array[Node2D]) -> void:
 func _make_puzzles(state: Dictionary) -> void:
 	for level_data in GameData.LEVELS:
 		var level_id: String = level_data["id"]
-		var level_pos: Vector2 = level_data["pos"]
+		var level_pos := get_marker_position(&"puzzles", StringName(level_id))
 		var level_type: String = level_data["type"]
 		var prereq: String = level_data.get("prereq", "")
 		if prereq != "" and not state.get("completed_levels", []).has(prereq): continue
@@ -875,7 +1018,7 @@ func _make_laser_focus_puzzle(state: Dictionary) -> void:
 		return
 	_laser_focus_puzzle = PuzzleLaserFocus.new()
 	_laser_focus_puzzle.name = "LaserFocusPuzzle"
-	_laser_focus_puzzle.position = Vector2(3900, GROUND_Y_PX - 32)
+	_laser_focus_puzzle.position = get_marker_position(&"puzzles", &"laser_focus")
 	add_child(_laser_focus_puzzle)
 	_laser_focus_puzzle.puzzle_completed.connect(func(reward: String): _on_puzzle_completed("laser_focus", reward))
 	_laser_focus_puzzle.hint_updated.connect(func(text: String): hint_updated.emit(text))
@@ -902,43 +1045,31 @@ func _on_puzzle_completed(level_id: String, reward: String = "") -> void:
 
 func _make_collectibles(state: Dictionary) -> void:
 	var collected: Array = state.get("collectibles", [])
-	var placements: Array = [
-		{"i": 0, "pos": Vector2(2400, 3170)}, {"i": 1, "pos": Vector2(2800, 3170)},
-		{"i": 2, "pos": Vector2(3600, 3170)}, {"i": 3, "pos": Vector2(4400, 3170)},
-		{"i": 4, "pos": Vector2(5200, 3170)}, {"i": 5, "pos": Vector2(5600, 3170)},
-		{"i": 6, "pos": Vector2(6000, 3170)}, {"i": 7, "pos": Vector2(6600, 3170)},
-		{"i": 8, "pos": Vector2(7200, 3170)}, {"i": 9, "pos": Vector2(7600, 3170)},
-		{"i": 10, "pos": Vector2(8000, 3170)}, {"i": 11, "pos": Vector2(8400, 3170)},
-		{"i": 12, "pos": Vector2(8800, 3170)}, {"i": 13, "pos": Vector2(9200, 3170)},
-		{"i": 14, "pos": Vector2(9600, 3170)}, {"i": 15, "pos": Vector2(10000, 3170)},
-		{"i": 16, "pos": Vector2(10400, 3170)}, {"i": 17, "pos": Vector2(10800, 3170)},
-		{"i": 18, "pos": Vector2(2280, 2850)}, {"i": 19, "pos": Vector2(3320, 2690)},
-		{"i": 20, "pos": Vector2(4720, 2860)}, {"i": 21, "pos": Vector2(5480, 2530)},
-		{"i": 22, "pos": Vector2(6380, 2760)}, {"i": 23, "pos": Vector2(7040, 2500)},
-		{"i": 24, "pos": Vector2(8240, 2790)}, {"i": 25, "pos": Vector2(9460, 2570)},
-		{"i": 26, "pos": Vector2(10640, 2820)},
-	]
-	for p in placements:
-		var i: int = p["i"]
-		var id := "collectible_%02d" % i
+	var marker_root := get_node_or_null("Markers/collectibles")
+	if marker_root == null:
+		return
+	for marker_node in marker_root.get_children():
+		var marker := marker_node as Marker2D
+		if marker == null:
+			continue
+		var id := str(marker.name)
 		if collected.has(id): continue
-		var area := _add_collectible_marker(p["pos"], Color("#f9d978"))
+		var area := _add_collectible_marker(marker.global_position, Color("#f9d978"))
 		area.set_meta("kind", "collectible")
 		area.set_meta("id", id)
 		collectible_nodes[id] = area
 		interactables.append(area)
 
 func _make_memory_anchors() -> void:
-	var positions := {
-		"plaza": Vector2(3400, GROUND_Y_PX), "forest": Vector2(4800, GROUND_Y_PX),
-		"lighthouse": Vector2(4900, GROUND_Y_PX), "dam": Vector2(6200, GROUND_Y_PX),
-		"station": Vector2(6900, GROUND_Y_PX), "park": Vector2(7900, GROUND_Y_PX),
-		"observatory": Vector2(9800, GROUND_Y_PX),
-	}
-	for key in GameData.REGIONS.keys():
-		if key == "spawn": continue
-		var pos: Vector2 = positions.get(key, Vector2(4500, GROUND_Y_PX))
-		var area := _add_memory_bench(pos)
+	var marker_root := get_node_or_null("Markers/anchors")
+	if marker_root == null:
+		return
+	for marker_node in marker_root.get_children():
+		var marker := marker_node as Marker2D
+		if marker == null:
+			continue
+		var key := str(marker.name)
+		var area := _add_memory_bench(marker.global_position)
 		area.set_meta("kind", "anchor")
 		area.set_meta("id", key)
 		anchor_nodes.append(area)
@@ -1039,12 +1170,19 @@ static func get_bush_clue_colors() -> Array[Color]:
 
 func _make_hidden_color_clues() -> void:
 	_bush_clues.clear()
-	var positions := _resolve_bush_clue_positions(PuzzleBanquetPainting.CORRECT_SEQ.size())
+	var marker_root := get_node_or_null("Markers/bush_clues")
+	if marker_root == null:
+		return
+	var markers := marker_root.get_children()
+	markers.sort_custom(func(a: Node, b: Node): return str(a.name) < str(b.name))
 	var colors := get_bush_clue_colors()
-	for index in range(positions.size()):
+	for index in range(mini(markers.size(), colors.size())):
+		var marker := markers[index] as Marker2D
+		if marker == null:
+			continue
 		var area := Area2D.new()
 		area.name = "BushClue_%02d" % index
-		area.position = Vector2(positions[index], GROUND_Y_PX)
+		area.position = marker.global_position
 		area.collision_layer = 0
 		area.collision_mask = 1
 		area.set_meta("kind", "bush_clue")
@@ -1175,15 +1313,16 @@ func _add_pixel_rect(parent: Node2D, rect: Rect2, color: Color) -> void:
 func _make_monsters(state: Dictionary) -> void:
 	var completed: Array = state.get("completed_regions", [])
 	var data: Array = [
-		{"id": "noise_lighthouse", "type": "noise", "region": "lighthouse", "pos": Vector2(5300, 3170)},
-		{"id": "mouth_station", "type": "silent_mouth", "region": "station", "pos": Vector2(7100, 3170)},
-		{"id": "distractor_park", "type": "distractor", "region": "park", "pos": Vector2(8400, 3170)},
-		{"id": "shadow_forest", "type": "shadow", "region": "forest", "pos": Vector2(4600, 3170)},
+		{"id": "noise_lighthouse", "type": "noise", "region": "lighthouse"},
+		{"id": "mouth_station", "type": "silent_mouth", "region": "station"},
+		{"id": "distractor_park", "type": "distractor", "region": "park"},
+		{"id": "shadow_forest", "type": "shadow", "region": "forest"},
 	]
 	for item in data:
 		if completed.has(item["region"]): continue
 		var monster := MindscapeMonster.new()
-		monster.setup(item["id"], item["type"], item["pos"])
+		var monster_id := str(item["id"])
+		monster.setup(monster_id, item["type"], get_marker_position(&"monsters", StringName(monster_id)))
 		monster_canvas.add_child(monster)
 
 # ══════════════════════════════════════════════════════════════
@@ -1465,10 +1604,9 @@ func _get_player_screen_position() -> Vector2:
 # ══════════════════════════════════════════════════════════════
 
 func _make_wind_vanes() -> void:
-	var data: Dictionary = GameData.LASER_SYSTEM
-	var vane1_pos: Vector2 = data["wind_vane_1"]["pos"] as Vector2
-	var vane2_pos: Vector2 = data["wind_vane_2"]["pos"] as Vector2
-	var treasure: Vector2 = data["treasure_pos"] as Vector2
+	var vane1_pos := get_marker_position(&"specials", &"wind_vane_1")
+	var vane2_pos := get_marker_position(&"specials", &"wind_vane_2")
+	var treasure := get_marker_position(&"specials", &"treasure")
 	
 	# 计算正确角度
 	_correct_angle_1 = (treasure - vane1_pos).angle()
@@ -1578,11 +1716,10 @@ func _make_treasure_spot(pos: Vector2) -> void:
 
 # ── 放置激光装置（由main.gd拖放调用）──
 func place_laser_device(device_id: String, vane_idx: int) -> bool:
-	var data: Dictionary = GameData.LASER_SYSTEM
 	var vane_key := "wind_vane_%d" % vane_idx
-	if not data.has(vane_key):
+	var vane_pos := get_marker_position(&"specials", StringName(vane_key))
+	if vane_pos == Vector2.ZERO:
 		return false
-	var vane_pos: Vector2 = data[vane_key]["pos"] as Vector2
 	
 	if _placed_lasers.has(vane_idx):
 		return false  # 已经有装置了
@@ -1666,9 +1803,9 @@ func _check_treasure_alignment() -> void:
 	if not _placed_lasers.has(1) or not _placed_lasers.has(2):
 		return
 	
-	var vane1_pos: Vector2 = GameData.LASER_SYSTEM["wind_vane_1"]["pos"] as Vector2
-	var vane2_pos: Vector2 = GameData.LASER_SYSTEM["wind_vane_2"]["pos"] as Vector2
-	var treasure: Vector2 = GameData.LASER_SYSTEM["treasure_pos"] as Vector2
+	var vane1_pos := get_marker_position(&"specials", &"wind_vane_1")
+	var vane2_pos := get_marker_position(&"specials", &"wind_vane_2")
+	var treasure := get_marker_position(&"specials", &"treasure")
 	
 	# 检查每条光束是否穿过 treasure_pos 附近
 	var a1: float = _laser_angles[1]
@@ -1743,11 +1880,7 @@ func set_vane_highlight(vane_idx: int, active: bool) -> void:
 
 # ── 获取风向标放置区域的世界位置 ──
 func get_vane_placement_pos(vane_idx: int) -> Vector2:
-	var data: Dictionary = GameData.LASER_SYSTEM
-	var key := "wind_vane_%d" % vane_idx
-	if data.has(key):
-		return data[key]["pos"] as Vector2
-	return Vector2.ZERO
+	return get_marker_position(&"specials", StringName("wind_vane_%d" % vane_idx))
 
 # ── 检测世界坐标是否在风向标放置区域内 ──
 func get_nearest_vane_at(pos: Vector2, max_dist: float = 90.0) -> int:

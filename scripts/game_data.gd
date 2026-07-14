@@ -23,6 +23,8 @@ const VIEW_COLORS: Dictionary = {
 	"depression": Color("#6b7b8d"),
 }
 
+# Legacy spatial defaults remain for old saves and standalone tests only.
+# Runtime placement, regions and bounds come from map/MainWorld.tscn.
 const PLAYER_START: Vector2 = Vector2(3400, 3168)
 const WORLD_SIZE: Vector2 = Vector2(11200, 3600)
 
