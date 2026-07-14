@@ -143,6 +143,7 @@ func build(state: Dictionary) -> void:
 	_make_depression_spikes()
 	_make_parallax_backgrounds()
 	_make_tilemap_world()
+	_make_world_bounds()
 	_restore_texture_wall_state(state)
 	_make_beautiful_decor()
 	_make_regions_on_tilemap()
@@ -378,24 +379,8 @@ func _draw_trees_far(container: Node2D) -> void:
 			container.add_child(canopy)
 
 func _draw_buildings_bg(container: Node2D) -> void:
-	# 水坝
-	_draw_dam(Vector2(6200, 3000), container)
 	# 许愿堂
 	_draw_observatory(Vector2(9800, 2950), container)
-
-func _draw_dam(pos: Vector2, container: Node2D) -> void:
-	var x := pos.x; var y := pos.y
-	for row in range(5):
-		var block := ColorRect.new()
-		block.position = Vector2(x + row * 40, y + row * 8)
-		block.size = Vector2(36, 22)
-		block.color = Color("#889098")
-		container.add_child(block)
-	var wall := ColorRect.new()
-	wall.position = Vector2(x + 40, y - 80)
-	wall.size = Vector2(160, 120)
-	wall.color = Color("#788890", 0.5)
-	container.add_child(wall)
 
 func _draw_observatory(pos: Vector2, container: Node2D) -> void:
 	var x := pos.x; var y := pos.y
@@ -416,10 +401,12 @@ func _draw_observatory(pos: Vector2, container: Node2D) -> void:
 	dome.polygon = dp
 	dome.color = Color("#90a0b0")
 	container.add_child(dome)
-	# 望远镜
-	var scope := ColorRect.new()
-	scope.position = Vector2(x - 3, y)
-	scope.size = Vector2(6, 50)
+	# 望远镜只保留线性轮廓，不再用色块占位
+	var scope := Polygon2D.new()
+	scope.polygon = PackedVector2Array([
+		Vector2(x - 2, y + 46), Vector2(x + 2, y + 46),
+		Vector2(x + 2, y), Vector2(x - 2, y),
+	])
 	scope.color = Color("#c0c0c0")
 	container.add_child(scope)
 
@@ -527,6 +514,19 @@ func _paint_texture_wall_blocker() -> void:
 	_texture_wall_body.add_child(shape)
 	add_child(_texture_wall_body)
 
+func _make_world_bounds() -> void:
+	var right_wall := StaticBody2D.new()
+	right_wall.name = "WorldRightWall"
+	right_wall.position = Vector2(WORLD_WIDTH + 24.0, GROUND_Y_PX - 80.0)
+	right_wall.collision_layer = 1
+	right_wall.collision_mask = 0
+	var shape := CollisionShape2D.new()
+	var rect := RectangleShape2D.new()
+	rect.size = Vector2(96.0, float(WORLD_TILE_H * TILE_SIZE) + 400.0)
+	shape.shape = rect
+	right_wall.add_child(shape)
+	add_child(right_wall)
+
 func remove_texture_wall_blocker() -> void:
 	if is_instance_valid(_texture_wall_body):
 		_texture_wall_body.queue_free()
@@ -560,8 +560,6 @@ func _make_beautiful_decor() -> void:
 	_make_town_art_layers()
 	# 中央广场喷泉
 	_draw_fountain(Vector2(3400, GROUND_Y_PX - 20))
-	# 车站
-	_draw_station(Vector2(6900, GROUND_Y_PX - 30))
 	# 游乐园摩天轮
 	_draw_ferris_wheel(Vector2(8100, GROUND_Y_PX - 60))
 	# 花朵
@@ -695,22 +693,6 @@ func _draw_fountain(pos: Vector2) -> void:
 	water.polygon = wp
 	water.color = Color("#5599cc", 0.6)
 	add_child(water)
-
-func _draw_station(pos: Vector2) -> void:
-	var back := ColorRect.new()
-	back.position = Vector2(pos.x - 60, pos.y - 50)
-	back.size = Vector2(120, 70)
-	back.color = Color("#b0a090")
-	back.z_index = -20
-	add_child(back)
-	var roof := Polygon2D.new()
-	roof.polygon = PackedVector2Array([
-		Vector2(pos.x - 70, pos.y - 50), Vector2(pos.x + 70, pos.y - 50),
-		Vector2(pos.x, pos.y - 75)
-	])
-	roof.color = Color("#d04030")
-	roof.z_index = -5
-	add_child(roof)
 
 func _draw_ferris_wheel(pos: Vector2) -> void:
 	var cx := pos.x; var cy := pos.y

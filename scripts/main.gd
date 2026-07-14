@@ -45,6 +45,7 @@ const REQUIRED_KEY_COUNT: int = 3
 
 func _ready() -> void:
 	add_to_group("main")
+	AudioManager.resume_view_bgm()
 	_load_runtime_assets()
 	if get_tree().has_meta("mindscape_open_profiles_after_ending"):
 		get_tree().remove_meta("mindscape_open_profiles_after_ending")
@@ -680,6 +681,7 @@ func enter_underground_maze() -> void:
 	ProfileManager.save_state(state)
 	player.suspend_for_interaction()
 	game_running = false
+	AudioManager.stop_bgm()
 
 	var fade_canvas := CanvasLayer.new()
 	fade_canvas.name = "UndergroundTransition"

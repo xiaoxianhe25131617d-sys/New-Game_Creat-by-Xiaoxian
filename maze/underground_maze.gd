@@ -15,6 +15,7 @@ const ENDING_KEEPSAKES_TEXTURE := preload("res://assets/ui/generated/ending_keep
 const HIDDEN_DOOR_TEXTURE := preload("res://assets/ui/generated/hidden_stone_door.png")
 const MAZE_CORRECT_AUDIO := preload("res://assets/audio/黑色迷宫正确声音.MP3")
 const MAZE_WRONG_AUDIO := preload("res://assets/audio/黑色迷宫错误.MP3")
+const MAZE_BGM_AUDIO := preload("res://assets/audio/地下迷宫音乐.MP3")
 const COMPASS_ROUTE: Array[Vector2] = [
 	Vector2(1240, 795),
 	Vector2(930, 795),
@@ -39,8 +40,9 @@ const EXIT_GUIDANCE_ROUTE: Array[Vector2] = [
 	Vector2(2560, 620), Vector2(2560, 890), Vector2(2710, 890),
 	Vector2(2939, 877),
 ]
-const ROUTE_CORRECT_DISTANCE := 48.0
-const ROUTE_WRONG_DISTANCE := 64.0
+const ROUTE_CORRECT_DISTANCE := 52.0
+const ROUTE_WRONG_DISTANCE := 56.0
+const ROUTE_ADVANCE_DISTANCE := 64.0
 const EXIT_TRIGGER_RADIUS := 140.0
 const NAVIGATION_SOURCE_DISTANCE := 180.0
 const DEBUG_SPAWN_OFFSETS := {
@@ -67,6 +69,77 @@ static func nearest_route_index(player_position: Vector2, route: Array[Vector2])
 			nearest_distance = distance
 			nearest_index = index
 	return nearest_index
+
+static func nearest_route_segment_index(player_position: Vector2, route: Array[Vector2]) -> int:
+	if route.size() < 2:
+		return 0
+	var nearest_index := 0
+	var nearest_distance := INF
+	for index in range(route.size() - 1):
+		var segment := route[index + 1] - route[index]
+		if segment.length_squared() <= 0.001:
+			continue
+		var amount := clampf((player_position - route[index]).dot(segment) / segment.length_squared(), 0.0, 1.0)
+		var distance := player_position.distance_squared_to(route[index] + segment * amount)
+		if distance < nearest_distance:
+			nearest_distance = distance
+			nearest_index = index
+	return nearest_index
+
+static func advance_ordered_route(player_position: Vector2, route: Array[Vector2], current_segment_index: int, reach_distance: float) -> int:
+	if route.size() < 2:
+		return 0
+	var segment_index := clampi(current_segment_index, 0, route.size() - 2)
+	while segment_index < route.size() - 2 and player_position.distance_to(route[segment_index + 1]) <= reach_distance:
+		segment_index += 1
+	return segment_index
+
+static func sample_active_route_segment(player_position: Vector2, route: Array[Vector2], current_segment_index: int) -> Dictionary:
+	if route.size() < 2:
+		return {"distance": INF, "progress": 0.0, "point": Vector2.ZERO, "segment_index": 0, "amount": 0.0}
+	var first_segment := clampi(current_segment_index, 0, route.size() - 2)
+	var last_segment := mini(first_segment + 1, route.size() - 2)
+	var total_length := 0.0
+	for index in range(route.size() - 1):
+		total_length += route[index].distance_to(route[index + 1])
+	var walked_length := 0.0
+	var best_distance := INF
+	var best_progress_length := 0.0
+	var best_point := route[first_segment]
+	var best_segment_index := first_segment
+	var best_amount := 0.0
+	for index in range(route.size() - 1):
+		var start := route[index]
+		var finish := route[index + 1]
+		var segment := finish - start
+		var segment_length := segment.length()
+		if segment_length <= 0.001:
+			continue
+		if index >= first_segment and index <= last_segment:
+			var amount := clampf((player_position - start).dot(segment) / segment.length_squared(), 0.0, 1.0)
+			var projected := start + segment * amount
+			var distance := player_position.distance_to(projected)
+			if distance < best_distance:
+				best_distance = distance
+				best_progress_length = walked_length + segment_length * amount
+				best_point = projected
+				best_segment_index = index
+				best_amount = amount
+		walked_length += segment_length
+	return {
+		"distance": best_distance,
+		"progress": clampf(best_progress_length / maxf(total_length, 0.001), 0.0, 1.0),
+		"point": best_point,
+		"segment_index": best_segment_index,
+		"amount": best_amount,
+	}
+
+static func cardinal_direction_text(offset: Vector2) -> String:
+	if offset.length() <= 16.0:
+		return "继续前进"
+	if absf(offset.x) >= absf(offset.y):
+		return "向右" if offset.x > 0.0 else "向左"
+	return "向下" if offset.y > 0.0 else "向上"
 
 static func sample_route(player_position: Vector2, route: Array[Vector2]) -> Dictionary:
 	if route.size() < 2:
@@ -103,10 +176,10 @@ static func sample_route(player_position: Vector2, route: Array[Vector2]) -> Dic
 	}
 
 static func route_volume_db(progress: float) -> float:
-	return lerpf(-16.0, 0.0, pow(clampf(progress, 0.0, 1.0), 0.65))
+	return lerpf(-6.1, 6.0, pow(clampf(progress, 0.0, 1.0), 0.55))
 
 static func route_interval(progress: float) -> float:
-	return lerpf(0.42, 0.18, pow(clampf(progress, 0.0, 1.0), 0.7))
+	return lerpf(0.20, 0.075, pow(clampf(progress, 0.0, 1.0), 0.75))
 
 @export var map_size := MAP_SIZE
 @export var show_reference_in_editor := true:
@@ -135,15 +208,24 @@ var hidden_door_overlay: Polygon2D
 var hidden_door_label: Label
 var hidden_chest_sprite: Sprite2D
 var hidden_chest_label: Label
+var exit_key_sprite: Sprite2D
+var exit_key_label: Label
 var underground_inventory_canvas: CanvasLayer
 var compass_button: Button
 var compass_hud_canvas: CanvasLayer
 var compass_panel: Panel
+var compass_panel_style: StyleBoxFlat
 var compass_needle: Polygon2D
+var compass_heading_label: Label
 var compass_distance_label: Label
+var compass_error_flash: ColorRect
+var compass_error_tween: Tween
 var compass_audio: AudioStreamPlayer2D
+var maze_bgm_player: AudioStreamPlayer
 var compass_route_index: int = 0
 var compass_ping_timer: float = 0.0
+var compass_route_correct: bool = true
+var compass_route_initialized: bool = false
 var compass_texture: Texture2D
 var ending_keepsakes_texture: Texture2D
 var hidden_door_texture: Texture2D
@@ -152,6 +234,7 @@ var _route_feedback_correct: bool = true
 var _route_feedback_initialized: bool = false
 var _route_feedback_timer: float = 0.0
 var _navigation_cue_remaining: float = 0.0
+var exit_route_segment_index: int = 0
 
 func _ready() -> void:
 	add_to_group("world")
@@ -159,16 +242,21 @@ func _ready() -> void:
 	if Engine.is_editor_hint():
 		return
 	_load_runtime_assets()
+	AudioManager.stop_bgm()
 	maze_state = _get_saved_state()
 	_spawn_runtime_player()
+	_make_maze_bgm()
 	_make_blind_vision()
 	_make_hidden_door()
 	_make_hidden_chest()
+	_make_exit_key()
 	_make_underground_inventory()
 	_make_compass_hud()
 	_make_compass_audio()
 	_make_debug_toolbar()
-	compass_route_index = clampi(int(maze_state.get("maze_compass_route_index", 0)), 0, COMPASS_ROUTE.size())
+	_update_exit_key_prompt()
+	exit_route_segment_index = nearest_route_segment_index(runtime_player.global_position, EXIT_GUIDANCE_ROUTE)
+	compass_route_index = clampi(int(maze_state.get("maze_compass_route_index", 0)), 0, COMPASS_ROUTE.size() - 2)
 	process_priority = 1000
 	if get_tree().has_meta("mindscape_play_formal_ending"):
 		get_tree().remove_meta("mindscape_play_formal_ending")
@@ -180,6 +268,27 @@ func _ready() -> void:
 	elif bool(maze_state.get("ending_pending", false)) and not bool(maze_state.get("ending_seen", false)):
 		call_deferred("_play_formal_ending")
 
+func _exit_tree() -> void:
+	_stop_maze_bgm()
+
+func _make_maze_bgm() -> void:
+	maze_bgm_player = AudioStreamPlayer.new()
+	maze_bgm_player.name = "MazeBGM"
+	maze_bgm_player.stream = MAZE_BGM_AUDIO
+	maze_bgm_player.volume_db = -27.0
+	maze_bgm_player.bus = "Master"
+	maze_bgm_player.finished.connect(_on_maze_bgm_finished)
+	add_child(maze_bgm_player)
+	maze_bgm_player.play()
+
+func _on_maze_bgm_finished() -> void:
+	if maze_bgm_player != null and not _leaving_maze and not _ending_playing:
+		maze_bgm_player.play()
+
+func _stop_maze_bgm() -> void:
+	if maze_bgm_player != null:
+		maze_bgm_player.stop()
+
 func _process(delta: float) -> void:
 	if Engine.is_editor_hint() or runtime_player == null or blind_vision_material == null:
 		return
@@ -187,6 +296,7 @@ func _process(delta: float) -> void:
 	_update_navigation_cue(delta)
 	_update_route_feedback(delta)
 	_update_compass(delta)
+	_update_exit_key_prompt()
 	if not _leaving_maze and runtime_player.global_position.distance_to($Markers/PortalExit.global_position) < EXIT_TRIGGER_RADIUS:
 		_leave_to_main(MAIN_EXIT_RETURN_POSITION, true)
 
@@ -323,6 +433,27 @@ func _make_hidden_chest() -> void:
 	hidden_chest_label.z_index = 5
 	add_child(hidden_chest_label)
 
+func _make_exit_key() -> void:
+	var marker: Marker2D = $Markers/PortalExit
+	exit_key_sprite = Sprite2D.new()
+	exit_key_sprite.name = "MazeExitKey"
+	exit_key_sprite.texture = _make_key_texture()
+	exit_key_sprite.position = marker.position + Vector2(0, -52)
+	exit_key_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	exit_key_sprite.z_index = 4
+	add_child(exit_key_sprite)
+
+	exit_key_label = Label.new()
+	exit_key_label.position = marker.position + Vector2(-88, 10)
+	exit_key_label.size = Vector2(176, 34)
+	exit_key_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	exit_key_label.add_theme_font_size_override("font_size", 14)
+	exit_key_label.add_theme_color_override("font_color", Color("#ffe8a0"))
+	exit_key_label.text = "出口钥匙已收入物品栏" if bool(_get_maze_keys().has("maze_key")) else "靠近这里可自动获得钥匙"
+	exit_key_label.visible = true
+	exit_key_label.z_index = 5
+	add_child(exit_key_label)
+
 func _make_underground_inventory() -> void:
 	underground_inventory_canvas = CanvasLayer.new()
 	underground_inventory_canvas.name = "UndergroundInventoryCanvas"
@@ -389,15 +520,20 @@ func _make_compass_hud() -> void:
 	compass_hud_canvas.name = "MazeCompassHUD"
 	compass_hud_canvas.layer = 630
 	add_child(compass_hud_canvas)
+	compass_error_flash = ColorRect.new()
+	compass_error_flash.set_anchors_preset(Control.PRESET_FULL_RECT)
+	compass_error_flash.color = Color(0.82, 0.04, 0.04, 0.0)
+	compass_error_flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	compass_hud_canvas.add_child(compass_error_flash)
 	compass_panel = Panel.new()
 	compass_panel.position = Vector2(530, 18)
 	compass_panel.size = Vector2(220, 92)
-	var panel_style := StyleBoxFlat.new()
-	panel_style.bg_color = Color("#0b1820", 0.9)
-	panel_style.border_color = Color("#8deaf0")
-	panel_style.set_border_width_all(2)
-	panel_style.set_corner_radius_all(6)
-	compass_panel.add_theme_stylebox_override("panel", panel_style)
+	compass_panel_style = StyleBoxFlat.new()
+	compass_panel_style.bg_color = Color("#0b1820", 0.9)
+	compass_panel_style.border_color = Color("#8deaf0")
+	compass_panel_style.set_border_width_all(2)
+	compass_panel_style.set_corner_radius_all(6)
+	compass_panel.add_theme_stylebox_override("panel", compass_panel_style)
 	compass_hud_canvas.add_child(compass_panel)
 
 	var icon := TextureRect.new()
@@ -414,9 +550,9 @@ func _make_compass_hud() -> void:
 	compass_needle.color = Color("#fff1a6")
 	compass_panel.add_child(compass_needle)
 
-	var heading := _make_inventory_label("隐藏宝箱方向", Vector2(88, 14), Color("#ffe8a0"), 14)
-	heading.size = Vector2(122, 26)
-	compass_panel.add_child(heading)
+	compass_heading_label = _make_inventory_label("隐藏宝箱方向", Vector2(88, 14), Color("#ffe8a0"), 14)
+	compass_heading_label.size = Vector2(122, 26)
+	compass_panel.add_child(compass_heading_label)
 	compass_distance_label = _make_inventory_label("", Vector2(88, 45), Color("#8deaf0"), 12)
 	compass_distance_label.size = Vector2(122, 34)
 	compass_panel.add_child(compass_distance_label)
@@ -425,17 +561,18 @@ func _make_compass_hud() -> void:
 func _make_compass_audio() -> void:
 	compass_audio = AudioStreamPlayer2D.new()
 	compass_audio.name = "MazeNavigationAudio"
-	compass_audio.volume_db = -8.0
-	compass_audio.max_distance = 2000.0
-	compass_audio.attenuation = 0.05
+	compass_audio.volume_db = -4.0
+	compass_audio.max_distance = 6000.0
+	compass_audio.attenuation = 0.01
 	compass_audio.panning_strength = 1.5
 	add_child(compass_audio)
 
 func _toggle_compass() -> void:
 	var enabled := GameData.toggle_maze_compass(maze_state)
 	if enabled:
-		compass_route_index = nearest_route_index(runtime_player.global_position, COMPASS_ROUTE)
+		compass_route_index = nearest_route_segment_index(runtime_player.global_position, COMPASS_ROUTE)
 		maze_state["maze_compass_route_index"] = compass_route_index
+		compass_route_initialized = false
 	ProfileManager.save_state(maze_state)
 	compass_ping_timer = 0.0
 	if not enabled and compass_audio != null:
@@ -466,24 +603,65 @@ func _update_compass(delta: float) -> void:
 		hidden_chest_label.visible = _hidden_door_is_open() and runtime_player.global_position.distance_to($Markers/Chest.global_position) < 150.0
 	if not bool(maze_state.get("maze_compass_owned", false)) or not bool(maze_state.get("maze_compass_enabled", false)) or bool(maze_state.get("hidden_chest_opened", false)):
 		return
-	compass_route_index = advance_compass_route(runtime_player.global_position, COMPASS_ROUTE, compass_route_index, COMPASS_REACH_DISTANCE)
-	var target: Vector2 = ($Markers/Chest as Marker2D).global_position
-	if compass_route_index < COMPASS_ROUTE.size():
-		target = COMPASS_ROUTE[compass_route_index]
+	compass_route_index = advance_ordered_route(runtime_player.global_position, COMPASS_ROUTE, compass_route_index, COMPASS_REACH_DISTANCE)
+	var sample := sample_active_route_segment(runtime_player.global_position, COMPASS_ROUTE, compass_route_index)
+	var route_distance := float(sample.get("distance", INF))
+	var should_be_correct := compass_route_correct
+	if route_distance <= ROUTE_CORRECT_DISTANCE:
+		should_be_correct = true
+	elif route_distance >= ROUTE_WRONG_DISTANCE:
+		should_be_correct = false
+	if not compass_route_initialized or should_be_correct != compass_route_correct:
+		compass_route_correct = should_be_correct
+		compass_route_initialized = true
+		compass_ping_timer = 0.0
+		if not compass_route_correct:
+			_flash_compass_error()
+	var sample_segment := int(sample.get("segment_index", compass_route_index))
+	var target: Vector2 = COMPASS_ROUTE[compass_route_index]
+	if compass_route_correct:
+		target = COMPASS_ROUTE[mini(sample_segment + 1, COMPASS_ROUTE.size() - 1)]
 	var offset: Vector2 = target - runtime_player.global_position
 	var distance: float = offset.length()
 	if compass_needle != null:
 		compass_needle.rotation = offset.angle() + PI * 0.5
 	if compass_distance_label != null:
-		compass_distance_label.text = "宝箱就在附近" if distance < 120.0 else "下一处路标 %d 步" % maxi(1, int(round(distance / 32.0)))
-	if current_view != "blind" or compass_audio == null:
+		var direction := cardinal_direction_text(offset)
+		compass_distance_label.text = ("%s\n返回路线" % direction) if not compass_route_correct else ("宝箱就在附近" if distance < 120.0 else "%s · %d 步" % [direction, maxi(1, int(round(distance / 32.0)))])
+	_update_compass_warning_style(not compass_route_correct)
+	if compass_audio == null:
 		return
 	_set_navigation_source(target)
 	compass_ping_timer -= delta
 	if compass_ping_timer <= 0.0:
-		_play_navigation_cue(MAZE_CORRECT_AUDIO, -9.0, 1.0, 0.14)
-		var distance_ratio := clampf(distance / 900.0, 0.0, 1.0)
-		compass_ping_timer = lerpf(0.32, 1.45, distance_ratio)
+		if compass_route_correct:
+			var distance_ratio := clampf(distance / 900.0, 0.0, 1.0)
+			_play_navigation_cue(MAZE_CORRECT_AUDIO, lerpf(-3.0, 3.0, pow(clampf(1.0 - distance_ratio, 0.0, 1.0), 0.8)), 1.02, 0.10)
+			compass_ping_timer = lerpf(0.14, 0.42, distance_ratio)
+		else:
+			compass_audio.global_position = runtime_player.global_position
+			_play_navigation_cue(MAZE_WRONG_AUDIO, 6.0, 0.78, 0.12)
+			AudioManager.play_tone(145.0, 0.10)
+			_flash_compass_error()
+			compass_ping_timer = 0.14
+
+func _update_compass_warning_style(is_wrong: bool) -> void:
+	if compass_panel_style != null:
+		compass_panel_style.border_color = Color("#ff4d4d") if is_wrong else Color("#8deaf0")
+	if compass_heading_label != null:
+		compass_heading_label.text = "偏离路线" if is_wrong else "隐藏宝箱方向"
+		compass_heading_label.add_theme_color_override("font_color", Color("#ff7777") if is_wrong else Color("#ffe8a0"))
+	if compass_distance_label != null:
+		compass_distance_label.add_theme_color_override("font_color", Color("#ff9b9b") if is_wrong else Color("#8deaf0"))
+
+func _flash_compass_error() -> void:
+	if compass_error_flash == null:
+		return
+	if compass_error_tween != null and compass_error_tween.is_valid():
+		compass_error_tween.kill()
+	compass_error_flash.color.a = 0.24
+	compass_error_tween = create_tween()
+	compass_error_tween.tween_property(compass_error_flash, "color:a", 0.0, 0.13)
 
 func _show_maze_toast(message: String, duration: float = 2.4) -> void:
 	var canvas := CanvasLayer.new()
@@ -505,13 +683,18 @@ func _show_maze_toast(message: String, duration: float = 2.4) -> void:
 	tween.tween_callback(canvas.queue_free)
 
 func _update_route_feedback(delta: float) -> void:
-	if current_view != "blind" or bool(maze_state.get("maze_compass_enabled", false)) or _ending_playing:
+	if bool(maze_state.get("maze_compass_enabled", false)) or _ending_playing:
 		_route_feedback_initialized = false
 		return
-	var sample := sample_route(runtime_player.global_position, EXIT_GUIDANCE_ROUTE)
+	exit_route_segment_index = advance_ordered_route(runtime_player.global_position, EXIT_GUIDANCE_ROUTE, exit_route_segment_index, ROUTE_ADVANCE_DISTANCE)
+	var sample := sample_active_route_segment(runtime_player.global_position, EXIT_GUIDANCE_ROUTE, exit_route_segment_index)
 	var distance := float(sample.get("distance", INF))
 	var progress := float(sample.get("progress", 0.0))
-	var should_be_correct := distance <= (ROUTE_WRONG_DISTANCE if _route_feedback_correct else ROUTE_CORRECT_DISTANCE)
+	var should_be_correct := _route_feedback_correct
+	if distance <= ROUTE_CORRECT_DISTANCE:
+		should_be_correct = true
+	elif distance >= ROUTE_WRONG_DISTANCE:
+		should_be_correct = false
 	if not _route_feedback_initialized or should_be_correct != _route_feedback_correct:
 		_route_feedback_correct = should_be_correct
 		_route_feedback_initialized = true
@@ -522,16 +705,17 @@ func _update_route_feedback(delta: float) -> void:
 	if _route_feedback_timer > 0.0:
 		return
 	if _route_feedback_correct:
-		var pitch := lerpf(0.94, 1.16, pow(progress, 0.7))
-		var segment_index := int(sample.get("segment_index", 0))
+		var pitch := lerpf(0.98, 1.24, pow(progress, 0.55))
+		var segment_index := int(sample.get("segment_index", exit_route_segment_index))
 		var route_target := EXIT_GUIDANCE_ROUTE[mini(segment_index + 1, EXIT_GUIDANCE_ROUTE.size() - 1)]
 		_set_navigation_source(route_target)
-		_play_navigation_cue(MAZE_CORRECT_AUDIO, route_volume_db(progress), pitch, 0.13)
+		_play_navigation_cue(MAZE_CORRECT_AUDIO, route_volume_db(progress), pitch, 0.065)
 		_route_feedback_timer = route_interval(progress)
 	else:
 		compass_audio.global_position = runtime_player.global_position
-		_play_navigation_cue(MAZE_WRONG_AUDIO, -2.0, 0.92, 0.18)
-		_route_feedback_timer = 0.30
+		_play_navigation_cue(MAZE_WRONG_AUDIO, 6.0, 0.78, 0.12)
+		AudioManager.play_tone(145.0, 0.10)
+		_route_feedback_timer = 0.14
 
 func _set_navigation_source(target: Vector2) -> void:
 	if compass_audio == null or runtime_player == null:
@@ -547,8 +731,8 @@ func _play_navigation_cue(stream: AudioStream, volume_db: float, pitch_scale: fl
 		return
 	compass_audio.stop()
 	compass_audio.stream = stream
-	compass_audio.volume_db = volume_db
-	compass_audio.pitch_scale = pitch_scale
+	compass_audio.volume_db = clampf(volume_db, -6.0, 6.0)
+	compass_audio.pitch_scale = clampf(pitch_scale, 0.72, 1.35)
 	compass_audio.play()
 	_navigation_cue_remaining = duration
 
@@ -583,10 +767,27 @@ func _try_open_hidden_chest() -> void:
 	AudioManager.play_sfx("chest_open")
 	await _play_formal_ending()
 
+func _update_exit_key_prompt() -> void:
+	if exit_key_label == null:
+		return
+	var keys := _get_maze_keys()
+	var has_key := keys.has("maze_key")
+	if runtime_player != null and runtime_player.global_position.distance_to($Markers/PortalExit.global_position) < 180.0 and not has_key:
+		_grant_maze_key()
+		keys = _get_maze_keys()
+		has_key = true
+		exit_key_sprite.modulate = Color(1, 1, 1, 1)
+		_show_maze_toast("🔑 获得迷宫钥匙")
+	exit_key_label.text = "出口钥匙已收入物品栏" if has_key else "靠近这里可自动获得钥匙"
+	if exit_key_sprite != null:
+		exit_key_sprite.visible = true
+		exit_key_sprite.modulate = Color(1, 1, 1, 1 if has_key else 0.92)
+
 func _play_formal_ending() -> void:
 	if _ending_playing:
 		return
 	_ending_playing = true
+	_stop_maze_bgm()
 	runtime_player.suspend_for_interaction()
 	var camera := runtime_player.get_node_or_null("MazeCamera") as Camera2D
 	if camera != null:
@@ -753,6 +954,7 @@ func _leave_to_main(target_position: Vector2, grant_key: bool) -> void:
 	if _leaving_maze:
 		return
 	_leaving_maze = true
+	_stop_maze_bgm()
 	if grant_key:
 		_grant_maze_key()
 	var profile: Dictionary = ProfileManager.get_current_profile()
@@ -778,13 +980,30 @@ func _grant_maze_key() -> void:
 	if _maze_key_granted:
 		return
 	_maze_key_granted = true
-	var profile: Dictionary = ProfileManager.get_current_profile()
-	var state: Dictionary = profile.get("state", {}) as Dictionary
+	var state := maze_state
 	var keys: Array = state.get("collected_keys", []) as Array
 	if not keys.has("maze_key"):
 		keys.append("maze_key")
 		state["collected_keys"] = keys
 		ProfileManager.save_state(state)
+
+func _get_maze_keys() -> Array:
+	var keys: Array = maze_state.get("collected_keys", []) as Array
+	return keys
+
+func _make_key_texture() -> Texture2D:
+	var image := Image.create(32, 32, false, Image.FORMAT_RGBA8)
+	image.fill(Color(0, 0, 0, 0))
+	for y in range(8, 24):
+		for x in range(8, 20):
+			image.set_pixel(x, y, Color("#f4cf5a"))
+	for x in range(18, 25):
+		for y in range(12, 20):
+			image.set_pixel(x, y, Color("#f4cf5a"))
+	for y in range(10, 22):
+		image.set_pixel(12, y, Color("#8c6a22"))
+	image.set_pixel(16, 16, Color("#fff3b0"))
+	return ImageTexture.create_from_image(image)
 
 func _physics_process(delta: float) -> void:
 	if Engine.is_editor_hint() or runtime_player == null:
@@ -862,6 +1081,7 @@ func _debug_teleport_marker(marker_name: String) -> void:
 func _debug_return_to_main() -> void:
 	if not ProfileManager.is_current_profile_debug():
 		return
+	_stop_maze_bgm()
 	maze_state["position"] = GameData.PLAYER_START
 	maze_state["return_to_game"] = true
 	ProfileManager.save_state(maze_state)

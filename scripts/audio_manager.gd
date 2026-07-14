@@ -73,6 +73,7 @@ var sfx_cache: Dictionary = {}       # filename → AudioStream (预加载)
 var bgm_cache: Dictionary = {}       # view → AudioStream (预加载)
 var current_view: String = "normal"
 var current_region: String = "spawn"
+var _bgm_suspended: bool = false
 
 # 走路专用 channel（防止叠加）
 var _walk_channel: AudioStreamPlayer
@@ -127,7 +128,7 @@ func _setup_bgm() -> void:
 
 func _on_bgm_finished() -> void:
 	# BGM 播完后自动循环
-	if bgm_player != null and bgm_player.stream != null:
+	if not _bgm_suspended and bgm_player != null and bgm_player.stream != null:
 		bgm_player.play()
 
 func _setup_sfx_pool() -> void:
@@ -203,10 +204,27 @@ func set_region(region: String) -> void:
 
 ## 切换视角时切换 BGM，并确保循环
 func set_view(view: String) -> void:
-	if view == current_view:
-		return
+	var view_changed := view != current_view
 	current_view = view
-	var stream: AudioStream = bgm_cache.get(view)
+	if _bgm_suspended:
+		return
+	if not view_changed and bgm_player != null and bgm_player.playing:
+		return
+	_play_current_view_bgm()
+
+func stop_bgm() -> void:
+	_bgm_suspended = true
+	if bgm_player != null:
+		bgm_player.stop()
+
+func resume_view_bgm() -> void:
+	if not _bgm_suspended and bgm_player != null and bgm_player.playing:
+		return
+	_bgm_suspended = false
+	_play_current_view_bgm()
+
+func _play_current_view_bgm() -> void:
+	var stream: AudioStream = bgm_cache.get(current_view)
 	if stream == null or bgm_player == null:
 		return
 	# 断开旧连接、切流、重播
@@ -214,7 +232,7 @@ func set_view(view: String) -> void:
 		bgm_player.finished.disconnect(_on_bgm_finished)
 	bgm_player.stop()
 	bgm_player.stream = stream
-	bgm_player.volume_db = BGM_VOLUME.get(view, -12.0)
+	bgm_player.volume_db = BGM_VOLUME.get(current_view, -12.0)
 	bgm_player.finished.connect(_on_bgm_finished)
 	bgm_player.play()
 

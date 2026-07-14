@@ -3,3 +3,6 @@ res://scripts/world.gd
 res://tests/test_world_art_cleanup.gd
 res://scripts/game_data.gd
 res://scripts/main.gd
+res://maze/underground_maze.gd
+res://scripts/audio_manager.gd
+res://tests/test_underground_maze.gd

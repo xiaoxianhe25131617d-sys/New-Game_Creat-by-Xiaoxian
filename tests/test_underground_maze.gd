@@ -19,6 +19,9 @@ func _ready() -> void:
 	_test_markers(maze)
 	_test_ladders(maze)
 	_test_navigation_features_are_clear(maze)
+	_test_ordered_route_guidance()
+	_test_navigation_feedback_strength()
+	_test_compass_cardinal_directions()
 	_test_exit_trigger_is_forgiving(maze)
 	_test_dark_visual_material_only(maze)
 	_test_runtime_player(maze)
@@ -78,6 +81,38 @@ func _test_navigation_features_are_clear(maze: Node) -> void:
 		var cell := walls.local_to_map(walls.to_local(waypoint))
 		if walls.get_cell_source_id(cell) >= 0:
 			failures.append("Compass waypoint %s falls inside solid maze terrain" % waypoint)
+
+func _test_ordered_route_guidance() -> void:
+	var route := UndergroundMaze.EXIT_GUIDANCE_ROUTE
+	var current_sample := UndergroundMaze.sample_active_route_segment(Vector2(1350, 795), route, 0)
+	if float(current_sample.get("distance", INF)) > 1.0:
+		failures.append("Ordered guidance must recognize the active route segment")
+	var later_route_sample := UndergroundMaze.sample_active_route_segment(Vector2(2350, 440), route, 0)
+	if float(later_route_sample.get("distance", 0.0)) <= UndergroundMaze.ROUTE_WRONG_DISTANCE:
+		failures.append("A later route segment across the maze must not count as the current correct path")
+	var next_index := UndergroundMaze.advance_ordered_route(Vector2(1180, 795), route, 0, 64.0)
+	if next_index != 1:
+		failures.append("Ordered guidance must advance only after reaching the active segment endpoint")
+
+func _test_navigation_feedback_strength() -> void:
+	if UndergroundMaze.route_volume_db(0.0) < -6.11:
+		failures.append("Route guidance must be clearly audible from the maze entrance")
+	if UndergroundMaze.route_volume_db(1.0) < 5.99:
+		failures.append("Route guidance must reach +6 dB near the exit")
+	if UndergroundMaze.route_interval(0.0) > 0.201 or UndergroundMaze.route_interval(1.0) > 0.076:
+		failures.append("Route guidance cadence must accelerate from 0.20s to about 0.075s")
+
+func _test_compass_cardinal_directions() -> void:
+	var cases := {
+		Vector2(120, 10): "向右",
+		Vector2(-120, 10): "向左",
+		Vector2(10, 120): "向下",
+		Vector2(10, -120): "向上",
+		Vector2(4, 3): "继续前进",
+	}
+	for offset in cases:
+		if UndergroundMaze.cardinal_direction_text(offset) != cases[offset]:
+			failures.append("Compass direction for %s should be %s" % [offset, cases[offset]])
 
 func _test_exit_trigger_is_forgiving(_maze: Node) -> void:
 	if UndergroundMaze.EXIT_TRIGGER_RADIUS < 120.0:
