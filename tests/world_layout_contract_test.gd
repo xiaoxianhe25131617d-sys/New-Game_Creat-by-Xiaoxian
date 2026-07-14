@@ -34,6 +34,11 @@ func _initialize() -> void:
 	if world.has_method("validate_layout"):
 		var errors: PackedStringArray = world.validate_layout()
 		_expect(errors.is_empty(), "layout validates without errors: %s" % ", ".join(errors))
+	var background := world.get_node_or_null("Visuals/TileMaps/Background") as CanvasItem
+	var tree_line := world.get_node_or_null("Visuals/Decorations/TownTreeLineParallax") as CanvasItem
+	_expect(background != null and tree_line != null, "authored background and town tree line exist")
+	if background != null and tree_line != null:
+		_expect(tree_line.z_index < background.z_index, "town tree line renders behind the authored house background")
 
 	world.queue_free()
 	_finish()

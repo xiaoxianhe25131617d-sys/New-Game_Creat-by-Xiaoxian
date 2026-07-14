@@ -3,7 +3,9 @@ extends Node
 const MAZE_COMPASS_TEXTURE := preload("res://assets/ui/generated/maze_compass.png")
 const HIDDEN_DOOR_TEXTURE := preload("res://assets/ui/generated/hidden_stone_door.png")
 const UNDERGROUND_ENTRY_AUDIO := preload("res://assets/audio/enter_underground_maze.MP3")
+const UNDERGROUND_STAIR_TRANSITION := preload("res://scenes/UndergroundStairTransition.tscn")
 const MAIN_WORLD_SCENE := preload("res://map/MainWorld.tscn")
+const CAMERA_VIEW_OFFSET := Vector2(0.0, 28.0)
 
 var world: MindscapeWorld
 var player: MindscapePlayer
@@ -364,6 +366,7 @@ func start_game(new_game: bool) -> void:
 	camera = Camera2D.new()
 	camera.enabled = true
 	camera.zoom = Vector2(1.0, 1.0)
+	camera.offset = CAMERA_VIEW_OFFSET
 	camera.position_smoothing_enabled = true
 	camera.position_smoothing_speed = 8.0
 	camera.limit_left = int(authored_bounds.position.x)
@@ -670,25 +673,11 @@ func enter_underground_maze() -> void:
 	game_running = false
 	AudioManager.stop_bgm()
 
-	var fade_canvas := CanvasLayer.new()
-	fade_canvas.name = "UndergroundTransition"
-	fade_canvas.layer = 2000
-	add_child(fade_canvas)
-	var fade := ColorRect.new()
-	fade.set_anchors_preset(Control.PRESET_FULL_RECT)
-	fade.color = Color(0, 0, 0, 0)
-	fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	fade_canvas.add_child(fade)
-	var tween := create_tween()
-	tween.tween_property(fade, "color:a", 1.0, 0.42)
-	await tween.finished
-	var transition_audio := AudioStreamPlayer.new()
-	transition_audio.name = "UndergroundEntryAudio"
-	transition_audio.stream = UNDERGROUND_ENTRY_AUDIO
-	transition_audio.volume_db = -2.0
-	fade_canvas.add_child(transition_audio)
-	transition_audio.play()
-	await transition_audio.finished
+	var transition := UNDERGROUND_STAIR_TRANSITION.instantiate()
+	add_child(transition)
+	transition.configure(UNDERGROUND_ENTRY_AUDIO)
+	transition.play()
+	await transition.completed
 	get_tree().change_scene_to_file("res://maze/UndergroundMaze.tscn")
 
 # ══════════════════════════════════════════════════════════════
@@ -1830,9 +1819,6 @@ func _on_monster_damage(monster_type: String) -> void:
 		"silent_mouth":
 			flash_color = Color(0.6, 0.3, 0.9, 0.0)  # purple/vibration
 			shake_power = 5.0
-		"distractor":
-			flash_color = Color(1.0, 0.5, 0.0, 0.0)  # orange confusion
-			shake_power = 3.0
 		"shadow":
 			flash_color = Color(0.8, 0.0, 0.0, 0.0)  # red dread
 			shake_power = 6.0
@@ -1873,8 +1859,6 @@ func _check_monsters() -> void:
 				show_toast("⚠ 信息噪音制造假回声！靠近真实物体更安全。", 1.2)
 			"silent_mouth":
 				show_toast("⚠ 无声嘴巴挡住振动路线！换个角度观察地面。", 1.2)
-			"distractor":
-				show_toast("⚠ 干扰者让你迷失方向！稳定发光才是真的。", 1.2)
 			"shadow":
 				show_toast("⚠ 阴影让脚步沉重……寻找环境里的光。", 1.2)
 		monster_hint_cooldown = 1.6

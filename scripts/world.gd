@@ -187,6 +187,10 @@ const TILESET_MAIN := preload("res://map/tileset.tres")
 const TILESET_DROP := preload("res://map/tileset_drop.tres")
 const SKY_TEXTURE := preload("res://assets/sky_user.png")
 const MEMORY_BENCH_TEXTURE_PATH := "res://assets/environment/generated/memory_bench.png"
+const MEMORY_BENCH_SIZE_RATIO := 2.0 / 3.0
+const REMOVED_BANQUET_COLLECTIBLE_IDS := [&"collectible_05", &"collectible_06"]
+const REMOVED_BANQUET_ANCHOR_IDS := [&"dam"]
+const MAZE_ENTRANCE_SIZE_RATIO := 2.0 / 3.0
 const MAZE_ENTRANCE_BACK_TEXTURE := preload("res://assets/environment/generated/maze_entrance_back.png")
 const MAZE_ENTRANCE_FRONT_TEXTURE := preload("res://assets/environment/generated/maze_entrance_front.png")
 const TOWN_DISTANT_TREES_TEXTURE := preload("res://assets/town/town_distant_tree_line.png")
@@ -724,7 +728,7 @@ func _make_town_art_layers() -> void:
 	# as a single layer. It stays behind gameplay and never changes the terrain.
 	var tree_line_layer := Node2D.new()
 	tree_line_layer.name = "TownTreeLineParallax"
-	tree_line_layer.z_index = -1
+	tree_line_layer.z_index = -33
 	add_child(tree_line_layer)
 	parallax_layers.append({"node": tree_line_layer, "factor": 0.40, "base_position": tree_line_layer.position})
 
@@ -787,16 +791,15 @@ func _make_underground_portal() -> void:
 	entry.position = get_marker_position(&"specials", &"underground_portal")
 	var entry_shape := CollisionShape2D.new()
 	var entry_rect := RectangleShape2D.new()
-	entry_rect.size = Vector2(150, 90)
+	entry_rect.size = Vector2(150, 90) * MAZE_ENTRANCE_SIZE_RATIO
 	entry_shape.shape = entry_rect
-	entry_shape.position = Vector2(0, -42)
+	entry_shape.position = Vector2(0, -42) * MAZE_ENTRANCE_SIZE_RATIO
 	entry.add_child(entry_shape)
 	var entrance_back := Sprite2D.new()
 	entrance_back.name = "EntranceBack"
 	entrance_back.texture = MAZE_ENTRANCE_BACK_TEXTURE
 	entrance_back.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	entrance_back.scale = Vector2(0.34, 0.34)
-	entrance_back.position = Vector2(0, -137)
+	entrance_back.scale = Vector2(0.34, 0.34) * MAZE_ENTRANCE_SIZE_RATIO
 	entrance_back.z_index = 4
 	entry.add_child(entrance_back)
 	var entrance_front := Sprite2D.new()
@@ -804,12 +807,12 @@ func _make_underground_portal() -> void:
 	entrance_front.texture = MAZE_ENTRANCE_FRONT_TEXTURE
 	entrance_front.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	entrance_front.scale = entrance_back.scale
-	entrance_front.position = entrance_back.position
 	entrance_front.z_index = 5
 	entry.add_child(entrance_front)
+	_align_grounded_sprite_layers([entrance_back, entrance_front])
 	var entry_label := Label.new()
 	entry_label.text = "地下管网\n按 E 进入"
-	entry_label.position = Vector2(-72, -270)
+	entry_label.position = Vector2(-72, -270 * MAZE_ENTRANCE_SIZE_RATIO)
 	entry_label.size = Vector2(144, 48)
 	entry_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	entry_label.add_theme_font_size_override("font_size", 16)
@@ -1053,6 +1056,8 @@ func _make_collectibles(state: Dictionary) -> void:
 		if marker == null:
 			continue
 		var id := str(marker.name)
+		if StringName(id) in REMOVED_BANQUET_COLLECTIBLE_IDS:
+			continue
 		if collected.has(id): continue
 		var area := _add_collectible_marker(marker.global_position, Color("#f9d978"))
 		area.set_meta("kind", "collectible")
@@ -1069,6 +1074,8 @@ func _make_memory_anchors() -> void:
 		if marker == null:
 			continue
 		var key := str(marker.name)
+		if StringName(key) in REMOVED_BANQUET_ANCHOR_IDS:
+			continue
 		var area := _add_memory_bench(marker.global_position)
 		area.set_meta("kind", "anchor")
 		area.set_meta("id", key)
@@ -1094,7 +1101,7 @@ func _add_memory_bench(pos: Vector2) -> Area2D:
 	bench.z_index = 4
 	if texture != null:
 		var texture_size := texture.get_size()
-		var scale_factor := minf(132.0 / texture_size.x, 76.0 / texture_size.y)
+		var scale_factor := minf(132.0 / texture_size.x, 76.0 / texture_size.y) * MEMORY_BENCH_SIZE_RATIO
 		bench.scale = Vector2(scale_factor, scale_factor)
 		if _memory_bench_alignment_cached:
 			bench.position = _memory_bench_visual_position
@@ -1131,6 +1138,31 @@ func _align_grounded_sprite(sprite: Sprite2D, image: Image) -> void:
 	var center := Vector2(image.get_width(), image.get_height()) * 0.5
 	sprite.position.x = -(((min_x + max_x) * 0.5) - center.x) * sprite.scale.x
 	sprite.position.y = -(max_y - center.y) * sprite.scale.y
+
+func _align_grounded_sprite_layers(sprites: Array[Sprite2D]) -> void:
+	var visible_bottom := -INF
+	var has_visible_pixels := false
+	for sprite in sprites:
+		if sprite.texture == null:
+			continue
+		var image := sprite.texture.get_image()
+		var opaque_bottom := -1
+		for y in range(image.get_height() - 1, -1, -1):
+			for x in range(image.get_width()):
+				if image.get_pixel(x, y).a > 0.8:
+					opaque_bottom = y
+					break
+			if opaque_bottom >= 0:
+				break
+		if opaque_bottom < 0:
+			continue
+		var sprite_bottom := (float(opaque_bottom) - float(image.get_height()) * 0.5) * sprite.scale.y
+		visible_bottom = maxf(visible_bottom, sprite_bottom)
+		has_visible_pixels = true
+	if not has_visible_pixels:
+		return
+	for sprite in sprites:
+		sprite.position.y = -visible_bottom
 
 func _add_collectible_marker(pos: Vector2, color: Color) -> Area2D:
 	var area := Area2D.new()
@@ -1315,7 +1347,6 @@ func _make_monsters(state: Dictionary) -> void:
 	var data: Array = [
 		{"id": "noise_lighthouse", "type": "noise", "region": "lighthouse"},
 		{"id": "mouth_station", "type": "silent_mouth", "region": "station"},
-		{"id": "distractor_park", "type": "distractor", "region": "park"},
 		{"id": "shadow_forest", "type": "shadow", "region": "forest"},
 	]
 	for item in data:

@@ -71,10 +71,12 @@ var near_reset: bool = false
 var _house_front: Sprite2D
 var _house_back: Sprite2D
 
-const HOUSE_FRONT_TEXTURE := preload("res://assets/houses/old_dance_hall_front.png")
-const HOUSE_BACK_TEXTURE := preload("res://assets/houses/old_dance_hall_back.png")
+const HOUSE_FRONT_TEXTURE := preload("res://assets/houses/banquet_gallery_front.png")
+const HOUSE_BACK_TEXTURE := preload("res://assets/houses/banquet_gallery_back.png")
 const DANCE_HALL_SCALE := Vector2(0.52, 0.52)
-const DANCE_HALL_POSITION := Vector2(-327.0, -442.0)
+const DANCE_HALL_POSITION := Vector2(-327.0, -452.0)
+const DANCE_HALL_BACK_SCALE := Vector2(0.521353, 0.494392)
+const DANCE_HALL_BACK_POSITION := Vector2(-328.108, -434.666)
 
 
 # ═══════════════ 骨骼姿势（6种舞步，方向用左右脚不对称表现）═══════════════
@@ -177,8 +179,8 @@ func _make_house_layers() -> void:
 	_house_back.texture = HOUSE_BACK_TEXTURE
 	_house_back.centered = false
 	_house_back.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
-	_house_back.scale = DANCE_HALL_SCALE
-	_house_back.position = DANCE_HALL_POSITION
+	_house_back.scale = DANCE_HALL_BACK_SCALE
+	_house_back.position = DANCE_HALL_BACK_POSITION
 	_house_back.modulate.a = 0.0
 	_house_back.z_index = -6
 	add_child(_house_back)

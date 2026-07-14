@@ -159,6 +159,9 @@ func _test_required_key_count_matches_available_keys() -> void:
 func _test_town_foreground_stays_low_and_sparse() -> void:
 	var world := MindscapeWorld.new()
 	world._make_town_art_layers()
+	var tree_line := world.get_node_or_null("TownTreeLineParallax") as CanvasItem
+	if tree_line == null or tree_line.z_index >= -32:
+		failures.append("Town tree line must render behind the authored house background")
 	var foreground_count := 0
 	for child in world.get_children():
 		if child.name.begins_with("TownForegroundTrees_"):

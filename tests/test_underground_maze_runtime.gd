@@ -18,6 +18,7 @@ func _test_locked_and_unlocked_runtime_states() -> void:
 		failures.append("Locked maze must create a physical hidden-door collision")
 	if locked_maze.compass_button == null or not locked_maze.compass_button.disabled:
 		failures.append("Locked maze must show the compass as unavailable")
+	_test_spawn_return_interaction(locked_maze)
 	locked_maze.queue_free()
 	await get_tree().process_frame
 
@@ -61,6 +62,20 @@ func _test_underground_audio(maze: UndergroundMaze) -> void:
 		failures.append("Changing views underground must not restart a ground view BGM")
 	if not AudioManager.has_method("stop_bgm") or not AudioManager.has_method("resume_view_bgm"):
 		failures.append("AudioManager must expose explicit stop/resume controls for scene transitions")
+
+func _test_spawn_return_interaction(maze: UndergroundMaze) -> void:
+	var interact_event := InputEventAction.new()
+	interact_event.action = "interact"
+	interact_event.pressed = true
+	maze._unhandled_input(interact_event)
+	var saved_state := ProfileManager.get_current_profile().get("state", {}) as Dictionary
+	if not maze._leaving_maze:
+		failures.append("Pressing E at the maze spawn must start the return transition")
+	if not bool(saved_state.get("return_to_game", false)):
+		failures.append("Returning from the maze spawn must resume the ground game")
+	var return_position := saved_state.get("position", Vector2.ZERO) as Vector2
+	if not return_position.is_equal_approx(UndergroundMaze.MAIN_RETURN_POSITION):
+		failures.append("Maze spawn exit must return beside the overworld underground entrance")
 
 func _finish() -> void:
 	if failures.is_empty():

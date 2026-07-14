@@ -30,7 +30,6 @@ func setup(id: String, kind: String, pos: Vector2) -> void:
 	match kind:
 		"noise": view_key = "blind"
 		"silent_mouth": view_key = "autism"
-		"distractor": view_key = "adhd"
 		"shadow": view_key = "depression"
 	
 	# Start invisible — will become visible when correct view is active
@@ -112,9 +111,6 @@ func _on_player_contact(player: MindscapePlayer) -> void:
 			# Push player back
 			player.velocity.x += signf(player.global_position.x - global_position.x) * 200.0
 			player.velocity.y = -180.0
-		"distractor":
-			# Quick teleport nearby (confusion)
-			player.global_position.x += randf_range(-60.0, 60.0)
 
 func _color_for_type(type: String) -> Color:
 	match type:
@@ -122,8 +118,6 @@ func _color_for_type(type: String) -> Color:
 			return Color("#4fc8ff")
 		"silent_mouth":
 			return Color("#d4e4f4")
-		"distractor":
-			return Color("#ffdf41")
 		"shadow":
 			return Color("#2a2d38")
 	return Color.WHITE
@@ -134,8 +128,6 @@ func _label_for_type(type: String) -> String:
 			return "信息噪音球"
 		"silent_mouth":
 			return "无声嘴巴"
-		"distractor":
-			return "干扰者"
 		"shadow":
 			return "阴影"
 	return "怪物"

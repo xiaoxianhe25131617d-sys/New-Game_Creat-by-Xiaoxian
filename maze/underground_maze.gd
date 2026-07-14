@@ -44,6 +44,7 @@ const ROUTE_CORRECT_DISTANCE := 52.0
 const ROUTE_WRONG_DISTANCE := 56.0
 const ROUTE_ADVANCE_DISTANCE := 64.0
 const EXIT_TRIGGER_RADIUS := 140.0
+const SPAWN_RETURN_INTERACT_RADIUS := 120.0
 const NAVIGATION_SOURCE_DISTANCE := 180.0
 const DEBUG_SPAWN_OFFSETS := {
 	"PlayerSpawn": Vector2.ZERO,
@@ -192,6 +193,7 @@ static func route_interval(progress: float) -> float:
 @onready var one_way_stairs: TileMapLayer = $OneWayStairs
 @onready var ladders: Node2D = $Ladders
 @onready var player_spawn: Marker2D = $Markers/PlayerSpawn
+@onready var spawn_return_prompt: Label = $SpawnReturnPrompt
 
 var runtime_player: MindscapePlayer
 var active_ladder: Area2D
@@ -297,6 +299,7 @@ func _process(delta: float) -> void:
 	_update_route_feedback(delta)
 	_update_compass(delta)
 	_update_exit_key_prompt()
+	_update_spawn_return_prompt()
 	if not _leaving_maze and runtime_player.global_position.distance_to($Markers/PortalExit.global_position) < EXIT_TRIGGER_RADIUS:
 		_leave_to_main(MAIN_EXIT_RETURN_POSITION, true)
 
@@ -312,9 +315,14 @@ func _unhandled_input(event: InputEvent) -> void:
 			_try_open_hidden_chest()
 			get_viewport().set_input_as_handled()
 			return
-		if runtime_player.global_position.distance_to(player_spawn.global_position) < 120.0:
+		if runtime_player.global_position.distance_to(player_spawn.global_position) < SPAWN_RETURN_INTERACT_RADIUS:
 			_leave_to_main(MAIN_RETURN_POSITION, false)
 			get_viewport().set_input_as_handled()
+
+func _update_spawn_return_prompt() -> void:
+	if spawn_return_prompt == null or runtime_player == null:
+		return
+	spawn_return_prompt.visible = runtime_player.global_position.distance_to(player_spawn.global_position) < SPAWN_RETURN_INTERACT_RADIUS
 
 func _make_hidden_door() -> void:
 	var marker := $Markers/HiddenDoor

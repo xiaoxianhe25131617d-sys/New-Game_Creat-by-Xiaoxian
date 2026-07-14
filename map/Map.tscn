@@ -1,0 +1,26 @@
+[gd_scene format=3 uid="uid://dfcgw74qpvb6y"]
+
+[ext_resource type="PackedScene" path="res://map/New_layer_0.tscn" id="0_id"]
+[ext_resource type="PackedScene" path="res://map/Water_1.tscn" id="1_id"]
+[ext_resource type="PackedScene" path="res://map/Bridge_2.tscn" id="2_id"]
+[ext_resource type="PackedScene" path="res://map/Ground_3.tscn" id="3_id"]
+[ext_resource type="PackedScene" path="res://map/Pickups_4.tscn" id="4_id"]
+[ext_resource type="PackedScene" path="res://map/Blocks_5.tscn" id="5_id"]
+[ext_resource type="PackedScene" uid="uid://bxrnnek8jq8eu" path="res://map/Background_6.tscn" id="6_id"]
+
+[node name="map" type="Node2D" unique_id=1443475226]
+
+[node name="Background_6" parent="." unique_id=1030360545 instance=ExtResource("6_id")]
+
+[node name="Blocks_5" parent="." unique_id=1871429427 instance=ExtResource("5_id")]
+
+[node name="Pickups_4" parent="." unique_id=482445537 instance=ExtResource("4_id")]
+
+[node name="Ground_3" parent="." unique_id=49418932 instance=ExtResource("3_id")]
+
+[node name="Bridge_2" parent="." unique_id=1246906387 instance=ExtResource("2_id")]
+
+[node name="Water_1" parent="." unique_id=1237122191 instance=ExtResource("1_id")]
+
+[node name="New_layer_0" parent="." unique_id=1193503496 instance=ExtResource("0_id")]
+tile_map_data = PackedByteArray()

@@ -176,7 +176,6 @@ warm natural lighting, no text or UI elements. --style character portrait --ar 3
 |---|--------|------|------|
 | 23 | 信息噪音球 (Noise) | 128×128 或 256×256 | 蓝色(#4fc8ff)扭曲球体，表面波动的混乱文字/符号，发光 |
 | 24 | 无声嘴巴 (Silent Mouth) | 128×128 | 苍白(#d4e4f4)的悬浮嘴巴，紧闭不发声，周围有振动波纹 |
-| 25 | 干扰者 (Distractor) | 128×128 | 金色(#ffdf41)多面体，不断变换形状，周围有假箭头/幻影 |
 | 26 | 阴影 (Shadow) | 128×128 | 深黑(#2a2d38)不定形阴影，边缘模糊，眼睛是暗红色光点 |
 
 #### 🤖 AI 提示词（怪物）
@@ -193,12 +192,6 @@ A pale floating disembodied mouth (#d4e4f4), lips tightly sealed,
 surrounded by faint vibration ripples in the air, quiet and eerie, 
 2D game enemy sprite, 128x128, minimalist horror style, transparent background. 
 --style 2d game asset
-
-【干扰者】
-A golden (#ffdf41) geometric polyhedron that seems to flicker between shapes, 
-surrounded by phantom arrows pointing in conflicting directions and afterimages, 
-2D game enemy sprite, 128x128, glitch art style, transparent background. 
---style digital art
 
 【阴影】
 An amorphous dark shadow creature (#2a2d38), barely visible against darkness, 

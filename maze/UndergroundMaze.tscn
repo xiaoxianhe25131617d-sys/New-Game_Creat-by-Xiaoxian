@@ -85,6 +85,34 @@ scale = Vector2(1.15, 3.51)
 position = Vector2(1504.5, 795)
 metadata/persistent_id = "maze_player_spawn"
 
+[node name="SpawnReturnExit" type="Node2D" parent="."]
+z_index = 1
+position = Vector2(1504.5, 795)
+
+[node name="Glow" type="Polygon2D" parent="SpawnReturnExit"]
+color = Color(0.439216, 0.862745, 0.909804, 0.18)
+polygon = PackedVector2Array(-78, 42, -78, -22, -62, -58, -34, -82, 0, -92, 34, -82, 62, -58, 78, -22, 78, 42)
+
+[node name="Opening" type="Polygon2D" parent="SpawnReturnExit"]
+color = Color(0.027451, 0.062745, 0.094118, 0.96)
+polygon = PackedVector2Array(-56, 42, -56, -18, -44, -48, -24, -66, 0, -72, 24, -66, 44, -48, 56, -18, 56, 42)
+
+[node name="Frame" type="Line2D" parent="SpawnReturnExit"]
+points = PackedVector2Array(-62, 44, -62, -20, -48, -54, -26, -74, 0, -82, 26, -74, 48, -54, 62, -20, 62, 44)
+width = 7.0
+default_color = Color(0.47451, 0.847059, 0.886275, 1)
+
+[node name="SpawnReturnPrompt" type="Label" parent="."]
+z_index = 5
+offset_left = 1374.5
+offset_top = 849.0
+offset_right = 1634.5
+offset_bottom = 883.0
+theme_override_colors/font_color = Color(0.74902, 0.972549, 1, 1)
+theme_override_font_sizes/font_size = 18
+text = "[E] 返回地面"
+horizontal_alignment = 1
+
 [node name="HiddenDoor" type="Marker2D" parent="Markers" unique_id=1667643301]
 position = Vector2(216, 891)
 metadata/persistent_id = "maze_hidden_door"

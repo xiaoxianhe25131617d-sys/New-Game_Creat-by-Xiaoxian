@@ -17,6 +17,7 @@ func _ready() -> void:
 	add_child(maze)
 	_test_scene_contract(maze)
 	_test_markers(maze)
+	_test_spawn_return_exit(maze)
 	_test_ladders(maze)
 	_test_navigation_features_are_clear(maze)
 	_test_ordered_route_guidance()
@@ -66,6 +67,17 @@ func _test_markers(maze: Node) -> void:
 		if persistent_id.is_empty() or ids.has(persistent_id):
 			failures.append("Marker %s needs a unique persistent_id" % marker_name)
 		ids[persistent_id] = true
+
+func _test_spawn_return_exit(maze: Node) -> void:
+	var spawn := maze.get_node_or_null("Markers/PlayerSpawn") as Marker2D
+	var exit_visual := maze.get_node_or_null("SpawnReturnExit") as Node2D
+	var prompt := maze.get_node_or_null("SpawnReturnPrompt") as Label
+	if spawn == null or exit_visual == null:
+		failures.append("Maze spawn must have a visible return exit")
+	elif exit_visual.global_position.distance_to(spawn.global_position) > 1.0:
+		failures.append("Spawn return exit must stay anchored to PlayerSpawn")
+	if prompt == null or "[E]" not in prompt.text or "返回地面" not in prompt.text:
+		failures.append("Spawn return exit must explain that E returns to the surface")
 
 func _test_ladders(maze: Node) -> void:
 	var ladders := maze.get_node("Ladders").get_children()
