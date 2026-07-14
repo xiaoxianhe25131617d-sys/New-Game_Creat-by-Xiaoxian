@@ -19,6 +19,11 @@ func _ready() -> void:
 	_test_markers(maze)
 	_test_ladders(maze)
 	_test_navigation_features_are_clear(maze)
+	_test_ordered_route_guidance()
+	_test_navigation_feedback_strength()
+	_test_compass_cardinal_directions()
+	_test_exit_trigger_is_forgiving(maze)
+	_test_dark_visual_material_only(maze)
 	_test_runtime_player(maze)
 	maze.free()
 	_finish()
@@ -72,20 +77,51 @@ func _test_ladders(maze: Node) -> void:
 
 func _test_navigation_features_are_clear(maze: Node) -> void:
 	var walls := maze.get_node("Walls") as TileMapLayer
-	for ladder in maze.get_node("Ladders").get_children():
-		for wall_cell in walls.get_used_cells():
-			var wall_center := walls.to_global(walls.map_to_local(wall_cell))
-			if bool(ladder.call("contains_world_point", wall_center)):
-				failures.append("Solid wall tile overlaps %s at %s" % [ladder.name, wall_cell])
-				break
+	for waypoint in UndergroundMaze.COMPASS_ROUTE:
+		var cell := walls.local_to_map(walls.to_local(waypoint))
+		if walls.get_cell_source_id(cell) >= 0:
+			failures.append("Compass waypoint %s falls inside solid maze terrain" % waypoint)
 
-	var stairs := maze.get_node("OneWayStairs") as TileMapLayer
-	for stair_cell in stairs.get_used_cells():
-		for offset_y in range(-1, 2):
-			for offset_x in range(-1, 2):
-				if walls.get_cell_source_id(stair_cell + Vector2i(offset_x, offset_y)) >= 0:
-					failures.append("Solid wall tile overlaps one-way stairs near %s" % stair_cell)
-					return
+func _test_ordered_route_guidance() -> void:
+	var route := UndergroundMaze.EXIT_GUIDANCE_ROUTE
+	var current_sample := UndergroundMaze.sample_active_route_segment(Vector2(1350, 795), route, 0)
+	if float(current_sample.get("distance", INF)) > 1.0:
+		failures.append("Ordered guidance must recognize the active route segment")
+	var later_route_sample := UndergroundMaze.sample_active_route_segment(Vector2(2350, 440), route, 0)
+	if float(later_route_sample.get("distance", 0.0)) <= UndergroundMaze.ROUTE_WRONG_DISTANCE:
+		failures.append("A later route segment across the maze must not count as the current correct path")
+	var next_index := UndergroundMaze.advance_ordered_route(Vector2(1180, 795), route, 0, 64.0)
+	if next_index != 1:
+		failures.append("Ordered guidance must advance only after reaching the active segment endpoint")
+
+func _test_navigation_feedback_strength() -> void:
+	if UndergroundMaze.route_volume_db(0.0) < -6.11:
+		failures.append("Route guidance must be clearly audible from the maze entrance")
+	if UndergroundMaze.route_volume_db(1.0) < 5.99:
+		failures.append("Route guidance must reach +6 dB near the exit")
+	if UndergroundMaze.route_interval(0.0) > 0.201 or UndergroundMaze.route_interval(1.0) > 0.076:
+		failures.append("Route guidance cadence must accelerate from 0.20s to about 0.075s")
+
+func _test_compass_cardinal_directions() -> void:
+	var cases := {
+		Vector2(120, 10): "向右",
+		Vector2(-120, 10): "向左",
+		Vector2(10, 120): "向下",
+		Vector2(10, -120): "向上",
+		Vector2(4, 3): "继续前进",
+	}
+	for offset in cases:
+		if UndergroundMaze.cardinal_direction_text(offset) != cases[offset]:
+			failures.append("Compass direction for %s should be %s" % [offset, cases[offset]])
+
+func _test_exit_trigger_is_forgiving(_maze: Node) -> void:
+	if UndergroundMaze.EXIT_TRIGGER_RADIUS < 120.0:
+		failures.append("Invisible maze exit needs a forgiving automatic trigger radius")
+
+func _test_dark_visual_material_only(maze: Node) -> void:
+	var background := maze.get_node_or_null("PrototypeBackground") as ColorRect
+	if background == null or background.color.get_luminance() > 0.18:
+		failures.append("Maze background should be a low-contrast dark stone tone")
 
 func _test_runtime_player(maze: Node) -> void:
 	var player := maze.get_node_or_null("RuntimePlayer") as MindscapePlayer

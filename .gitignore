@@ -3,6 +3,7 @@
 
 # Godot editor, import cache, and shader cache
 .godot/
+/teammate-version/
 
 # Local media captures and temporary exports
 *.mov

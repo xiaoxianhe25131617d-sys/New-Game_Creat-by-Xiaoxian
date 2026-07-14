@@ -12,6 +12,7 @@ const MAX_FALL_SPEED: float = 900.0
 const COYOTE_TIME: float = 0.08
 const JUMP_BUFFER: float = 0.1
 const DOCTOR_SPRITESHEET_PATH: String = "res://assets/characters/generated/doctor_spritesheet_512.png"
+const UNDERGROUND_SPRITESHEET_PATH: String = "res://assets/characters/generated/underground_doctor_spritesheet.png"
 const DOCTOR_FRAME_SIZE: Vector2i = Vector2i(32, 32)
 const DOCTOR_DISPLAY_SCALE: Vector2 = Vector2(3.0, 3.0)
 
@@ -26,6 +27,8 @@ var was_on_floor: bool = false
 var is_on_ladder: bool = false  # 梯子上（由 main.gd 设置）
 var facing_dir: float = 1.0
 var _drop_cooldown: float = 0.0  # 穿透地板冷却（防止反复触发）
+var _walk_sfx_timer: float = 0.0  # 走路音效冷却
+var outfit_variant: String = "doctor"
 
 # ADHD 自动行走
 var adhd_auto_dir: float = 0.0     # -1向左, 0停止, 1向右
@@ -69,11 +72,16 @@ func _physics_process(delta: float) -> void:
 		_update_animation(hdir)
 		return
 
+	var just_landed: bool = false
 	if is_on_floor():
 		coyote_timer = COYOTE_TIME
+		if not was_on_floor:
+			just_landed = true
 	else:
 		coyote_timer = maxf(0.0, coyote_timer - delta)
 	was_on_floor = is_on_floor()
+	if just_landed:
+		AudioManager.play_sfx("land")
 
 	if not is_on_floor():
 		velocity.y += GRAVITY * delta
@@ -117,7 +125,7 @@ func _physics_process(delta: float) -> void:
 	var direction: float = 0.0
 	var spd_mult: float = VIEW_SPEED_MULT.get(current_view, 1.0)
 
-	if controls_enabled:
+	if controls_enabled and not get_meta("poop_stunned", false):
 		# 原始方向输入
 		var raw_dir: float = 0.0
 		if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
@@ -129,9 +137,6 @@ func _physics_process(delta: float) -> void:
 		if current_view == "adhd":
 			if raw_dir != 0.0:
 				adhd_auto_dir = raw_dir
-			elif Input.is_action_just_pressed("interact") or Input.is_action_just_pressed("special"):
-				# E/F中断自动行走
-				adhd_auto_dir = 0.0
 			direction = adhd_auto_dir
 			spd_mult *= adhd_speed_mult
 		else:
@@ -154,6 +159,7 @@ func _physics_process(delta: float) -> void:
 			jump_held = true
 			coyote_timer = 0.0
 			jump_buffer_timer = 0.0
+			AudioManager.play_sfx("jump")
 		if not space_now:
 			jump_held = false
 
@@ -177,6 +183,19 @@ func _physics_process(delta: float) -> void:
 			facing_dir = signf(direction)
 
 	move_and_slide()
+	# 走路音效：在地面且有水平速度时循环播放，停止/离地时立即停止
+	if is_on_floor() and abs(velocity.x) > 10.0:
+		# 盲人模式：用盲杖音效作为行走反馈，并做节奏限频（防止每帧重叠）
+		if current_view == "blind":
+			_walk_sfx_timer += delta
+			if _walk_sfx_timer >= 0.35:
+				AudioManager.play_sfx("blind_cane")
+				_walk_sfx_timer = 0.0
+		else:
+			AudioManager.play_sfx("walk")  # audio_manager内部保证不重复start
+	else:
+		AudioManager.stop_walk_sfx()
+		_walk_sfx_timer = 0.0
 	_update_animation(direction)
 
 func _update_animation(dir: float) -> void:
@@ -228,6 +247,14 @@ func set_view(view: String) -> void:
 	if view != "adhd":
 		adhd_auto_dir = 0.0
 
+func suspend_for_interaction() -> void:
+	controls_enabled = false
+	dash_time = 0.0
+	velocity.x = 0.0
+
+func resume_after_interaction() -> void:
+	controls_enabled = true
+
 func pulse_echo() -> void:
 	var tween: Tween = create_tween()
 	aura.width = 10.0
@@ -237,8 +264,12 @@ func pulse_echo() -> void:
 	tween.parallel().tween_property(aura, "modulate:a", 0.0, 0.55)
 
 static func create() -> MindscapePlayer:
+	return create_with_outfit("doctor")
+
+static func create_with_outfit(outfit: String) -> MindscapePlayer:
 	var player := MindscapePlayer.new()
 	player.name = "Player"
+	player.outfit_variant = outfit
 	player.collision_layer = 1
 	player.collision_mask = 3  # 层1(普通碰撞) + 层2(可穿透地板)
 	player.z_index = 100
@@ -259,7 +290,7 @@ static func create() -> MindscapePlayer:
 
 	var sprite := AnimatedSprite2D.new()
 	sprite.name = "CharacterTexture"
-	sprite.sprite_frames = _create_doctor_sprite_frames()
+	sprite.sprite_frames = _create_sprite_frames(outfit)
 	sprite.animation = &"idle"
 	sprite.scale = DOCTOR_DISPLAY_SCALE
 	# 透明帧里的鞋底与 62px 高碰撞体底部对齐，避免角色悬浮。
@@ -278,6 +309,11 @@ static func create() -> MindscapePlayer:
 	player.add_child(aura)
 	return player
 
+static func _create_sprite_frames(outfit: String) -> SpriteFrames:
+	if outfit == "underground":
+		return _create_underground_sprite_frames()
+	return _create_doctor_sprite_frames()
+
 static func _create_doctor_sprite_frames() -> SpriteFrames:
 	var sheet := load(DOCTOR_SPRITESHEET_PATH) as Texture2D
 	var frames := SpriteFrames.new()
@@ -286,6 +322,23 @@ static func _create_doctor_sprite_frames() -> SpriteFrames:
 	if sheet == null:
 		push_warning("Doctor spritesheet not found: %s" % DOCTOR_SPRITESHEET_PATH)
 		return frames
+	_add_doctor_animation(frames, sheet, &"idle", [Vector2i(0, 0)], 1.0, true)
+	_add_doctor_animation(frames, sheet, &"walk_left", [Vector2i(1, 0), Vector2i(2, 0)], 6.5, true)
+	_add_doctor_animation(frames, sheet, &"walk_right", [Vector2i(1, 0), Vector2i(2, 0)], 6.5, true)
+	_add_doctor_animation(frames, sheet, &"jump", [Vector2i(5, 0)], 1.0, false)
+	_add_doctor_animation(frames, sheet, &"research", [Vector2i(6, 0)], 1.0, true)
+	_add_doctor_animation(frames, sheet, &"climb_left", [Vector2i(7, 0), Vector2i(1, 1)], 6.5, true)
+	_add_doctor_animation(frames, sheet, &"climb_right", [Vector2i(7, 0), Vector2i(1, 1)], 6.5, true)
+	return frames
+
+static func _create_underground_sprite_frames() -> SpriteFrames:
+	var sheet := load(UNDERGROUND_SPRITESHEET_PATH) as Texture2D
+	var frames := SpriteFrames.new()
+	if frames.has_animation(&"default"):
+		frames.remove_animation(&"default")
+	if sheet == null:
+		push_warning("Underground spritesheet not found: %s" % UNDERGROUND_SPRITESHEET_PATH)
+		return _create_doctor_sprite_frames()
 	_add_doctor_animation(frames, sheet, &"idle", [Vector2i(0, 0)], 1.0, true)
 	_add_doctor_animation(frames, sheet, &"walk_left", [Vector2i(1, 0), Vector2i(2, 0)], 6.5, true)
 	_add_doctor_animation(frames, sheet, &"walk_right", [Vector2i(1, 0), Vector2i(2, 0)], 6.5, true)

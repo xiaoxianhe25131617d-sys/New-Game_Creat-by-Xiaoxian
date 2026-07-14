@@ -352,6 +352,7 @@ func _on_correct_key(key_name: String) -> void:
 
 	hint_label.text = "石块「%s」凹陷下去了！（%d/4）" % [key_name, current_step + 1]
 	hint_updated.emit("指尖陷入了石块！「%s」的纹理吻合——石块沉入墙中。（%d/4）" % [key_name, current_step + 1])
+	AudioManager.play_sfx("wall_correct")
 
 	current_step += 1
 	_tween_wall_flash(true)
@@ -453,6 +454,7 @@ func _complete_puzzle() -> void:
 	hint_label.text = "四块石头全部凹陷！石门颤动..."
 	hint_updated.emit("石门上所有凸起的石块都沉入墙中——门缓缓打开了！")
 	puzzle_completed.emit("stone_door")
+	AudioManager.play_sfx("stone_door")
 	_tween_celebration()
 
 
