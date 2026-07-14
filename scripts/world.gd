@@ -9,8 +9,11 @@ var interactables: Array[Node2D] = []
 var puzzle_nodes: Dictionary = {}
 var anchor_nodes: Array = []
 var collectible_nodes: Dictionary = {}
+var _bush_clues: Array[Dictionary] = []
 var parallax_layers: Array = []
 var world_shift: Vector2 = Vector2.ZERO
+var _parallax_camera_origin := Vector2.ZERO
+var _parallax_origin_set := false
 
 var bg_canvas: CanvasLayer
 var sky_background: TextureRect
@@ -39,6 +42,7 @@ const ADHD_ATTENTION_SHADER := preload("res://shaders/adhd_attention.gdshader")
 
 var _drop_through_tiles: Array[Vector2i] = []  # 可穿透地板位置列表
 var _ladder_zones: Array[Area2D] = []  # 梯子列表（玩家可爬）
+var _laser_focus_puzzle: PuzzleLaserFocus = null
 
 func is_drop_through_tile(tile_pos: Vector2i) -> bool:
 	for dt in _drop_through_tiles:
@@ -80,6 +84,18 @@ const TILESET_MAIN := preload("res://map/tileset.tres")
 const TILESET_DROP := preload("res://map/tileset_drop.tres")
 const SKY_TEXTURE := preload("res://assets/sky_user.png")
 const MEMORY_BENCH_TEXTURE_PATH := "res://assets/environment/generated/memory_bench.png"
+const MAZE_ENTRANCE_BACK_TEXTURE := preload("res://assets/environment/generated/maze_entrance_back.png")
+const MAZE_ENTRANCE_FRONT_TEXTURE := preload("res://assets/environment/generated/maze_entrance_front.png")
+const TOWN_DISTANT_TREES_TEXTURE := preload("res://assets/town/town_distant_tree_line.png")
+const TOWN_FOREGROUND_CLUSTER_1 := preload("res://assets/town/foreground_cluster_01.png")
+const TOWN_FOREGROUND_CLUSTER_2 := preload("res://assets/town/foreground_cluster_02.png")
+const TOWN_FOREGROUND_CLUSTER_3 := preload("res://assets/town/foreground_cluster_03.png")
+const TOWN_FOREGROUND_CLUSTER_4 := preload("res://assets/town/foreground_cluster_04.png")
+const TOWN_FOREGROUND_CLUSTER_5 := preload("res://assets/town/foreground_cluster_05.png")
+const BUSH_CLUE_TEXTURE := preload("res://assets/environment/generated/autism_bush_sheet.png")
+const UNDERGROUND_PORTAL_POSITION := Vector2(9000.0, GROUND_Y_PX)
+const WORLD_WIDTH := WORLD_TILE_W * TILE_SIZE
+const TOWN_DISTANT_TREE_BASE_PX := 536.0
 
 const T_GRASS_TL := Vector2i(4, 0)
 const T_GRASS_TR := Vector2i(5, 0)
@@ -127,14 +143,18 @@ func build(state: Dictionary) -> void:
 	_make_depression_spikes()
 	_make_parallax_backgrounds()
 	_make_tilemap_world()
+	_make_world_bounds()
+	_restore_texture_wall_state(state)
 	_make_beautiful_decor()
 	_make_regions_on_tilemap()
 	_make_npcs()
 	_make_puzzles(state)
+	_make_laser_focus_puzzle(state)
 	_make_collectibles(state)
 	_make_monsters(state)
 	_make_memory_anchors()
-	_make_wind_vanes()
+	_make_underground_portal()
+	_make_hidden_color_clues()
 
 # ══════════════════════════════════════════════════════════════
 #  BACKGROUND CANVAS + VIEW TINT
@@ -268,7 +288,7 @@ func _add_parallax_layer(parallax_factor: float, draw_func: Callable) -> void:
 	container.z_index = int(-80 + parallax_factor * 30)
 	add_child(container)
 	draw_func.call(container)
-	parallax_layers.append({"node": container, "factor": parallax_factor})
+	parallax_layers.append({"node": container, "factor": parallax_factor, "base_position": container.position})
 
 func _draw_distant_mountains(container: Node2D) -> void:
 	var colors: Array = [Color("#8899bb"), Color("#99aacc"), Color("#7788aa"), Color("#aabbdd")]
@@ -359,24 +379,8 @@ func _draw_trees_far(container: Node2D) -> void:
 			container.add_child(canopy)
 
 func _draw_buildings_bg(container: Node2D) -> void:
-	# 水坝
-	_draw_dam(Vector2(6200, 3000), container)
 	# 许愿堂
 	_draw_observatory(Vector2(9800, 2950), container)
-
-func _draw_dam(pos: Vector2, container: Node2D) -> void:
-	var x := pos.x; var y := pos.y
-	for row in range(5):
-		var block := ColorRect.new()
-		block.position = Vector2(x + row * 40, y + row * 8)
-		block.size = Vector2(36, 22)
-		block.color = Color("#889098")
-		container.add_child(block)
-	var wall := ColorRect.new()
-	wall.position = Vector2(x + 40, y - 80)
-	wall.size = Vector2(160, 120)
-	wall.color = Color("#788890", 0.5)
-	container.add_child(wall)
 
 func _draw_observatory(pos: Vector2, container: Node2D) -> void:
 	var x := pos.x; var y := pos.y
@@ -397,10 +401,12 @@ func _draw_observatory(pos: Vector2, container: Node2D) -> void:
 	dome.polygon = dp
 	dome.color = Color("#90a0b0")
 	container.add_child(dome)
-	# 望远镜
-	var scope := ColorRect.new()
-	scope.position = Vector2(x - 3, y)
-	scope.size = Vector2(6, 50)
+	# 望远镜只保留线性轮廓，不再用色块占位
+	var scope := Polygon2D.new()
+	scope.polygon = PackedVector2Array([
+		Vector2(x - 2, y + 46), Vector2(x + 2, y + 46),
+		Vector2(x + 2, y), Vector2(x - 2, y),
+	])
 	scope.color = Color("#c0c0c0")
 	container.add_child(scope)
 
@@ -508,11 +514,30 @@ func _paint_texture_wall_blocker() -> void:
 	_texture_wall_body.add_child(shape)
 	add_child(_texture_wall_body)
 
+func _make_world_bounds() -> void:
+	var right_wall := StaticBody2D.new()
+	right_wall.name = "WorldRightWall"
+	right_wall.position = Vector2(WORLD_WIDTH + 24.0, GROUND_Y_PX - 80.0)
+	right_wall.collision_layer = 1
+	right_wall.collision_mask = 0
+	var shape := CollisionShape2D.new()
+	var rect := RectangleShape2D.new()
+	rect.size = Vector2(96.0, float(WORLD_TILE_H * TILE_SIZE) + 400.0)
+	shape.shape = rect
+	right_wall.add_child(shape)
+	add_child(right_wall)
+
 func remove_texture_wall_blocker() -> void:
 	if is_instance_valid(_texture_wall_body):
 		_texture_wall_body.queue_free()
 	_texture_wall_body = null
 	hint_updated.emit("石门打开了！后面的区域现已可通行。")
+
+func _restore_texture_wall_state(state: Dictionary) -> void:
+	var completed: Array = state.get("completed_levels", []) as Array
+	if completed.has("texture_wall") and is_instance_valid(_texture_wall_body):
+		_texture_wall_body.queue_free()
+		_texture_wall_body = null
 
 func _paint_decorations() -> void:
 	# 树和灌木
@@ -532,12 +557,9 @@ func _paint_decorations() -> void:
 #  手绘装饰 — 各区域特色建筑
 # ══════════════════════════════════════════════════════════════
 func _make_beautiful_decor() -> void:
+	_make_town_art_layers()
 	# 中央广场喷泉
 	_draw_fountain(Vector2(3400, GROUND_Y_PX - 20))
-	# 森林小屋
-	_draw_cabin(Vector2(4600, GROUND_Y_PX - 30))
-	# 车站
-	_draw_station(Vector2(6900, GROUND_Y_PX - 30))
 	# 游乐园摩天轮
 	_draw_ferris_wheel(Vector2(8100, GROUND_Y_PX - 60))
 	# 花朵
@@ -550,6 +572,108 @@ func _make_beautiful_decor() -> void:
 		var rx := 300 + i * 280 + fmod(i * 1.3, 1.0) * 120
 		if rx < 11000:
 			_draw_rock(Vector2(rx, GROUND_Y_PX - 2), [Color("#888888"), Color("#999999"), Color("#777777")][i % 3])
+
+func _make_town_art_layers() -> void:
+	# The tree line is repeated with a small overlap, then eased with the camera
+	# as a single layer. It stays behind gameplay and never changes the terrain.
+	var tree_line_layer := Node2D.new()
+	tree_line_layer.name = "TownTreeLineParallax"
+	tree_line_layer.z_index = -1
+	add_child(tree_line_layer)
+	parallax_layers.append({"node": tree_line_layer, "factor": 0.40, "base_position": tree_line_layer.position})
+
+	var back_x := -40.0
+	var back_index := 0
+	var back_scale := 0.42
+	var back_step := TOWN_DISTANT_TREES_TEXTURE.get_width() * back_scale - 8.0
+	while back_x < WORLD_WIDTH + back_step:
+		var back := Sprite2D.new()
+		back.name = "TownTreeLine_%02d" % back_index
+		back.texture = TOWN_DISTANT_TREES_TEXTURE
+		back.centered = false
+		back.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+		back.scale = Vector2(back_scale, back_scale)
+		back.position = Vector2(back_x, GROUND_Y_PX - TOWN_DISTANT_TREE_BASE_PX * back_scale)
+		back.flip_h = back_index % 2 == 1
+		tree_line_layer.add_child(back)
+		back_x += back_step
+		back_index += 1
+
+	var foreground_textures: Array[Texture2D] = [
+		TOWN_FOREGROUND_CLUSTER_1, TOWN_FOREGROUND_CLUSTER_2, TOWN_FOREGROUND_CLUSTER_3,
+		TOWN_FOREGROUND_CLUSTER_4, TOWN_FOREGROUND_CLUSTER_5,
+	]
+	var candidate_positions: Array[float] = [280.0, 1050.0, 1800.0, 2250.0, 3750.0, 5520.0, 7150.0, 8550.0, 10800.0]
+	var cluster_index := 0
+	for candidate_x in candidate_positions:
+		if not _is_foreground_position_safe(candidate_x):
+			continue
+		var foreground := Sprite2D.new()
+		foreground.name = "TownForegroundCluster_%02d" % cluster_index
+		foreground.texture = foreground_textures[cluster_index % foreground_textures.size()]
+		foreground.centered = false
+		foreground.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		var cluster_scale := 0.48 + float(cluster_index % 3) * 0.04
+		foreground.scale = Vector2(cluster_scale, cluster_scale)
+		foreground.position = Vector2(candidate_x, GROUND_Y_PX - foreground.texture.get_height() * cluster_scale)
+		foreground.flip_h = cluster_index % 2 == 1
+		foreground.modulate.a = 0.82
+		foreground.z_index = 6
+		add_child(foreground)
+		cluster_index += 1
+
+func _is_foreground_position_safe(candidate_x: float) -> bool:
+	const SAFE_GAP := 220.0
+	for level in GameData.LEVELS:
+		if absf(candidate_x - (level["pos"] as Vector2).x) < SAFE_GAP:
+			return false
+	for npc in GameData.NPCS:
+		if absf(candidate_x - (npc["pos"] as Vector2).x) < SAFE_GAP:
+			return false
+	for reserved_x in [3900.0, UNDERGROUND_PORTAL_POSITION.x]:
+		if absf(candidate_x - reserved_x) < SAFE_GAP:
+			return false
+	return true
+
+func _make_underground_portal() -> void:
+	var entry := Area2D.new()
+	entry.name = "UndergroundPortal"
+	entry.position = UNDERGROUND_PORTAL_POSITION
+	var entry_shape := CollisionShape2D.new()
+	var entry_rect := RectangleShape2D.new()
+	entry_rect.size = Vector2(150, 90)
+	entry_shape.shape = entry_rect
+	entry_shape.position = Vector2(0, -42)
+	entry.add_child(entry_shape)
+	var entrance_back := Sprite2D.new()
+	entrance_back.name = "EntranceBack"
+	entrance_back.texture = MAZE_ENTRANCE_BACK_TEXTURE
+	entrance_back.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	entrance_back.scale = Vector2(0.34, 0.34)
+	entrance_back.position = Vector2(0, -137)
+	entrance_back.z_index = 4
+	entry.add_child(entrance_back)
+	var entrance_front := Sprite2D.new()
+	entrance_front.name = "EntranceFront"
+	entrance_front.texture = MAZE_ENTRANCE_FRONT_TEXTURE
+	entrance_front.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	entrance_front.scale = entrance_back.scale
+	entrance_front.position = entrance_back.position
+	entrance_front.z_index = 5
+	entry.add_child(entrance_front)
+	var entry_label := Label.new()
+	entry_label.text = "地下管网\n按 E 进入"
+	entry_label.position = Vector2(-72, -270)
+	entry_label.size = Vector2(144, 48)
+	entry_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	entry_label.add_theme_font_size_override("font_size", 16)
+	entry_label.add_theme_color_override("font_color", Color("#9ed8dc"))
+	entry.add_child(entry_label)
+	entry.set_meta("kind", "underground_entry")
+	entry.set_meta("scene_path", "res://maze/UndergroundMaze.tscn")
+	entry.add_to_group("interactable")
+	add_child(entry)
+	interactables.append(entry)
 
 func _draw_fountain(pos: Vector2) -> void:
 	var p := Polygon2D.new()
@@ -569,39 +693,6 @@ func _draw_fountain(pos: Vector2) -> void:
 	water.polygon = wp
 	water.color = Color("#5599cc", 0.6)
 	add_child(water)
-
-func _draw_cabin(pos: Vector2) -> void:
-	for row in range(4):
-		for col in range(3):
-			var log := ColorRect.new()
-			log.position = Vector2(pos.x - 24 + col * 16, pos.y - 60 + row * 15)
-			log.size = Vector2(14, 13)
-			log.color = Color("#8b6914") if (row + col) % 2 == 0 else Color("#7a5a10")
-			add_child(log)
-	var roof := Polygon2D.new()
-	roof.polygon = PackedVector2Array([
-		Vector2(pos.x - 32, pos.y - 60), Vector2(pos.x + 28, pos.y - 60),
-		Vector2(pos.x, pos.y - 85)
-	])
-	roof.color = Color("#a04030")
-	roof.z_index = -5
-	add_child(roof)
-
-func _draw_station(pos: Vector2) -> void:
-	var back := ColorRect.new()
-	back.position = Vector2(pos.x - 60, pos.y - 50)
-	back.size = Vector2(120, 70)
-	back.color = Color("#b0a090")
-	back.z_index = -20
-	add_child(back)
-	var roof := Polygon2D.new()
-	roof.polygon = PackedVector2Array([
-		Vector2(pos.x - 70, pos.y - 50), Vector2(pos.x + 70, pos.y - 50),
-		Vector2(pos.x, pos.y - 75)
-	])
-	roof.color = Color("#d04030")
-	roof.z_index = -5
-	add_child(roof)
 
 func _draw_ferris_wheel(pos: Vector2) -> void:
 	var cx := pos.x; var cy := pos.y
@@ -778,6 +869,19 @@ func _make_puzzles(state: Dictionary) -> void:
 			puzzle_nodes[level_id] = puzzle_instance
 			interactables.append(puzzle_instance)
 
+func _make_laser_focus_puzzle(state: Dictionary) -> void:
+	var completed: Array = state.get("completed_levels", []) as Array
+	if completed.has("laser_focus"):
+		return
+	_laser_focus_puzzle = PuzzleLaserFocus.new()
+	_laser_focus_puzzle.name = "LaserFocusPuzzle"
+	_laser_focus_puzzle.position = Vector2(3900, GROUND_Y_PX - 32)
+	add_child(_laser_focus_puzzle)
+	_laser_focus_puzzle.puzzle_completed.connect(func(reward: String): _on_puzzle_completed("laser_focus", reward))
+	_laser_focus_puzzle.hint_updated.connect(func(text: String): hint_updated.emit(text))
+	puzzle_nodes["laser_focus"] = _laser_focus_puzzle
+	interactables.append(_laser_focus_puzzle)
+
 func _create_puzzle_instance(type: String, id: String, data: Dictionary) -> Node2D:
 	match type:
 		"texture_wall":    return PuzzleTextureWall.new()
@@ -808,6 +912,11 @@ func _make_collectibles(state: Dictionary) -> void:
 		{"i": 12, "pos": Vector2(8800, 3170)}, {"i": 13, "pos": Vector2(9200, 3170)},
 		{"i": 14, "pos": Vector2(9600, 3170)}, {"i": 15, "pos": Vector2(10000, 3170)},
 		{"i": 16, "pos": Vector2(10400, 3170)}, {"i": 17, "pos": Vector2(10800, 3170)},
+		{"i": 18, "pos": Vector2(2280, 2850)}, {"i": 19, "pos": Vector2(3320, 2690)},
+		{"i": 20, "pos": Vector2(4720, 2860)}, {"i": 21, "pos": Vector2(5480, 2530)},
+		{"i": 22, "pos": Vector2(6380, 2760)}, {"i": 23, "pos": Vector2(7040, 2500)},
+		{"i": 24, "pos": Vector2(8240, 2790)}, {"i": 25, "pos": Vector2(9460, 2570)},
+		{"i": 26, "pos": Vector2(10640, 2820)},
 	]
 	for p in placements:
 		var i: int = p["i"]
@@ -922,6 +1031,140 @@ func _add_collectible_marker(pos: Vector2, color: Color) -> Area2D:
 	area.add_to_group("interactable")
 	return area
 
+static func get_bush_clue_colors() -> Array[Color]:
+	var colors: Array[Color] = []
+	for answer_index in PuzzleBanquetPainting.CORRECT_SEQ:
+		colors.append(PuzzleBanquetPainting.MOVE_COLORS[int(answer_index)])
+	return colors
+
+func _make_hidden_color_clues() -> void:
+	_bush_clues.clear()
+	var positions := _resolve_bush_clue_positions(PuzzleBanquetPainting.CORRECT_SEQ.size())
+	var colors := get_bush_clue_colors()
+	for index in range(positions.size()):
+		var area := Area2D.new()
+		area.name = "BushClue_%02d" % index
+		area.position = Vector2(positions[index], GROUND_Y_PX)
+		area.collision_layer = 0
+		area.collision_mask = 1
+		area.set_meta("kind", "bush_clue")
+		area.set_meta("bush_idx", index)
+		area.add_to_group("interactable")
+
+		var shape := CollisionShape2D.new()
+		var rect := RectangleShape2D.new()
+		rect.size = Vector2(92.0, 64.0)
+		shape.shape = rect
+		shape.position = Vector2(0.0, -30.0)
+		area.add_child(shape)
+
+		var block_frame := ColorRect.new()
+		block_frame.name = "ColorBlockFrame"
+		block_frame.position = Vector2(-20.0, -53.0)
+		block_frame.size = Vector2(40.0, 48.0)
+		block_frame.color = Color("#18212a")
+		block_frame.visible = false
+		block_frame.z_index = 7
+		area.add_child(block_frame)
+		var block := ColorRect.new()
+		block.name = "ColorBlock"
+		block.position = Vector2(4.0, 4.0)
+		block.size = Vector2(32.0, 40.0)
+		block.color = colors[index]
+		block_frame.add_child(block)
+
+		var number := Label.new()
+		number.name = "ClueNumber"
+		number.text = str(index + 1)
+		number.position = Vector2(-12.0, -78.0)
+		number.size = Vector2(24.0, 24.0)
+		number.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		number.add_theme_font_size_override("font_size", 16)
+		number.add_theme_color_override("font_color", colors[index].lightened(0.3))
+		number.visible = false
+		number.z_index = 8
+		area.add_child(number)
+
+		var bush := _make_bush_clue_sprite(false)
+		area.add_child(bush)
+		add_child(area)
+		interactables.append(area)
+		_bush_clues.append({
+			"area": area,
+			"sprite": bush,
+			"block": block_frame,
+			"number": number,
+			"opened": false,
+		})
+
+func _make_bush_clue_sprite(opened: bool) -> Sprite2D:
+	var frame_width := BUSH_CLUE_TEXTURE.get_width() / 2
+	var region := Rect2(frame_width if opened else 0, 0, frame_width, BUSH_CLUE_TEXTURE.get_height())
+	var atlas := AtlasTexture.new()
+	atlas.atlas = BUSH_CLUE_TEXTURE
+	atlas.region = region
+	var sprite := Sprite2D.new()
+	sprite.name = "OpenedBush" if opened else "ClosedBush"
+	sprite.texture = atlas
+	sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	sprite.scale = Vector2(0.18, 0.18)
+	sprite.z_index = 8
+	_align_grounded_sprite(sprite, BUSH_CLUE_TEXTURE.get_image().get_region(region))
+	return sprite
+
+func _resolve_bush_clue_positions(count: int) -> Array[float]:
+	var resolved: Array[float] = []
+	var segment_start := 900.0
+	var segment_width := 1350.0
+	for index in range(count):
+		var start_x := segment_start + segment_width * index
+		var end_x := minf(start_x + segment_width - 80.0, WORLD_WIDTH - 180.0)
+		var best_x := start_x + 80.0
+		var best_clearance := -1.0
+		var candidate := start_x + 80.0
+		while candidate <= end_x:
+			var clearance := _bush_position_clearance(candidate)
+			if clearance > best_clearance:
+				best_clearance = clearance
+				best_x = candidate
+			candidate += 40.0
+		resolved.append(best_x)
+	return resolved
+
+func _bush_position_clearance(candidate_x: float) -> float:
+	var clearance := 10000.0
+	for node in interactables:
+		if is_instance_valid(node) and str(node.get_meta("kind", "")) != "bush_clue":
+			clearance = minf(clearance, absf(candidate_x - node.global_position.x))
+	for child in get_children():
+		if not child.name.begins_with("TownForegroundCluster_"):
+			continue
+		var sprite := child as Sprite2D
+		if sprite == null or sprite.texture == null:
+			continue
+		var left := sprite.position.x
+		var right := left + sprite.texture.get_width() * absf(sprite.scale.x)
+		if candidate_x >= left - 60.0 and candidate_x <= right + 60.0:
+			return 0.0
+	return clearance
+
+func toggle_bush_clue(index: int) -> bool:
+	if current_palette_view != "autism" or index < 0 or index >= _bush_clues.size():
+		return false
+	var clue := _bush_clues[index]
+	var opened := not bool(clue.get("opened", false))
+	clue["opened"] = opened
+	var old_sprite := clue.get("sprite") as Sprite2D
+	var area := clue.get("area") as Area2D
+	if is_instance_valid(old_sprite):
+		old_sprite.queue_free()
+	var new_sprite := _make_bush_clue_sprite(opened)
+	area.add_child(new_sprite)
+	clue["sprite"] = new_sprite
+	(clue.get("block") as ColorRect).visible = opened
+	(clue.get("number") as Label).visible = opened
+	return opened
+
 func _add_pixel_rect(parent: Node2D, rect: Rect2, color: Color) -> void:
 	var px := ColorRect.new()
 	px.position = rect.position
@@ -952,10 +1195,11 @@ func nearest_interactable(point: Vector2, max_distance: float = 110.0) -> Node2D
 	var best_priority: int = -1
 	for node in interactables:
 		if not is_instance_valid(node): continue
+		if str(node.get_meta("kind", "")) == "bush_clue" and current_palette_view != "autism": continue
 		var dist: float = point.distance_to(node.global_position)
 		if dist > best_dist: continue
 		var priority: int = 0
-		if node is PuzzleTextureWall or node is PuzzleFindDifference or node is PuzzleBanquetPainting or node is PuzzleAmusementLights or node is PuzzleNPCPassword or node is PuzzleNineGrid:
+		if node is PuzzleTextureWall or node is PuzzleFindDifference or node is PuzzleBanquetPainting or node is PuzzleAmusementLights or node is PuzzleNPCPassword or node is PuzzleNineGrid or node is PuzzleLaserFocus:
 			priority = 4
 		match node.get_meta("kind", ""):
 			"puzzle": priority = 4
@@ -975,11 +1219,31 @@ func remove_interactable(node: Node) -> void:
 # ══════════════════════════════════════════════════════════════
 func _process(delta: float) -> void:
 	view_pulse_time += delta
+	_update_parallax(delta)
 	_animate_view_tint()
 	if current_palette_view == "blind" and is_instance_valid(blind_vision_material):
 		_update_blind_vision()
 	elif current_palette_view == "adhd" and is_instance_valid(adhd_attention_material):
 		_update_adhd_attention(delta)
+
+static func compute_parallax_offset(base_position: Vector2, camera_delta: Vector2, factor: float, _delta: float = 0.0) -> Vector2:
+	return Vector2(base_position.x + camera_delta.x * (1.0 - factor), base_position.y)
+
+func _update_parallax(delta: float) -> void:
+	var camera := get_viewport().get_camera_2d()
+	if camera == null:
+		return
+	var camera_position := camera.get_screen_center_position()
+	if not _parallax_origin_set:
+		_parallax_camera_origin = camera_position
+		_parallax_origin_set = true
+	var camera_delta := camera_position - _parallax_camera_origin
+	for layer_data in parallax_layers:
+		var layer := layer_data.get("node") as Node2D
+		if not is_instance_valid(layer):
+			continue
+		var base_position: Vector2 = layer_data.get("base_position", Vector2.ZERO)
+		layer.position = compute_parallax_offset(base_position, camera_delta, float(layer_data.get("factor", 1.0)), delta)
 
 func set_view_palette(view: String) -> void:
 	if not is_instance_valid(palette_overlay): return
@@ -1018,6 +1282,12 @@ func set_view_palette(view: String) -> void:
 
 	if _spike_canvas: _spike_canvas.visible = (view == "depression")
 	_notify_monsters_view_changed(view)
+
+func set_find_difference_room_visible(visible: bool) -> void:
+	# Only the find-difference room may bypass the black blind overlay. All
+	# outdoor scenes keep the original blind presentation unchanged.
+	if current_palette_view == "blind" and is_instance_valid(blind_vision):
+		blind_vision.visible = not visible
 
 func get_current_view() -> String: return current_palette_view
 

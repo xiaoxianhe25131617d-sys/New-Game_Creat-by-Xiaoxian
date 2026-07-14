@@ -51,6 +51,12 @@ var beam1_draw: Line2D
 var beam2_draw: Line2D
 var laser1_handle: Control
 var laser2_handle: Control
+var _house_front: Sprite2D
+var _house_back: Sprite2D
+
+const HOUSE_FRONT_TEXTURE := preload("res://assets/houses/puzzle_house_matched_front.png")
+const HOUSE_BACK_TEXTURE := preload("res://assets/houses/puzzle_house_matched_back.png")
+const HOUSE_POSITION := Vector2(0.0, -84.5)
 
 # ── 拖拽状态 ──
 var dragging_laser: int = 0  # 0=none, 1=laser1, 2=laser2
@@ -77,7 +83,28 @@ func _ready() -> void:
 
 
 func _make_exterior_visual() -> void:
-	# 世界空间中的台面外观
+	# The puzzle lives inside a small illustrated house. The backboard stays
+	# behind the player while the front facade hides the device from outside.
+	_house_back = Sprite2D.new()
+	_house_back.name = "HouseBackboard"
+	_house_back.texture = HOUSE_BACK_TEXTURE
+	_house_back.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	_house_back.scale = Vector2(0.28, 0.28)
+	_house_back.position = HOUSE_POSITION
+	_house_back.modulate.a = 0.0
+	_house_back.z_index = 3
+	add_child(_house_back)
+
+	_house_front = Sprite2D.new()
+	_house_front.name = "HouseFront"
+	_house_front.texture = HOUSE_FRONT_TEXTURE
+	_house_front.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	_house_front.scale = Vector2(0.28, 0.28)
+	_house_front.position = HOUSE_POSITION
+	_house_front.z_index = 5
+	add_child(_house_front)
+
+	# 世界空间中的台面外观（在门内仍能看到）
 	var platform := ColorRect.new()
 	platform.position = Vector2(-90, -10)
 	platform.size = Vector2(180, 14)
@@ -147,6 +174,7 @@ func _make_hint_label() -> void:
 func _on_body_entered(body: Node2D) -> void:
 	if body.is_in_group("player"):
 		player_in_range = true
+		_set_house_inside(true)
 		if not is_completed:
 			_update_exterior_hint()
 
@@ -154,8 +182,15 @@ func _on_body_entered(body: Node2D) -> void:
 func _on_body_exited(body: Node2D) -> void:
 	if body.is_in_group("player"):
 		player_in_range = false
+		_set_house_inside(false)
 		if _install_open:
 			_close_install_panel()
+
+func _set_house_inside(inside: bool) -> void:
+	if is_instance_valid(_house_front):
+		_house_front.modulate.a = 0.0 if inside else 1.0
+	if is_instance_valid(_house_back):
+		_house_back.modulate.a = 1.0 if inside else 0.0
 
 
 func _update_exterior_hint() -> void:

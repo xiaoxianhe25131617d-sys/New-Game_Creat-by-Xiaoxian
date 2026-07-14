@@ -5,7 +5,7 @@ class_name PuzzleNPCPassword
 #  许愿堂密码台 — 密码本 + 5位数字密码锁
 #  5个NPC独立分散在世界中，玩家走近按E对话。
 #  密码本: 正常模式=普通文字, 自闭模式=标记字红色高亮
-#  密码锁: 5位旋转数字锁, 正确答案 3 7 1 4 6
+#  密码锁: 五句线索对应密码本文字序号，小笑到怎别 = 4 8 2 5 7
 #  视觉: 一个大房子取代原来的许愿堂背景
 # ════════════════════════════════════════════════════════════
 
@@ -13,7 +13,7 @@ signal puzzle_completed(key_id: String)
 signal hint_updated(text: String)
 
 # ── 密码本正文（10个标记字：出 到 错 小 怎 请 别 笑 神 早）──
-const CIPHER_TEXT: String = (
+const HIGHLIGHTED_CIPHER_SOURCE: String = (
 	"意义之「出」其离原初语境，即已渗入他者之符号系统，彼之「到」达，"
 	+ "实为结构之暴力转译。误读非「错」误，乃语言之宿命——每「小」我皆囚于自身语义之网，"
 	+ "网目细密，外人莫窥其隙。「怎」可冀望对谈即通？余尝「请」观日常言说之际，辞气往来，"
@@ -23,8 +23,18 @@ const CIPHER_TEXT: String = (
 	+ "他者之心，终是现象学之剩余，可悬置，不可拥有。"
 )
 
+const CIPHER_TEXT: String = (
+	"意义之出其离原初语境，即已渗入他者之符号系统，彼之到达，"
+	+ "实为结构之暴力转译。误读非错误，乃语言之宿命——每小我皆囚于自身语义之网，"
+	+ "网目细密，外人莫窥其隙。怎可冀望对谈即通？余尝请观日常言说之际，辞气往来，"
+	+ "宛如隔雾相呼，而所指之实，恒在雾后三寸。别以共鸣为真，共识不过统计之偶然。"
+	+ "世人或笑此论为玄虚，然此正近于神秘主义者之洞见——理解之幻象，"
+	+ "乃认知自设之绊锁。早于胡塞尔言生活世界时，已暗伏此叹："
+	+ "他者之心，终是现象学之剩余，可悬置，不可拥有。"
+)
+
 const MARKER_CHARS: Array[String] = ["出","到","错","小","怎","请","别","笑","神","早"]
-const CORRECT_PASSWORD: Array[int] = [3, 7, 1, 4, 6]
+const CORRECT_PASSWORD: Array[int] = [4, 8, 2, 5, 7]
 const PASSWORD_LEN := 5
 
 # ── 状态 ──
@@ -39,6 +49,12 @@ var _ui_canvas: CanvasLayer
 var _world_visual: Node2D
 var zoom_overlay: CanvasLayer
 var lock_overlay: CanvasLayer
+var _house_front: Sprite2D
+var _house_back: Sprite2D
+
+const HOUSE_FRONT_TEXTURE := preload("res://assets/houses/puzzle_house_matched_front.png")
+const HOUSE_BACK_TEXTURE := preload("res://assets/houses/puzzle_house_matched_back.png")
+const HOUSE_POSITION := Vector2(0.0, -86.5)
 
 
 # ════════════════════════════════════════════════════════════
@@ -77,6 +93,24 @@ func _make_world_visual() -> void:
 	_world_visual.z_index = 4
 	add_child(_world_visual)
 
+	_house_back = Sprite2D.new()
+	_house_back.name = "HouseBackboard"
+	_house_back.texture = HOUSE_BACK_TEXTURE
+	_house_back.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	_house_back.scale = Vector2(0.28, 0.28)
+	_house_back.position = HOUSE_POSITION
+	_house_back.modulate.a = 0.0
+	_house_back.z_index = -6
+	_world_visual.add_child(_house_back)
+	_house_front = Sprite2D.new()
+	_house_front.name = "HouseFront"
+	_house_front.texture = HOUSE_FRONT_TEXTURE
+	_house_front.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	_house_front.scale = Vector2(0.28, 0.28)
+	_house_front.position = HOUSE_POSITION
+	_house_front.z_index = 4
+	_world_visual.add_child(_house_front)
+
 	# 只保留一个小标记，房子由背景层的房子贴图负责
 	var marker := Label.new()
 	marker.text = "密码台"
@@ -84,6 +118,12 @@ func _make_world_visual() -> void:
 	marker.add_theme_font_size_override("font_size", 16)
 	marker.add_theme_color_override("font_color", Color("#a080f0"))
 	_world_visual.add_child(marker)
+
+func _set_house_inside(inside: bool) -> void:
+	if is_instance_valid(_house_front):
+		_house_front.modulate.a = 0.0 if inside else 1.0
+	if is_instance_valid(_house_back):
+		_house_back.modulate.a = 1.0 if inside else 0.0
 
 
 # ════════════════════════════════════════════════════════════
@@ -272,8 +312,8 @@ func _refresh_zoom_content() -> void:
 
 
 func _append_highlighted_content(content: RichTextLabel) -> void:
-	# 逐段分析 CIPHER_TEXT，遇到「X」标记字则红色加粗显示
-	var remaining := CIPHER_TEXT
+	# 标记只存在于内部源文本；显示时只高亮字符，不显示括号。
+	var remaining := HIGHLIGHTED_CIPHER_SOURCE
 	while remaining.length() > 0:
 		var bracket_open := remaining.find("「")
 		if bracket_open == -1:
@@ -294,7 +334,7 @@ func _append_highlighted_content(content: RichTextLabel) -> void:
 		if marker in MARKER_CHARS:
 			content.push_color(Color("#e03030"))
 			content.push_bold()
-			content.append_text("「" + marker + "」")
+			content.append_text(marker)
 			content.pop()
 			content.pop()
 		else:
@@ -531,7 +571,7 @@ func _open_zoom() -> void:
 	cipher_zoom_open = true
 	_refresh_zoom_content()
 	zoom_overlay.visible = true
-	hint_updated.emit("打开了密码本 — 注意观察引号中的字")
+	hint_updated.emit("打开了密码本")
 	var player := _get_player()
 	if player != null and "controls_enabled" in player:
 		player.controls_enabled = false
@@ -551,12 +591,14 @@ func _close_zoom() -> void:
 func _on_body_entered(body: Node2D) -> void:
 	if body.is_in_group("player"):
 		player_in_range = true
+		_set_house_inside(true)
 		_ui_canvas.visible = true
 		hint_updated.emit("按E或点击按钮：密码本 / 密码锁")
 
 func _on_body_exited(body: Node2D) -> void:
 	if body.is_in_group("player"):
 		player_in_range = false
+		_set_house_inside(false)
 		_ui_canvas.visible = false
 
 func _input(event: InputEvent) -> void:

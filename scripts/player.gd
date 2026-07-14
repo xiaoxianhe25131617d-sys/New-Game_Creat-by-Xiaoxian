@@ -12,6 +12,7 @@ const MAX_FALL_SPEED: float = 900.0
 const COYOTE_TIME: float = 0.08
 const JUMP_BUFFER: float = 0.1
 const DOCTOR_SPRITESHEET_PATH: String = "res://assets/characters/generated/doctor_spritesheet_512.png"
+const UNDERGROUND_SPRITESHEET_PATH: String = "res://assets/characters/generated/underground_doctor_spritesheet.png"
 const DOCTOR_FRAME_SIZE: Vector2i = Vector2i(32, 32)
 const DOCTOR_DISPLAY_SCALE: Vector2 = Vector2(3.0, 3.0)
 
@@ -27,6 +28,7 @@ var is_on_ladder: bool = false  # 梯子上（由 main.gd 设置）
 var facing_dir: float = 1.0
 var _drop_cooldown: float = 0.0  # 穿透地板冷却（防止反复触发）
 var _walk_sfx_timer: float = 0.0  # 走路音效冷却
+var outfit_variant: String = "doctor"
 
 # ADHD 自动行走
 var adhd_auto_dir: float = 0.0     # -1向左, 0停止, 1向右
@@ -262,8 +264,12 @@ func pulse_echo() -> void:
 	tween.parallel().tween_property(aura, "modulate:a", 0.0, 0.55)
 
 static func create() -> MindscapePlayer:
+	return create_with_outfit("doctor")
+
+static func create_with_outfit(outfit: String) -> MindscapePlayer:
 	var player := MindscapePlayer.new()
 	player.name = "Player"
+	player.outfit_variant = outfit
 	player.collision_layer = 1
 	player.collision_mask = 3  # 层1(普通碰撞) + 层2(可穿透地板)
 	player.z_index = 100
@@ -284,7 +290,7 @@ static func create() -> MindscapePlayer:
 
 	var sprite := AnimatedSprite2D.new()
 	sprite.name = "CharacterTexture"
-	sprite.sprite_frames = _create_doctor_sprite_frames()
+	sprite.sprite_frames = _create_sprite_frames(outfit)
 	sprite.animation = &"idle"
 	sprite.scale = DOCTOR_DISPLAY_SCALE
 	# 透明帧里的鞋底与 62px 高碰撞体底部对齐，避免角色悬浮。
@@ -303,6 +309,11 @@ static func create() -> MindscapePlayer:
 	player.add_child(aura)
 	return player
 
+static func _create_sprite_frames(outfit: String) -> SpriteFrames:
+	if outfit == "underground":
+		return _create_underground_sprite_frames()
+	return _create_doctor_sprite_frames()
+
 static func _create_doctor_sprite_frames() -> SpriteFrames:
 	var sheet := load(DOCTOR_SPRITESHEET_PATH) as Texture2D
 	var frames := SpriteFrames.new()
@@ -311,6 +322,23 @@ static func _create_doctor_sprite_frames() -> SpriteFrames:
 	if sheet == null:
 		push_warning("Doctor spritesheet not found: %s" % DOCTOR_SPRITESHEET_PATH)
 		return frames
+	_add_doctor_animation(frames, sheet, &"idle", [Vector2i(0, 0)], 1.0, true)
+	_add_doctor_animation(frames, sheet, &"walk_left", [Vector2i(1, 0), Vector2i(2, 0)], 6.5, true)
+	_add_doctor_animation(frames, sheet, &"walk_right", [Vector2i(1, 0), Vector2i(2, 0)], 6.5, true)
+	_add_doctor_animation(frames, sheet, &"jump", [Vector2i(5, 0)], 1.0, false)
+	_add_doctor_animation(frames, sheet, &"research", [Vector2i(6, 0)], 1.0, true)
+	_add_doctor_animation(frames, sheet, &"climb_left", [Vector2i(7, 0), Vector2i(1, 1)], 6.5, true)
+	_add_doctor_animation(frames, sheet, &"climb_right", [Vector2i(7, 0), Vector2i(1, 1)], 6.5, true)
+	return frames
+
+static func _create_underground_sprite_frames() -> SpriteFrames:
+	var sheet := load(UNDERGROUND_SPRITESHEET_PATH) as Texture2D
+	var frames := SpriteFrames.new()
+	if frames.has_animation(&"default"):
+		frames.remove_animation(&"default")
+	if sheet == null:
+		push_warning("Underground spritesheet not found: %s" % UNDERGROUND_SPRITESHEET_PATH)
+		return _create_doctor_sprite_frames()
 	_add_doctor_animation(frames, sheet, &"idle", [Vector2i(0, 0)], 1.0, true)
 	_add_doctor_animation(frames, sheet, &"walk_left", [Vector2i(1, 0), Vector2i(2, 0)], 6.5, true)
 	_add_doctor_animation(frames, sheet, &"walk_right", [Vector2i(1, 0), Vector2i(2, 0)], 6.5, true)

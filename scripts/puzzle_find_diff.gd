@@ -85,7 +85,12 @@ var obj_view_labels: Array[Array] = []  # 每个物体下的5个视角小标签
 
 const OW: float = 840.0
 const OH: float = 540.0
-const EXTERIOR_TEXTURE_PATH := "res://assets/environment/generated/find_difference_room.png"
+const EXTERIOR_TEXTURE := preload("res://assets/houses/puzzle_house_matched_front.png")
+const BACKBOARD_TEXTURE := preload("res://assets/houses/puzzle_house_matched_back.png")
+const ROOM_GRAYSCALE_SHADER := preload("res://shaders/room_grayscale.gdshader")
+
+var _house_front: Sprite2D
+var _house_back: Sprite2D
 
 
 # ════════════════════════════════════════════════════════════
@@ -118,18 +123,24 @@ func _ready() -> void:
 # ════════════════════════════════════════════════════════════
 
 func _make_exterior() -> void:
-	var texture := load(EXTERIOR_TEXTURE_PATH) as Texture2D
-	var exterior := Sprite2D.new()
-	exterior.name = "ExteriorTexture"
-	exterior.texture = texture
-	exterior.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	if texture != null:
-		var texture_size := texture.get_size()
-		# 扩大一倍：原来 180×130，现在 360×260
-		var scale_factor := minf(360.0 / texture_size.x, 260.0 / texture_size.y)
-		exterior.scale = Vector2(scale_factor, scale_factor)
-		_align_exterior_base(exterior, texture.get_image(), 50.0)
-	add_child(exterior)
+	_house_back = Sprite2D.new()
+	_house_back.name = "HouseBackboard"
+	_house_back.texture = BACKBOARD_TEXTURE
+	_house_back.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	_house_back.z_index = 3
+	_house_back.modulate.a = 0.0
+	_house_back.scale = Vector2(0.28, 0.28)
+	_align_exterior_base(_house_back, BACKBOARD_TEXTURE.get_image(), 30.0)
+	add_child(_house_back)
+
+	_house_front = Sprite2D.new()
+	_house_front.name = "ExteriorTexture"
+	_house_front.texture = EXTERIOR_TEXTURE
+	_house_front.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	_house_front.scale = _house_back.scale
+	_align_exterior_base(_house_front, EXTERIOR_TEXTURE.get_image(), 30.0)
+	_house_front.z_index = 5
+	add_child(_house_front)
 
 	var title := Label.new()
 	title.text = "[ 找不同密室 ]"
@@ -189,7 +200,9 @@ func _build_room_overlay() -> void:
 
 	room_overlay = CanvasLayer.new()
 	room_overlay.name = "FindDiffOverlay"
-	room_overlay.layer = 100
+	# Keep the room above the world overlays. The grayscale pass is rebuilt for
+	# each visit, so it must always be the last visual layer in this CanvasLayer.
+	room_overlay.layer = 600
 	# 必须挂到场景根节点，Area2D子节点的CanvasLayer坐标会被世界相机偏移
 	get_tree().root.add_child(room_overlay)
 
@@ -872,17 +885,15 @@ func _on_body_exited(body: Node2D) -> void:
 		player_in_range = false
 
 func _input(event: InputEvent) -> void:
-	if not player_in_range or is_completed:
-		return
-	if event.is_action_pressed("interact"):
-		if room_open:
-			_close_room()
-		else:
-			_open_room()
+	# Main owns the E interaction. Handling it here as well caused one keypress
+	# to open and immediately close the room in the same input cycle.
+	pass
 
 
 func _open_room() -> void:
 	room_open = true
+	_set_house_inside(true)
+	_set_blind_room_visibility(true)
 	_freeze_player(true)
 	room_toggled.emit(true)
 	AudioManager.play_sfx("door_open")
@@ -899,15 +910,47 @@ func _open_room() -> void:
 	_build_room_overlay()
 	_refresh_all()
 	_update_progress()
+	_add_blind_room_filter()
 
 
 func _close_room() -> void:
 	room_open = false
+	_set_house_inside(false)
+	_set_blind_room_visibility(false)
 	if room_overlay != null and is_instance_valid(room_overlay):
 		room_overlay.queue_free()
 		room_overlay = null
 	_freeze_player(false)
 	room_toggled.emit(false)
+
+func _set_house_inside(inside: bool) -> void:
+	if is_instance_valid(_house_front):
+		_house_front.modulate.a = 0.0 if inside else 1.0
+	if is_instance_valid(_house_back):
+		_house_back.modulate.a = 1.0 if inside else 0.0
+
+func _set_blind_room_visibility(inside: bool) -> void:
+	var world := get_tree().get_first_node_in_group("world")
+	if world != null and world.has_method("set_find_difference_room_visible"):
+		world.call("set_find_difference_room_visible", inside)
+
+func _add_blind_room_filter() -> void:
+	var main_node := get_tree().get_first_node_in_group("main")
+	if main_node == null or not main_node.has_method("get_view") or main_node.get_view() != "blind":
+		return
+	if room_overlay == null or not is_instance_valid(room_overlay):
+		return
+	var filter := ColorRect.new()
+	filter.name = "BlindRoomGrayscale"
+	# CanvasLayer has no Control parent, so full-rect anchors alone can leave
+	# this ColorRect at zero size. Give it an explicit viewport-sized rectangle.
+	filter.position = Vector2.ZERO
+	filter.size = get_viewport().get_visible_rect().size
+	filter.z_index = 1000
+	filter.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	filter.material = ShaderMaterial.new()
+	(filter.material as ShaderMaterial).shader = ROOM_GRAYSCALE_SHADER
+	room_overlay.add_child(filter)
 
 
 func _on_exit() -> void:

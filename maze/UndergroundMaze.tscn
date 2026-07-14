@@ -13,10 +13,10 @@ z_index = -100
 offset_right = 3096.0
 offset_bottom = 1758.0
 mouse_filter = 2
-color = Color(0.97, 0.97, 0.95, 1)
+color = Color(0.075, 0.094, 0.11, 1)
 
 [node name="ReferenceImage" type="Sprite2D" parent="." unique_id=595245165]
-modulate = Color(1, 1, 1, 0.42)
+modulate = Color(0.2, 0.27, 0.31, 0.08)
 z_index = -90
 scale = Vector2(1.5, 1.5)
 texture = ExtResource("2_reference")

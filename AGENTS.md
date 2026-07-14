@@ -59,3 +59,11 @@ Before non-trivial work, check for an applicable skill instead of improvising. U
 - `git-workflow-and-versioning`: use for pulls, commits, conflict handling, and protecting user changes in this dirty Godot working tree.
 
 Outside Planning Mode, still ask the user when blocked by product intent or tradeoffs: unclear desired behavior, multiple plausible fixes, repeated failed attempts, or changes that would discard or overwrite local work. Ask a short concrete question, then continue once the answer is clear.
+
+## Mindscape Project Reminders
+
+- For multi-file changes, use the sequence: plan, implement a small slice, inspect the diff, then verify in Godot.
+- For view effects, puzzles, underground areas, collision, and save migration, inspect existing state and boundaries before changing behavior.
+- Prefer reusing verified assets from the previous project. Use `imagegen` only when a missing bitmap asset is genuinely needed; inspect transparency, scale, and the grounded silhouette before wiring it in.
+- In addition to Planning Mode, ask for confirmation when the same issue remains unresolved after focused attempts, when two solutions would materially change the gameplay, or when the intent is less than about 90% clear. Provide concise options and their impact.
+- Manual verification should cover startup, continue game, multiple profiles, A/D, jump, E, F, view wheel, the full-room blind view, underground entry/exit, and save restoration.

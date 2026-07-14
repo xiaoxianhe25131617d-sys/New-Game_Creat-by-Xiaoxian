@@ -105,6 +105,7 @@ const KEYS: Dictionary = {
 	"key_1":  {"name": "宴会厅钥匙",  "source": "banquet_painting",  "color": Color("#ffd700")},
 	"key_2":  {"name": "游乐园钥匙",  "source": "amusement_lights",   "color": Color("#ff6b6b")},
 	"key_4":  {"name": "天文台钥匙",  "source": "npc_password",      "color": Color("#a29bfe")},
+	"maze_key": {"name": "迷宫钥匙", "source": "underground_maze", "color": Color("#73d6d2")},
 }
 
 # ════════════════════════════════════════════════════════════
@@ -173,7 +174,7 @@ const DIALOGUES: Dictionary = {
 		{"expr": "happy", "text": "触觉是另一种语言。闭上眼睛，你就能听到石头的诗。"},
 	],
 	"engineer": [
-		{"expr": "thinking", "text": "两个激光装置，两个风向标。光的交点就是宝物的位置。"},
+		{"expr": "thinking", "text": "两台激光装置都能装进中央广场的聚焦台，镜片会帮它们找到同一个方向。"},
 	],
 	"sign_girl": [
 		{"expr": "happy", "text": "...（她用手语比划）...地板在震动..."},
@@ -191,22 +192,22 @@ const DIALOGUES: Dictionary = {
 		{"expr": "thinking", "text": "跳跃才能点到灯。ADHD模式让你跳得更高更快。"},
 	],
 	"ticket": [
-		{"expr": "happy", "text": "三把钥匙集齐后，去调整风向标，让光找到时间胶囊。"},
+		{"expr": "happy", "text": "两台激光装置都找到后，中央广场的聚焦台就能派上用场了。"},
 	],
 	"npc_cipher_1": [
-		{"expr": "neutral", "text": "我守护这个地方已经很久了。", "subtext": "我其实很想休息"},
+		{"expr": "thinking", "text": "你说那些孩子们啊，他们以前可顽皮啊。他们过去常常爬那棵老橡树，最高那个枝丫只有最小的那个敢爬上去。"},
 	],
 	"npc_cipher_2": [
-		{"expr": "neutral", "text": "知识就是力量。", "subtext": "但我害怕力量被滥用"},
+		{"expr": "neutral", "text": "嘿我和你说，我家屋檐上那块松了的瓦，前天我自己爬上去修好了，没请人，省了两块钱工钱。", "subtext": "我才不会说其实我爬不上去呢，让别人笑话"},
 	],
 	"npc_cipher_3": [
-		{"expr": "neutral", "text": "工具应该服务于人。", "subtext": "可人们总是被工具驱使"},
+		{"expr": "neutral", "text": "傍晚那会儿风大，把我晾在外头的被单吹到篱笆上，还好没掉泥地里。"},
 	],
 	"npc_cipher_4": [
-		{"expr": "neutral", "text": "旅途的意义在于过程。", "subtext": "想找个可以停留的地方"},
+		{"expr": "happy", "text": "诶诶诶你问我可问对了，这里好玩的事情不少，我家公鸡昨天下了一个蛋，你说神不神奇？", "subtext": "诶呀逗逗外乡人玩，公鸡怎么会下蛋呢？"},
 	],
 	"npc_cipher_5": [
-		{"expr": "neutral", "text": "智慧来自于倾听。", "subtext": "没人真正听我说过话"},
+		{"expr": "thinking", "text": "等等别打扰我，我还在等邮差送信呢。"},
 	],
 }
 
@@ -239,6 +240,8 @@ static func default_state() -> Dictionary:
 		"npc_tasks": {},
 		"collectibles": [],
 		"album": [],
+		"album_piece_positions": {},
+		"album_puzzles_completed": [],
 		"visited_anchors": [],
 		"play_time": 0.0,
 		"finished": false,
@@ -254,4 +257,102 @@ static func default_state() -> Dictionary:
 		"laser_1_angle": 0.0,
 		"laser_2_angle": 0.0,
 		"treasure_unlocked": false,
+		"hidden_door_opened": false,
+		"maze_compass_owned": false,
+		"maze_compass_enabled": false,
+		"maze_compass_route_index": 0,
+		"hidden_chest_opened": false,
+		"ending_seen": false,
+		"ending_pending": false,
+		"ending_source": "",
+		"debug_laser_loadout": false,
+		"is_debug_profile": false,
+		"debug_preset": "",
+		"debug_spawn_target": "",
 	}
+
+static func migrate_state(state: Dictionary) -> bool:
+	var changed := false
+	var defaults := {
+		"hidden_door_opened": false,
+		"maze_compass_owned": false,
+		"maze_compass_enabled": false,
+		"maze_compass_route_index": 0,
+		"hidden_chest_opened": false,
+		"ending_seen": false,
+		"ending_pending": false,
+		"ending_source": "",
+		"debug_laser_loadout": false,
+		"is_debug_profile": false,
+		"debug_preset": "",
+		"debug_spawn_target": "",
+		"album_piece_positions": {},
+		"album_puzzles_completed": [],
+	}
+	for key in defaults:
+		if not state.has(key):
+			state[key] = defaults[key]
+			changed = true
+	var completed: Array = state.get("completed_levels", []) as Array
+	if completed.has("laser_focus"):
+		if not bool(state.get("hidden_door_opened", false)):
+			state["hidden_door_opened"] = true
+			changed = true
+		if not bool(state.get("maze_compass_owned", false)):
+			state["maze_compass_owned"] = true
+			changed = true
+	return changed
+
+static func unlock_hidden_door(state: Dictionary) -> bool:
+	var first_unlock := not bool(state.get("hidden_door_opened", false))
+	state["hidden_door_opened"] = true
+	state["maze_compass_owned"] = true
+	if not state.has("maze_compass_enabled"):
+		state["maze_compass_enabled"] = false
+	return first_unlock
+
+static func toggle_maze_compass(state: Dictionary) -> bool:
+	if not bool(state.get("maze_compass_owned", false)):
+		state["maze_compass_enabled"] = false
+		return false
+	var enabled := not bool(state.get("maze_compass_enabled", false))
+	state["maze_compass_enabled"] = enabled
+	return enabled
+
+static func open_hidden_chest(state: Dictionary) -> bool:
+	if bool(state.get("ending_seen", false)) or bool(state.get("hidden_chest_opened", false)):
+		return false
+	state["hidden_chest_opened"] = true
+	state["finished"] = true
+	state["maze_compass_enabled"] = false
+	state["ending_pending"] = true
+	state["ending_source"] = "hidden_chest"
+	return true
+
+static func begin_ending(state: Dictionary, source: String) -> bool:
+	if bool(state.get("ending_seen", false)):
+		return false
+	state["ending_pending"] = true
+	state["ending_source"] = source
+	if source == "hidden_chest":
+		state["hidden_chest_opened"] = true
+		state["maze_compass_enabled"] = false
+	return true
+
+static func complete_ending(state: Dictionary) -> void:
+	state["ending_seen"] = true
+	state["ending_pending"] = false
+	state["finished"] = true
+	state["maze_compass_enabled"] = false
+	state["position"] = PLAYER_START
+	var album: Array = state.get("album", []) as Array
+	var entries := ["结局：理解的风景", "最终合照"]
+	if str(state.get("ending_source", "")) == "hidden_chest":
+		entries.append("童年旧物：陀螺、弹珠、纸飞机与手绳")
+	for entry in entries:
+		if not album.has(entry):
+			album.append(entry)
+	state["album"] = album
+
+static func mark_ending_seen(state: Dictionary) -> void:
+	complete_ending(state)
