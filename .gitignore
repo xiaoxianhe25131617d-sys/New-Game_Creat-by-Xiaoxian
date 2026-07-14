@@ -5,6 +5,17 @@
 .godot/
 /teammate-version/
 
+# Editor temporary files and backups
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+
+# Operating-system junk
+Thumbs.db
+
 # Local media captures and temporary exports
 *.mov
 *.mp4
