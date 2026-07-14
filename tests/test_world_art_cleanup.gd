@@ -9,10 +9,14 @@ func _ready() -> void:
 	_test_room_has_textured_exterior()
 	_test_memory_anchors_use_benches()
 	_test_lighthouse_geometry_is_removed()
+	_test_procedural_forest_cabin_is_removed()
+	_test_wind_vanes_are_not_spawned()
 	_test_npc_shoes_define_the_ground_line()
 	_test_required_key_count_matches_available_keys()
 	_test_town_foreground_stays_low_and_sparse()
-	_test_parallax_uses_smooth_exponential_follow()
+	_test_parallax_is_horizontal_without_follow_tail()
+	_test_bush_clues_match_banquet_answer()
+	_test_maze_entrance_layers_share_silhouette()
 	_test_puzzle_building_pairs_match_exactly()
 	if failures.is_empty():
 		print("PASS: world art cleanup regression checks")
@@ -99,6 +103,25 @@ func _test_lighthouse_geometry_is_removed() -> void:
 					break
 	world.free()
 
+func _test_procedural_forest_cabin_is_removed() -> void:
+	var world := MindscapeWorld.new()
+	world._make_beautiful_decor()
+	for child in world.get_children():
+		if child is ColorRect and (child as ColorRect).position.x >= 4550.0 and (child as ColorRect).position.x <= 4650.0:
+			failures.append("Legacy brown grid cabin must not be generated near x=4600")
+			break
+	world.free()
+
+func _test_wind_vanes_are_not_spawned() -> void:
+	var world := MindscapeWorld.new()
+	add_child(world)
+	world.build(GameData.default_state())
+	if world.find_child("WindVane_*", true, false) != null:
+		failures.append("Legacy wind-vane artwork must not be spawned")
+	if world.find_child("VanePlacement_*", true, false) != null:
+		failures.append("Legacy invisible wind-vane drop zones must not remain")
+	world.free()
+
 func _test_npc_shoes_define_the_ground_line() -> void:
 	for data in GameData.NPCS:
 		if absf((data["pos"] as Vector2).y - MindscapeWorld.GROUND_Y_PX) > 0.1:
@@ -151,19 +174,45 @@ func _test_town_foreground_stays_low_and_sparse() -> void:
 		failures.append("Town needs several low transparent foreground tree clusters")
 	world.free()
 
-func _test_parallax_uses_smooth_exponential_follow() -> void:
+func _test_parallax_is_horizontal_without_follow_tail() -> void:
 	var world := MindscapeWorld.new()
 	if not world.has_method("compute_parallax_offset"):
-		failures.append("World has no testable smooth parallax follow function")
+		failures.append("World has no testable parallax function")
 		world.free()
 		return
-	var first: Vector2 = world.compute_parallax_offset(Vector2.ZERO, Vector2(100.0, 0.0), 0.2, 0.1)
-	var second: Vector2 = world.compute_parallax_offset(first, Vector2(100.0, 0.0), 0.2, 0.1)
-	if first.x <= 0.0 or first.x >= 80.0:
-		failures.append("Parallax must ease toward its target instead of snapping")
-	if second.x <= first.x or second.x >= 80.0:
-		failures.append("Parallax easing must converge monotonically")
+	var base := Vector2(14.0, 37.0)
+	var offset: Vector2 = world.compute_parallax_offset(base, Vector2(100.0, 240.0), 0.2, 0.1)
+	if not is_equal_approx(offset.x, 94.0):
+		failures.append("Parallax X must update directly without a second easing tail")
+	if not is_equal_approx(offset.y, base.y):
+		failures.append("Parallax Y must remain fixed while the player jumps")
 	world.free()
+
+func _test_bush_clues_match_banquet_answer() -> void:
+	var clue_colors: Array[Color] = MindscapeWorld.get_bush_clue_colors()
+	if clue_colors.size() != PuzzleBanquetPainting.CORRECT_SEQ.size():
+		failures.append("World must restore all seven banquet bush clues")
+		return
+	for index in range(clue_colors.size()):
+		var answer_index: int = int(PuzzleBanquetPainting.CORRECT_SEQ[index])
+		if not clue_colors[index].is_equal_approx(PuzzleBanquetPainting.MOVE_COLORS[answer_index]):
+			failures.append("Bush clue %d does not match the banquet answer" % index)
+
+func _test_maze_entrance_layers_share_silhouette() -> void:
+	var front := load("res://assets/environment/generated/maze_entrance_front.png") as Texture2D
+	var back := load("res://assets/environment/generated/maze_entrance_back.png") as Texture2D
+	if front == null or back == null or front.get_size() != back.get_size():
+		failures.append("Maze entrance front/back layers need the same canvas")
+		return
+	var front_image := front.get_image()
+	var back_image := back.get_image()
+	for y in range(front_image.get_height()):
+		for x in range(front_image.get_width()):
+			var front_visible := front_image.get_pixel(x, y).a > 0.02
+			var back_visible := back_image.get_pixel(x, y).a > 0.02
+			if front_visible != back_visible:
+				failures.append("Maze entrance layers must have an identical transparent silhouette")
+				return
 
 func _test_puzzle_building_pairs_match_exactly() -> void:
 	var puzzle_types: Array = [PuzzleNineGrid, PuzzleBanquetPainting, PuzzleAmusementLights]

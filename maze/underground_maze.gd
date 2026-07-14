@@ -41,6 +41,14 @@ const EXIT_GUIDANCE_ROUTE: Array[Vector2] = [
 ]
 const ROUTE_CORRECT_DISTANCE := 48.0
 const ROUTE_WRONG_DISTANCE := 64.0
+const EXIT_TRIGGER_RADIUS := 140.0
+const NAVIGATION_SOURCE_DISTANCE := 180.0
+const DEBUG_SPAWN_OFFSETS := {
+	"PlayerSpawn": Vector2.ZERO,
+	"HiddenDoor": Vector2(118, -18),
+	"Chest": Vector2(112, -18),
+	"PortalExit": Vector2(-180, -18),
+}
 
 static func advance_compass_route(player_position: Vector2, route: Array[Vector2], current_index: int, reach_distance: float) -> int:
 	var next_index := clampi(current_index, 0, route.size())
@@ -69,6 +77,7 @@ static func sample_route(player_position: Vector2, route: Array[Vector2]) -> Dic
 	var best_distance := INF
 	var best_progress_length := 0.0
 	var best_point := route[0]
+	var best_segment_index := 0
 	var walked_length := 0.0
 	for index in range(route.size() - 1):
 		var start := route[index]
@@ -84,11 +93,13 @@ static func sample_route(player_position: Vector2, route: Array[Vector2]) -> Dic
 			best_distance = distance
 			best_progress_length = walked_length + segment_length * amount
 			best_point = projected
+			best_segment_index = index
 		walked_length += segment_length
 	return {
 		"distance": best_distance,
 		"progress": clampf(best_progress_length / maxf(total_length, 0.001), 0.0, 1.0),
 		"point": best_point,
+		"segment_index": best_segment_index,
 	}
 
 static func route_volume_db(progress: float) -> float:
@@ -130,7 +141,7 @@ var compass_hud_canvas: CanvasLayer
 var compass_panel: Panel
 var compass_needle: Polygon2D
 var compass_distance_label: Label
-var compass_audio: AudioStreamPlayer
+var compass_audio: AudioStreamPlayer2D
 var compass_route_index: int = 0
 var compass_ping_timer: float = 0.0
 var compass_texture: Texture2D
@@ -156,6 +167,7 @@ func _ready() -> void:
 	_make_underground_inventory()
 	_make_compass_hud()
 	_make_compass_audio()
+	_make_debug_toolbar()
 	compass_route_index = clampi(int(maze_state.get("maze_compass_route_index", 0)), 0, COMPASS_ROUTE.size())
 	process_priority = 1000
 	if get_tree().has_meta("mindscape_play_formal_ending"):
@@ -175,7 +187,7 @@ func _process(delta: float) -> void:
 	_update_navigation_cue(delta)
 	_update_route_feedback(delta)
 	_update_compass(delta)
-	if not _leaving_maze and runtime_player.global_position.distance_to($Markers/PortalExit.global_position) < 92.0:
+	if not _leaving_maze and runtime_player.global_position.distance_to($Markers/PortalExit.global_position) < EXIT_TRIGGER_RADIUS:
 		_leave_to_main(MAIN_EXIT_RETURN_POSITION, true)
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -411,9 +423,12 @@ func _make_compass_hud() -> void:
 	_refresh_compass_ui()
 
 func _make_compass_audio() -> void:
-	compass_audio = AudioStreamPlayer.new()
+	compass_audio = AudioStreamPlayer2D.new()
 	compass_audio.name = "MazeNavigationAudio"
 	compass_audio.volume_db = -8.0
+	compass_audio.max_distance = 2000.0
+	compass_audio.attenuation = 0.05
+	compass_audio.panning_strength = 1.5
 	add_child(compass_audio)
 
 func _toggle_compass() -> void:
@@ -463,6 +478,7 @@ func _update_compass(delta: float) -> void:
 		compass_distance_label.text = "宝箱就在附近" if distance < 120.0 else "下一处路标 %d 步" % maxi(1, int(round(distance / 32.0)))
 	if current_view != "blind" or compass_audio == null:
 		return
+	_set_navigation_source(target)
 	compass_ping_timer -= delta
 	if compass_ping_timer <= 0.0:
 		_play_navigation_cue(MAZE_CORRECT_AUDIO, -9.0, 1.0, 0.14)
@@ -507,11 +523,24 @@ func _update_route_feedback(delta: float) -> void:
 		return
 	if _route_feedback_correct:
 		var pitch := lerpf(0.94, 1.16, pow(progress, 0.7))
+		var segment_index := int(sample.get("segment_index", 0))
+		var route_target := EXIT_GUIDANCE_ROUTE[mini(segment_index + 1, EXIT_GUIDANCE_ROUTE.size() - 1)]
+		_set_navigation_source(route_target)
 		_play_navigation_cue(MAZE_CORRECT_AUDIO, route_volume_db(progress), pitch, 0.13)
 		_route_feedback_timer = route_interval(progress)
 	else:
+		compass_audio.global_position = runtime_player.global_position
 		_play_navigation_cue(MAZE_WRONG_AUDIO, -2.0, 0.92, 0.18)
 		_route_feedback_timer = 0.30
+
+func _set_navigation_source(target: Vector2) -> void:
+	if compass_audio == null or runtime_player == null:
+		return
+	var offset := target - runtime_player.global_position
+	if offset.length_squared() <= 0.001:
+		compass_audio.global_position = runtime_player.global_position
+		return
+	compass_audio.global_position = runtime_player.global_position + offset.normalized() * NAVIGATION_SOURCE_DISTANCE
 
 func _play_navigation_cue(stream: AudioStream, volume_db: float, pitch_scale: float, duration: float) -> void:
 	if compass_audio == null or stream == null:
@@ -770,7 +799,14 @@ func _update_reference_visibility() -> void:
 func _spawn_runtime_player() -> void:
 	runtime_player = MindscapePlayer.create_with_outfit("underground")
 	runtime_player.name = "RuntimePlayer"
-	runtime_player.global_position = player_spawn.global_position
+	var debug_target := str(maze_state.get("debug_spawn_target", ""))
+	var target_marker := $Markers.get_node_or_null(debug_target) as Marker2D
+	if target_marker != null and bool(maze_state.get("is_debug_profile", false)):
+		runtime_player.global_position = target_marker.global_position + (DEBUG_SPAWN_OFFSETS.get(debug_target, Vector2.ZERO) as Vector2)
+		maze_state["debug_spawn_target"] = ""
+		ProfileManager.save_state(maze_state)
+	else:
+		runtime_player.global_position = player_spawn.global_position
 	add_child(runtime_player)
 	var profile: Dictionary = ProfileManager.get_current_profile()
 	var saved_state: Dictionary = profile.get("state", {}) as Dictionary
@@ -787,6 +823,49 @@ func _spawn_runtime_player() -> void:
 	camera.limit_right = int(map_size.x)
 	camera.limit_bottom = int(map_size.y)
 	runtime_player.add_child(camera)
+
+func _make_debug_toolbar() -> void:
+	if not OS.is_debug_build() or not ProfileManager.is_current_profile_debug():
+		return
+	var canvas := CanvasLayer.new()
+	canvas.name = "MazeDebugToolbar"
+	canvas.layer = 1800
+	add_child(canvas)
+	var panel := PanelContainer.new()
+	panel.position = Vector2(870, 12)
+	panel.size = Vector2(398, 52)
+	canvas.add_child(panel)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	panel.add_child(row)
+	var title := Label.new()
+	title.text = "TEST"
+	title.add_theme_color_override("font_color", Color("#ffe08a"))
+	row.add_child(title)
+	for marker_name in ["PlayerSpawn", "HiddenDoor", "Chest", "PortalExit"]:
+		var button := Button.new()
+		button.text = {"PlayerSpawn": "起点", "HiddenDoor": "暗门", "Chest": "宝箱", "PortalExit": "出口"}[marker_name]
+		button.pressed.connect(_debug_teleport_marker.bind(marker_name))
+		row.add_child(button)
+	var back := Button.new()
+	back.text = "主世界"
+	back.pressed.connect(_debug_return_to_main)
+	row.add_child(back)
+
+func _debug_teleport_marker(marker_name: String) -> void:
+	if not ProfileManager.is_current_profile_debug():
+		return
+	var marker := $Markers.get_node_or_null(marker_name) as Marker2D
+	if marker != null:
+		runtime_player.global_position = marker.global_position + (DEBUG_SPAWN_OFFSETS.get(marker_name, Vector2.ZERO) as Vector2)
+
+func _debug_return_to_main() -> void:
+	if not ProfileManager.is_current_profile_debug():
+		return
+	maze_state["position"] = GameData.PLAYER_START
+	maze_state["return_to_game"] = true
+	ProfileManager.save_state(maze_state)
+	get_tree().change_scene_to_file(MAIN_SCENE_PATH)
 
 func _make_blind_vision() -> void:
 	blind_vision_canvas = CanvasLayer.new()
@@ -809,6 +888,22 @@ func _make_blind_vision() -> void:
 	blind_vision_canvas.add_child(blind_vision)
 	_update_blind_vision()
 
+func get_vision_radius_px() -> float:
+	var camera := runtime_player.get_node_or_null("MazeCamera") as Camera2D if runtime_player != null else null
+	var camera_zoom := absf(camera.zoom.x) if camera != null else 1.0
+	return MindscapeWorld.BLIND_VISION_WORLD_RADIUS * MindscapeWorld._view_effect_scale_for_transform(
+		get_viewport().get_stretch_transform(),
+		camera_zoom
+	)
+
+func get_vision_feather_px() -> float:
+	var camera := runtime_player.get_node_or_null("MazeCamera") as Camera2D if runtime_player != null else null
+	var camera_zoom := absf(camera.zoom.x) if camera != null else 1.0
+	return MindscapeWorld.BLIND_VISION_FEATHER * MindscapeWorld._view_effect_scale_for_transform(
+		get_viewport().get_stretch_transform(),
+		camera_zoom
+	)
+
 func _update_blind_vision() -> void:
 	var viewport_size := get_viewport_rect().size
 	if viewport_size.x <= 0.0 or viewport_size.y <= 0.0:
@@ -818,13 +913,9 @@ func _update_blind_vision() -> void:
 		screen_position.x / viewport_size.x,
 		screen_position.y / viewport_size.y
 	)
-	var camera := runtime_player.get_node_or_null("MazeCamera") as Camera2D
-	var zoom_scale := 1.0
-	if camera != null:
-		zoom_scale = maxf(absf(camera.zoom.x), 0.001)
 	blind_vision_material.set_shader_parameter("player_screen_uv", player_screen_uv)
-	blind_vision_material.set_shader_parameter("radius_px", MindscapeWorld.BLIND_VISION_WORLD_RADIUS * zoom_scale)
-	blind_vision_material.set_shader_parameter("feather_px", MindscapeWorld.BLIND_VISION_FEATHER * zoom_scale)
+	blind_vision_material.set_shader_parameter("radius_px", get_vision_radius_px())
+	blind_vision_material.set_shader_parameter("feather_px", get_vision_feather_px())
 
 func get_ladder_at_point(point: Vector2) -> Area2D:
 	for child in ladders.get_children():

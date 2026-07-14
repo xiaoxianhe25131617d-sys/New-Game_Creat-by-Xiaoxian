@@ -19,6 +19,8 @@ func _ready() -> void:
 	_test_markers(maze)
 	_test_ladders(maze)
 	_test_navigation_features_are_clear(maze)
+	_test_exit_trigger_is_forgiving(maze)
+	_test_dark_visual_material_only(maze)
 	_test_runtime_player(maze)
 	maze.free()
 	_finish()
@@ -76,6 +78,15 @@ func _test_navigation_features_are_clear(maze: Node) -> void:
 		var cell := walls.local_to_map(walls.to_local(waypoint))
 		if walls.get_cell_source_id(cell) >= 0:
 			failures.append("Compass waypoint %s falls inside solid maze terrain" % waypoint)
+
+func _test_exit_trigger_is_forgiving(_maze: Node) -> void:
+	if UndergroundMaze.EXIT_TRIGGER_RADIUS < 120.0:
+		failures.append("Invisible maze exit needs a forgiving automatic trigger radius")
+
+func _test_dark_visual_material_only(maze: Node) -> void:
+	var background := maze.get_node_or_null("PrototypeBackground") as ColorRect
+	if background == null or background.color.get_luminance() > 0.18:
+		failures.append("Maze background should be a low-contrast dark stone tone")
 
 func _test_runtime_player(maze: Node) -> void:
 	var player := maze.get_node_or_null("RuntimePlayer") as MindscapePlayer

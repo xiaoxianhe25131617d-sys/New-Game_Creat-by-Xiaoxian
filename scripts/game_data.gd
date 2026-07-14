@@ -174,7 +174,7 @@ const DIALOGUES: Dictionary = {
 		{"expr": "happy", "text": "触觉是另一种语言。闭上眼睛，你就能听到石头的诗。"},
 	],
 	"engineer": [
-		{"expr": "thinking", "text": "两个激光装置，两个风向标。光的交点就是宝物的位置。"},
+		{"expr": "thinking", "text": "两台激光装置都能装进中央广场的聚焦台，镜片会帮它们找到同一个方向。"},
 	],
 	"sign_girl": [
 		{"expr": "happy", "text": "...（她用手语比划）...地板在震动..."},
@@ -192,7 +192,7 @@ const DIALOGUES: Dictionary = {
 		{"expr": "thinking", "text": "跳跃才能点到灯。ADHD模式让你跳得更高更快。"},
 	],
 	"ticket": [
-		{"expr": "happy", "text": "三把钥匙集齐后，去调整风向标，让光找到时间胶囊。"},
+		{"expr": "happy", "text": "两台激光装置都找到后，中央广场的聚焦台就能派上用场了。"},
 	],
 	"npc_cipher_1": [
 		{"expr": "thinking", "text": "你说那些孩子们啊，他们以前可顽皮啊。他们过去常常爬那棵老橡树，最高那个枝丫只有最小的那个敢爬上去。"},
@@ -266,6 +266,9 @@ static func default_state() -> Dictionary:
 		"ending_pending": false,
 		"ending_source": "",
 		"debug_laser_loadout": false,
+		"is_debug_profile": false,
+		"debug_preset": "",
+		"debug_spawn_target": "",
 	}
 
 static func migrate_state(state: Dictionary) -> bool:
@@ -280,6 +283,9 @@ static func migrate_state(state: Dictionary) -> bool:
 		"ending_pending": false,
 		"ending_source": "",
 		"debug_laser_loadout": false,
+		"is_debug_profile": false,
+		"debug_preset": "",
+		"debug_spawn_target": "",
 		"album_piece_positions": {},
 		"album_puzzles_completed": [],
 	}

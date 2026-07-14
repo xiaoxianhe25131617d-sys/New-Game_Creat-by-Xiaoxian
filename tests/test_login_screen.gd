@@ -1,6 +1,17 @@
 extends Node
 
 func _ready() -> void:
+	var source_state := GameData.default_state()
+	var source_profile := {"id": "real", "display_name": "旅行者", "avatar": "sun", "state": source_state}
+	var clone := ProfileManager.make_debug_clone(source_profile, source_state)
+	var clone_state := clone.get("state", {}) as Dictionary
+	if not bool(clone.get("is_debug_profile", false)) or not bool(clone_state.get("is_debug_profile", false)):
+		_fail("Debug tools must create a clearly marked TEST profile")
+		return
+	clone_state["finished"] = true
+	if bool(source_state.get("finished", false)):
+		_fail("Debug profile progress must not mutate the real profile state")
+		return
 	var packed := load("res://scenes/Main.tscn") as PackedScene
 	if packed == null:
 		_fail("Main scene must load without script parse errors")

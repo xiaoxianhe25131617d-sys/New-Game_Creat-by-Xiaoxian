@@ -169,23 +169,6 @@ func _input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 		return
 	
-	# ── 滚轮旋转激光 ──
-	if event is InputEventMouseButton and (event.button_index == MOUSE_BUTTON_WHEEL_UP or event.button_index == MOUSE_BUTTON_WHEEL_DOWN):
-		# 检查玩家是否在已放置的激光装置附近
-		if player == null:
-			return
-		for vane_idx in [1, 2]:
-			if world.is_laser_placed(vane_idx):
-				var vp: Vector2 = world.get_vane_placement_pos(vane_idx)
-				if player.global_position.distance_to(vp) < 120.0:
-					var delta_a: float = LASER_ANGLE_STEP if event.button_index == MOUSE_BUTTON_WHEEL_UP else -LASER_ANGLE_STEP
-					world.rotate_placed_laser(vane_idx, delta_a)
-					var label := "激光%d角度: %.0f°" % [vane_idx, rad_to_deg(world.get_laser_angle(vane_idx))]
-					show_toast(label, 0.8)
-					autosave_with_laser_angles()
-					get_viewport().set_input_as_handled()
-					return
-
 func _unhandled_input(event: InputEvent) -> void:
 	if not game_running:
 		return
@@ -583,7 +566,7 @@ func _get_objective() -> String:
 		var missing := REQUIRED_KEY_COUNT - keys.size()
 		return "→ 收集剩余%d把钥匙后，用两束激光找到时间胶囊。" % missing
 	
-	return "→ 三把钥匙集齐！调整风向标，让两束激光交汇。"
+	return "→ 三把钥匙集齐！把两台激光装置带到中央广场的激光聚焦台。"
 
 func _describe_interactable(node: Node) -> String:
 	# 优先按实例类型识别新关卡节点
@@ -617,8 +600,12 @@ func _describe_interactable(node: Node) -> String:
 			if node.has_meta("solved"):
 				return "★ 宝藏已就位！按E开启"
 			return "两条激光交汇之处..."
-		"wind_vane_placement":
-			return "风向标放置区"
+		"bush_clue":
+			var bush_index := int(node.get_meta("bush_idx", -1))
+			var opened := false
+			if bush_index >= 0 and bush_index < world._bush_clues.size():
+				opened = bool(world._bush_clues[bush_index].get("opened", false))
+			return "【自闭视角】灌木丛（按 E %s）" % ("合上" if opened else "拨开")
 	return "某个东西"
 
 func interact() -> void:
@@ -673,6 +660,13 @@ func interact() -> void:
 				show_toast("两束激光需要对到正确角度，交汇在一点...", 3.0)
 		"underground_entry":
 			enter_underground_maze()
+		"bush_clue":
+			if str(state.get("current_view", "normal")) != "autism":
+				return
+			var bush_index := int(current_near.get_meta("bush_idx", -1))
+			var opened := world.toggle_bush_clue(bush_index)
+			AudioManager.play_sfx("light_on")
+			show_toast("拨开草丛，发现第 %d 块彩色线索。" % (bush_index + 1) if opened else "草丛重新合上了。", 1.8)
 		_:
 			# 新式谜题实例（PuzzleTextureWall等）自带交互处理
 			if current_near.has_method("_input"):
@@ -885,10 +879,7 @@ func _on_slot_gui_input(event: InputEvent, slot: Panel) -> void:
 			_show_item_info(item_id)
 		
 func _can_drag(item_id: String) -> bool:
-	match item_id:
-		"laser_device_1": return laser_owned["laser_device_1"] and not state.get("laser_1_placed", false) and not state.get("laser_focus_1_installed", false)
-		"laser_device_2": return laser_owned["laser_device_2"] and not state.get("laser_2_placed", false) and not state.get("laser_focus_2_installed", false)
-		_: return false
+	return false
 
 func _show_item_info(item_id: String) -> void:
 	var info := ""
@@ -908,12 +899,12 @@ func _show_item_info(item_id: String) -> void:
 				info = "地下指南针 — 完成激光聚焦后获得"
 		"laser_device_1":
 			if not laser_owned["laser_device_1"]: info = "在找不同密室获得"
-			elif state.get("laser_1_placed", false): info = "已放置在风向标1"
-			else: info = "激光装置1 — 拖放到左侧风向标"
+			elif state.get("laser_focus_1_installed", false): info = "激光装置1 — 已安装到聚焦台"
+			else: info = "激光装置1 — 前往中央广场的激光聚焦台安装"
 		"laser_device_2":
 			if not laser_owned["laser_device_2"]: info = "在石台拼图获得"
-			elif state.get("laser_2_placed", false): info = "已放置在风向标2"
-			else: info = "激光装置2 — 拖放到右侧风向标"
+			elif state.get("laser_focus_2_installed", false): info = "激光装置2 — 已安装到聚焦台"
+			else: info = "激光装置2 — 前往中央广场的激光聚焦台安装"
 	show_toast(info, 2.0)
 
 func _start_drag(item_id: String, event: InputEventMouseButton) -> void:
@@ -1183,7 +1174,7 @@ func collect_key(key_id: String) -> void:
 	
 	# 检查是否集齐全部钥匙
 	if keys.size() >= REQUIRED_KEY_COUNT:
-		show_toast("✨ 三把钥匙全部集齐！去调整风向标，让光找到时间胶囊！", 5.0)
+		show_toast("✨ 三把钥匙全部集齐！把两台激光装置带到中央广场的聚焦台。", 5.0)
 	
 	_update_inventory_sidebar()
 	autosave()
@@ -1228,13 +1219,13 @@ func on_level_completed(level_id: String, reward_id: String = "") -> void:
 			laser_owned["laser_device_1"] = true
 			state["laser_1_placed"] = false
 			state["laser_1_angle"] = 0.0
-			show_toast("获得激光装置1！从左侧物品栏拖放到风向标1。", 3.0)
+			show_toast("获得激光装置1！可带到中央广场的激光聚焦台。", 3.0)
 			_update_inventory_sidebar()
 		"laser_device_2":
 			laser_owned["laser_device_2"] = true
 			state["laser_2_placed"] = false
 			state["laser_2_angle"] = 0.0
-			show_toast("获得激光装置2！从左侧物品栏拖放到风向标2。", 3.0)
+			show_toast("获得激光装置2！可带到中央广场的激光聚焦台。", 3.0)
 			_update_inventory_sidebar()
 		"stone_door":
 			show_toast("石门打开了！左侧区域现已可通行。", 3.0)
@@ -1522,8 +1513,7 @@ func toggle_pause() -> void:
 	_add_button(list, "继续", func(): toggle_pause())
 	_add_button(list, "纪念相册", func(): show_album())
 	if OS.is_debug_build():
-		var debug_label := "收回两个测试激光" if bool(state.get("debug_laser_loadout", false)) else "领取两个测试激光"
-		_add_button(list, debug_label, _toggle_debug_lasers)
+		_add_button(list, "测试工具", _open_debug_tools)
 	_add_button(list, "保存并回主菜单", func():
 		autosave()
 		get_tree().paused = false
@@ -1550,6 +1540,200 @@ func _toggle_debug_lasers() -> void:
 		pause_root = null
 		get_tree().paused = false
 
+func _open_debug_tools() -> void:
+	if not OS.is_debug_build() or pause_root == null:
+		return
+	for child in pause_root.get_children():
+		child.queue_free()
+	pause_root.position = Vector2(220, 70)
+	pause_root.size = Vector2(840, 580)
+	var title := Label.new()
+	title.text = "后期测试工具  ·  仅调试版本"
+	title.position = Vector2(28, 18)
+	title.size = Vector2(650, 42)
+	title.add_theme_font_size_override("font_size", 26)
+	pause_root.add_child(title)
+	var close_button := Button.new()
+	close_button.text = "返回"
+	close_button.position = Vector2(704, 16)
+	close_button.size = Vector2(108, 40)
+	close_button.pressed.connect(func():
+		pause_root.queue_free()
+		pause_root = null
+		get_tree().paused = false
+		call_deferred("toggle_pause")
+	)
+	pause_root.add_child(close_button)
+	if not ProfileManager.is_current_profile_debug():
+		var warning := Label.new()
+		warning.text = "为保护正式进度，测试操作会先复制当前档案。\n原档案不会被传送、解锁或重置。"
+		warning.position = Vector2(90, 150)
+		warning.size = Vector2(660, 100)
+		warning.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		warning.add_theme_font_size_override("font_size", 22)
+		pause_root.add_child(warning)
+		var clone_button := Button.new()
+		clone_button.text = "创建 [TEST] 副本并进入"
+		clone_button.position = Vector2(250, 285)
+		clone_button.size = Vector2(340, 56)
+		clone_button.pressed.connect(_create_debug_profile)
+		pause_root.add_child(clone_button)
+		return
+	var profile_label := Label.new()
+	profile_label.text = "当前档案：%s" % ProfileManager.get_current_profile().get("display_name", "[TEST]")
+	profile_label.position = Vector2(30, 60)
+	profile_label.size = Vector2(760, 28)
+	profile_label.add_theme_color_override("font_color", Color("#ffe08a"))
+	pause_root.add_child(profile_label)
+	var scroll := ScrollContainer.new()
+	scroll.position = Vector2(24, 96)
+	scroll.size = Vector2(792, 450)
+	pause_root.add_child(scroll)
+	var grid := GridContainer.new()
+	grid.columns = 3
+	grid.custom_minimum_size = Vector2(760, 0)
+	grid.add_theme_constant_override("h_separation", 12)
+	grid.add_theme_constant_override("v_separation", 10)
+	scroll.add_child(grid)
+	_add_debug_header(grid, "主世界传送")
+	_add_button(grid, "中央广场", func(): _debug_restart_main(GameData.PLAYER_START, "central"))
+	_add_button(grid, "九宫格", func(): _debug_restart_main(Vector2(6600, 3165), "nine_grid"))
+	_add_button(grid, "激光聚焦", func(): _debug_restart_main(Vector2(3900, 3168), "laser_focus"))
+	_add_button(grid, "地下入口", func(): _debug_restart_main(Vector2(9000, 3168), "underground_entry"))
+	_add_debug_header(grid, "地下 Marker 传送")
+	_add_button(grid, "地下起点", func(): _debug_enter_maze("PlayerSpawn"))
+	_add_button(grid, "隐藏门", func(): _debug_enter_maze("HiddenDoor"))
+	_add_button(grid, "隐藏宝箱", func(): _debug_enter_maze("Chest"))
+	_add_button(grid, "迷宫出口", func(): _debug_enter_maze("PortalExit"))
+	_add_debug_header(grid, "进度预设")
+	_add_button(grid, "九宫格线索", func(): _debug_apply_preset("nine_grid"))
+	_add_button(grid, "两个激光", func(): _debug_apply_preset("lasers"))
+	_add_button(grid, "隐藏门已开", func(): _debug_apply_preset("hidden_door"))
+	_add_button(grid, "指南针路线", func(): _debug_apply_preset("compass"))
+	_add_button(grid, "宝箱结局", func(): _debug_apply_preset("ending"))
+	_add_button(grid, "通关后广场", func(): _debug_apply_preset("postgame"))
+	_add_debug_header(grid, "单项与维护")
+	_add_button(grid, "切换测试激光", _debug_toggle_lasers)
+	_add_button(grid, "解锁全部视角", _debug_unlock_views)
+	_add_button(grid, "补齐全部钥匙", _debug_grant_keys)
+	_add_button(grid, "切换指南针", _debug_toggle_compass)
+	_add_button(grid, "重置最近谜题", _debug_reset_nearest_puzzle)
+	_add_button(grid, "重载当前场景", func(): _debug_restart_main(player.global_position, "reload"))
+
+func _add_debug_header(grid: GridContainer, text_value: String) -> void:
+	var header := Label.new()
+	header.text = text_value
+	header.custom_minimum_size = Vector2(230, 34)
+	header.add_theme_font_size_override("font_size", 20)
+	header.add_theme_color_override("font_color", Color("#8deaf0"))
+	grid.add_child(header)
+	for index in range(2):
+		var spacer := Control.new()
+		spacer.custom_minimum_size = Vector2(1, 1)
+		grid.add_child(spacer)
+
+func _create_debug_profile() -> void:
+	state["position"] = player.global_position
+	ProfileManager.save_state(state)
+	var clone := ProfileManager.create_debug_clone(state)
+	state = (clone.get("state", GameData.default_state()) as Dictionary).duplicate(true)
+	_debug_restart_main(state.get("position", GameData.PLAYER_START) as Vector2, "cloned")
+
+func _debug_require_profile() -> bool:
+	return OS.is_debug_build() and ProfileManager.is_current_profile_debug()
+
+func _debug_close_pause() -> void:
+	if pause_root != null and is_instance_valid(pause_root):
+		pause_root.queue_free()
+	pause_root = null
+	get_tree().paused = false
+
+func _debug_restart_main(target: Vector2, preset: String) -> void:
+	if not _debug_require_profile():
+		return
+	state["position"] = target
+	state["debug_preset"] = preset
+	state["debug_spawn_target"] = ""
+	ProfileManager.save_state(state)
+	_debug_close_pause()
+	call_deferred("start_game", false)
+
+func _debug_enter_maze(marker_name: String) -> void:
+	if not _debug_require_profile():
+		return
+	state["debug_spawn_target"] = marker_name
+	state["debug_preset"] = "maze_%s" % marker_name.to_snake_case()
+	ProfileManager.save_state(state)
+	_debug_close_pause()
+	get_tree().change_scene_to_file("res://maze/UndergroundMaze.tscn")
+
+func _debug_apply_preset(preset: String) -> void:
+	if not _debug_require_profile():
+		return
+	state["debug_preset"] = preset
+	match preset:
+		"nine_grid":
+			(state.get("completed_levels", []) as Array).erase("nine_grid")
+			if not (state.get("unlocked_views", []) as Array).has("depression"):
+				(state.get("unlocked_views", []) as Array).append("depression")
+			state["current_view"] = "depression"
+			_debug_restart_main(Vector2(6600, 3165), preset)
+			return
+		"lasers":
+			state["debug_laser_loadout"] = true
+			_debug_restart_main(Vector2(3900, 3168), preset)
+			return
+		"hidden_door", "compass", "ending":
+			GameData.unlock_hidden_door(state)
+			state["maze_compass_owned"] = preset != "hidden_door"
+			state["maze_compass_enabled"] = preset == "compass"
+			if preset == "ending":
+				state["hidden_chest_opened"] = false
+				state["ending_seen"] = false
+				state["ending_pending"] = false
+				_debug_enter_maze("Chest")
+			else:
+				_debug_enter_maze("HiddenDoor" if preset == "hidden_door" else "PlayerSpawn")
+			return
+		"postgame":
+			state["finished"] = true
+			state["ending_seen"] = true
+			state["ending_pending"] = false
+			_debug_restart_main(GameData.PLAYER_START, preset)
+
+func _debug_toggle_lasers() -> void:
+	state["debug_laser_loadout"] = not bool(state.get("debug_laser_loadout", false))
+	_debug_restart_main(player.global_position, "lasers_toggle")
+
+func _debug_unlock_views() -> void:
+	state["unlocked_views"] = GameData.VIEWS.duplicate()
+	_debug_restart_main(player.global_position, "all_views")
+
+func _debug_grant_keys() -> void:
+	state["collected_keys"] = GameData.KEYS.keys()
+	_debug_restart_main(player.global_position, "all_keys")
+
+func _debug_toggle_compass() -> void:
+	state["maze_compass_owned"] = true
+	state["maze_compass_enabled"] = not bool(state.get("maze_compass_enabled", false))
+	_debug_restart_main(player.global_position, "compass_toggle")
+
+func _debug_reset_nearest_puzzle() -> void:
+	var nearest_id := ""
+	var nearest_position := player.global_position
+	var nearest_distance := INF
+	for level in GameData.LEVELS:
+		var level_position: Vector2 = level.get("pos", Vector2.ZERO) as Vector2
+		var distance := player.global_position.distance_squared_to(level_position)
+		if distance < nearest_distance:
+			nearest_distance = distance
+			nearest_id = str(level.get("id", ""))
+			nearest_position = level_position
+	(state.get("completed_levels", []) as Array).erase(nearest_id)
+	if nearest_id == "nine_grid":
+		state["current_view"] = "depression"
+	_debug_restart_main(nearest_position, "reset_%s" % nearest_id)
+
 func _set_blind_hud_visible(is_blind: bool) -> void:
 	if hud_label != null:
 		hud_label.visible = not is_blind
@@ -1569,6 +1753,9 @@ func autosave_with_laser_angles() -> void:
 	ProfileManager.save_state(state)
 
 func _restore_laser_state() -> void:
+	# 旧版风向标系统已移除；把旧存档中放置的装置收回物品栏。
+	state["laser_1_placed"] = false
+	state["laser_2_placed"] = false
 	# 恢复激光装置拥有状态
 	laser_owned["laser_device_1"] = bool(state.get("debug_laser_loadout", false))
 	laser_owned["laser_device_2"] = bool(state.get("debug_laser_loadout", false))
@@ -1580,14 +1767,6 @@ func _restore_laser_state() -> void:
 			elif reward == "laser_device_2":
 				laser_owned["laser_device_2"] = true
 	
-	# 恢复已放置的激光装置
-	if state.get("laser_1_placed", false):
-		world.place_laser_device("laser_device_1", 1)
-		world.set_laser_angle(1, state.get("laser_1_angle", 0.0))
-	if state.get("laser_2_placed", false):
-		world.place_laser_device("laser_device_2", 2)
-		world.set_laser_angle(2, state.get("laser_2_angle", 0.0))
-
 func _restore_laser_focus_state() -> void:
 	# 找到场景中的 PuzzleLaserFocus 节点，恢复其安装状态
 	for node in get_tree().get_nodes_in_group("interactable"):

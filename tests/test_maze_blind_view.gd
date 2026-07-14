@@ -40,6 +40,7 @@ func _test_blind_view(maze: Node) -> void:
 		var material := overlay.material as ShaderMaterial
 		if material == null or material.shader == null or material.shader.resource_path != "res://shaders/blind_vision.gdshader":
 			failures.append("Maze blind view must use the shared blind vision shader")
+	_test_shared_vision_scale(maze, overlay)
 
 func _test_non_blind_underground_view(maze: Node) -> void:
 	var player := maze.get_node_or_null("RuntimePlayer") as MindscapePlayer
@@ -49,6 +50,19 @@ func _test_non_blind_underground_view(maze: Node) -> void:
 	var material := overlay.material as ShaderMaterial if overlay != null else null
 	if material == null or material.shader == null or material.shader.resource_path != "res://shaders/underground_darkness.gdshader":
 		failures.append("Non-blind underground views must keep the circular darkness shader")
+	_test_shared_vision_scale(maze, overlay)
+
+func _test_shared_vision_scale(maze: Node, overlay: ColorRect) -> void:
+	if not maze.has_method("get_vision_radius_px") or overlay == null:
+		failures.append("Maze must expose the shared ground/underground vision radius")
+		return
+	var expected := MindscapeWorld.BLIND_VISION_WORLD_RADIUS * MindscapeWorld._view_effect_scale_for_transform(
+		get_viewport().get_stretch_transform(),
+		1.0
+	)
+	var actual := float(maze.call("get_vision_radius_px"))
+	if not is_equal_approx(actual, expected):
+		failures.append("Every underground view must use the exact ground blind-view radius and stretch scaling")
 
 func _finish() -> void:
 	if failures.is_empty():

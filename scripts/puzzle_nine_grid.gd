@@ -27,6 +27,11 @@ var grid_container: Node2D
 var tile_nodes: Array = []
 var hint_label: Label
 var fullscreen_overlay: CanvasLayer  # 抑郁模式全屏密码
+var fullscreen_root: Control
+var fullscreen_title: Label
+var fullscreen_grid_bg: ColorRect
+var fullscreen_hint: Label
+var fullscreen_cells: Array[Control] = []
 var depression_timer: float = 0.0  # 抑郁模式间隔计时
 
 # ── 抑郁模式全屏间隔参数 ──
@@ -52,6 +57,12 @@ const FLASH_PERIOD: float = 1.2       # 每隔 1.2 秒切换一次显隐（慢�
 
 static func should_dismiss_for_key_count(key_count: int) -> bool:
 	return key_count > 3
+
+static func should_show_depression_answer(completed: bool, view: String, modal_open: bool) -> bool:
+	return not completed and view == "depression" and not modal_open
+
+static func is_live_canvas_item(value: Variant) -> bool:
+	return value != null and is_instance_valid(value) and value is CanvasItem
 
 func _ready() -> void:
 	# 初始化纹理数组（必须在 _ready 里，不能在 const 数组中 preload）
@@ -216,77 +227,64 @@ func _make_fullscreen_overlay() -> void:
 	fullscreen_overlay.layer = 100
 	fullscreen_overlay.visible = false
 	add_child(fullscreen_overlay)
+	fullscreen_root = Control.new()
+	fullscreen_root.name = "AnswerRoot"
+	fullscreen_root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	fullscreen_root.mouse_filter = Control.MOUSE_FILTER_STOP
+	fullscreen_overlay.add_child(fullscreen_root)
 
 	var fade_bg := ColorRect.new()
 	fade_bg.name = "FadeBG"
-	fade_bg.position = Vector2(0, 0)
-	fade_bg.size = Vector2(1280, 720)
+	fade_bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	fade_bg.color = Color(0, 0, 0, 0.88)
-	fullscreen_overlay.add_child(fade_bg)
+	fullscreen_root.add_child(fade_bg)
 	
 	# 标题
-	var title := Label.new()
-	title.text = "记住这个排列"
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.position = Vector2(290, 20)
-	title.size = Vector2(700, 40)
-	title.add_theme_font_size_override("font_size", 36)
-	title.add_theme_color_override("font_color", Color("#ffd760"))
-	fullscreen_overlay.add_child(title)
+	fullscreen_title = Label.new()
+	fullscreen_title.text = "记住这个排列"
+	fullscreen_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	fullscreen_title.add_theme_font_size_override("font_size", 36)
+	fullscreen_title.add_theme_color_override("font_color", Color("#ffd760"))
+	fullscreen_root.add_child(fullscreen_title)
 	
-	# 3x3 大号正确答案 — 使用切片图片纹理
-	var big_cell := 150.0
-	var big_bs := big_cell * 3 + 20
-	var grid_origin := Vector2((1280 - big_bs) / 2.0, (720 - big_bs) / 2.0 - 40)
-
 	# 背景框
-	var grid_bg := ColorRect.new()
-	grid_bg.position = grid_origin - Vector2(6, 6)
-	grid_bg.size = Vector2(big_bs + 12, big_bs + 12)
-	grid_bg.color = Color("#2a2220")
-	fullscreen_overlay.add_child(grid_bg)
+	fullscreen_grid_bg = ColorRect.new()
+	fullscreen_grid_bg.color = Color("#2a2220")
+	fullscreen_root.add_child(fullscreen_grid_bg)
 	
 	for idx in range(9):
 		var tile_num: int = CORRECT_LAYOUT[idx]
-		var gx: int = idx % 3
-		var gy: int = idx / 3
-		var px: float = grid_origin.x + gx * big_cell + 6
-		var py: float = grid_origin.y + gy * big_cell + 6
-		
+		var cell: Control
 		if tile_num == 0:
-			# 空位
 			var empty_bg := ColorRect.new()
-			empty_bg.position = Vector2(px, py)
-			empty_bg.size = Vector2(big_cell - 12, big_cell - 12)
 			empty_bg.color = Color("#12101a")
-			fullscreen_overlay.add_child(empty_bg)
+			cell = empty_bg
 		else:
-			# 用 TextureRect 显示切片纹理
 			var tile_rect := TextureRect.new()
 			tile_rect.texture = TILE_TEXTURES[tile_num]
 			tile_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-			tile_rect.stretch_mode = TextureRect.STRETCH_SCALE
-			tile_rect.position = Vector2(px, py)
-			tile_rect.size = Vector2(big_cell - 12, big_cell - 12)
-			fullscreen_overlay.add_child(tile_rect)
+			tile_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			cell = tile_rect
+		cell.set_meta("grid_index", idx)
+		fullscreen_root.add_child(cell)
+		fullscreen_cells.append(cell)
 		
 		# 位置编号
 		var pos_label := Label.new()
+		pos_label.name = "PositionLabel"
 		pos_label.text = str(idx + 1)
-		pos_label.position = Vector2(px + 4, py + 2)
 		pos_label.add_theme_font_size_override("font_size", 14)
 		pos_label.add_theme_color_override("font_color", Color("#7777aa", 0.6))
-		fullscreen_overlay.add_child(pos_label)
+		pos_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		cell.add_child(pos_label)
 	
 	# 底部提示（静态说明）
-	var hint := Label.new()
-	hint.text = "记忆一段时间后会消失，稍后再次出现"
-	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	hint.position = Vector2(240, 650)
-	hint.size = Vector2(800, 30)
-	hint.add_theme_font_size_override("font_size", 18)
-	hint.add_theme_color_override("font_color", Color("#9999bb"))
-	fullscreen_overlay.add_child(hint)
+	fullscreen_hint = Label.new()
+	fullscreen_hint.text = "记忆一段时间后会消失，稍后再次出现"
+	fullscreen_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	fullscreen_hint.add_theme_font_size_override("font_size", 18)
+	fullscreen_hint.add_theme_color_override("font_color", Color("#9999bb"))
+	fullscreen_root.add_child(fullscreen_hint)
 
 	# 驱散成功提示（初始隐藏）
 	_dismiss_hint_label = Label.new()
@@ -297,7 +295,35 @@ func _make_fullscreen_overlay() -> void:
 	_dismiss_hint_label.add_theme_font_size_override("font_size", 28)
 	_dismiss_hint_label.add_theme_color_override("font_color", Color("#a8d8ff"))
 	_dismiss_hint_label.modulate.a = 0.0
-	fullscreen_overlay.add_child(_dismiss_hint_label)
+	fullscreen_root.add_child(_dismiss_hint_label)
+	_layout_fullscreen_overlay()
+	get_viewport().size_changed.connect(_layout_fullscreen_overlay)
+
+func _layout_fullscreen_overlay() -> void:
+	if fullscreen_root == null:
+		return
+	var viewport_size := get_viewport_rect().size
+	var grid_size := minf(viewport_size.x * 0.72, viewport_size.y * 0.75)
+	var cell_step := grid_size / 3.0
+	var gap := clampf(cell_step * 0.045, 6.0, 14.0)
+	var grid_origin := Vector2((viewport_size.x - grid_size) * 0.5, (viewport_size.y - grid_size) * 0.5)
+	fullscreen_grid_bg.position = grid_origin - Vector2(gap, gap)
+	fullscreen_grid_bg.size = Vector2(grid_size, grid_size) + Vector2(gap, gap) * 2.0
+	fullscreen_title.position = Vector2(0.0, maxf(8.0, grid_origin.y - 56.0))
+	fullscreen_title.size = Vector2(viewport_size.x, 46.0)
+	for index in range(fullscreen_cells.size()):
+		var cell := fullscreen_cells[index]
+		var gx := index % 3
+		var gy := index / 3
+		cell.position = grid_origin + Vector2(gx * cell_step + gap, gy * cell_step + gap)
+		cell.size = Vector2(cell_step - gap * 2.0, cell_step - gap * 2.0)
+		var position_label := cell.get_node_or_null("PositionLabel") as Label
+		if position_label != null:
+			position_label.position = Vector2(5.0, 2.0)
+	fullscreen_hint.position = Vector2(0.0, minf(viewport_size.y - 34.0, grid_origin.y + grid_size + 12.0))
+	fullscreen_hint.size = Vector2(viewport_size.x, 28.0)
+	_dismiss_hint_label.position = Vector2(0.0, maxf(8.0, grid_origin.y - 94.0))
+	_dismiss_hint_label.size = Vector2(viewport_size.x, 36.0)
 
 func _make_tile_visuals() -> void:
 	# 立即删除旧节点（free，而非queue_free，避免同帧出现"鬼影"复制）
@@ -380,19 +406,6 @@ func _on_body_exited(body: Node2D) -> void:
 #  输入处理：鼠标点击滑动方块
 # ═══════════════════════════════════════════════════════
 func _input(event: InputEvent) -> void:
-	if not player_in_range or is_completed:
-		return
-
-	# 启动拼图（E 键）
-	if event.is_action_pressed("interact"):
-		if not challenge_active:
-			_start_challenge()
-		get_viewport().set_input_as_handled()
-		return
-
-	if not challenge_active:
-		return
-
 	# ── 抑郁模式：同时按住四个及以上不同键驱散正确答案 ──
 	if depression_fullscreen_visible and event is InputEventKey:
 		var kcode: int = event.keycode
@@ -407,6 +420,19 @@ func _input(event: InputEvent) -> void:
 				_dismiss_overlay_with_animation()
 				get_viewport().set_input_as_handled()
 				return
+
+	if not player_in_range or is_completed:
+		return
+
+	# 启动拼图（E 键）
+	if event.is_action_pressed("interact"):
+		if not challenge_active:
+			_start_challenge()
+		get_viewport().set_input_as_handled()
+		return
+
+	if not challenge_active:
+		return
 
 	# ── 鼠标点击滑动方块 ──
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
@@ -428,10 +454,10 @@ func _dismiss_overlay_with_animation() -> void:
 
 	# 用 tween 做淡出效果
 	var tween := create_tween()
-	tween.tween_property(fullscreen_overlay, "modulate:a", 0.0, 0.5)
+	tween.tween_property(fullscreen_root, "modulate:a", 0.0, 0.5)
 	tween.tween_callback(func():
 		fullscreen_overlay.visible = false
-		fullscreen_overlay.modulate.a = 1.0
+		fullscreen_root.modulate.a = 1.0
 	)
 
 	# 提示文字显示 2 秒后淡出
@@ -475,17 +501,6 @@ func _start_challenge() -> void:
 	challenge_active = true
 	hint_label.text = "点击方块滑动到空位"
 	hint_updated.emit("拼图启动！点击方块，把它们滑到正确位置。")
-	# 抑郁模式：立即弹出正确答案供记忆
-	if _get_view() == "depression":
-		fullscreen_overlay.visible = true
-		fullscreen_overlay.modulate.a = 1.0
-		depression_fullscreen_visible = true
-		depression_timer = 0.0
-		_flash_timer = 0.0
-	else:
-		fullscreen_overlay.visible = false
-		depression_timer = 0.0
-		depression_fullscreen_visible = false
 
 func _slide(from_idx: int) -> void:
 	var gap := current_layout.find(0)
@@ -508,7 +523,7 @@ func _complete() -> void:
 	challenge_active = false
 	# 完成后永久关闭 overlay，不再出现
 	fullscreen_overlay.visible = false
-	fullscreen_overlay.modulate.a = 1.0
+	fullscreen_root.modulate.a = 1.0
 	depression_fullscreen_visible = false
 	depression_timer = 0.0
 	hint_label.text = "✨ 获得激光装置2！"
@@ -519,15 +534,21 @@ func _complete() -> void:
 #  抑郁模式：全屏密码间隔展示
 # ═══════════════════════════════════════════════════════
 func _process(delta: float) -> void:
-	if is_completed or not challenge_active:
+	var in_depression: bool = (_get_view() == "depression")
+	var modal_open := _is_blocking_modal_open()
+	if not should_show_depression_answer(is_completed, _get_view(), modal_open):
+		if fullscreen_overlay.visible:
+			fullscreen_overlay.visible = false
+			fullscreen_root.modulate.a = 1.0
+		depression_fullscreen_visible = false
+		_keys_held.clear()
+		_was_in_depression = in_depression
 		return
 
-	var in_depression: bool = (_get_view() == "depression")
-
-	# 刚切入抑郁视角（上一帧不在）且拼图已激活 → 立即弹出答案
+	# 九宫格完成前，刚切入抑郁视角便立即出现，不要求先启动谜题。
 	if in_depression and not _was_in_depression and not depression_fullscreen_visible:
 		fullscreen_overlay.visible = true
-		fullscreen_overlay.modulate.a = 1.0
+		fullscreen_root.modulate.a = 1.0
 		depression_fullscreen_visible = true
 		depression_timer = 0.0
 		_flash_timer = 0.0
@@ -541,15 +562,15 @@ func _process(delta: float) -> void:
 			_flash_timer += delta
 			if _flash_timer >= FLASH_PERIOD:
 				_flash_timer = 0.0
-				if fullscreen_overlay.modulate.a >= 1.0:
-					fullscreen_overlay.modulate.a = 0.35
+				if fullscreen_root.modulate.a >= 1.0:
+					fullscreen_root.modulate.a = 0.35
 				else:
-					fullscreen_overlay.modulate.a = 1.0
+					fullscreen_root.modulate.a = 1.0
 
 			# 等够展示时间后隐藏
 			if depression_timer >= DEPRESSION_SHOW_DURATION:
 				fullscreen_overlay.visible = false
-				fullscreen_overlay.modulate.a = 1.0
+				fullscreen_root.modulate.a = 1.0
 				_flash_timer = 0.0
 				depression_fullscreen_visible = false
 				depression_timer = 0.0
@@ -558,19 +579,26 @@ func _process(delta: float) -> void:
 			# 隐藏中，等够间隔后再次展示
 			if depression_timer >= DEPRESSION_HIDE_DURATION:
 				fullscreen_overlay.visible = true
-				fullscreen_overlay.modulate.a = 1.0
+				fullscreen_root.modulate.a = 1.0
 				_flash_timer = 0.0
 				depression_fullscreen_visible = true
 				depression_timer = 0.0
 				_keys_held.clear()
-	elif not in_depression:
-		# 非抑郁模式：确保全屏密码关掉
-		if fullscreen_overlay.visible:
-			fullscreen_overlay.visible = false
-		depression_timer = 0.0
-		depression_fullscreen_visible = false
-		_flash_timer = 0.0
-		_keys_held.clear()
+
+func _is_blocking_modal_open() -> bool:
+	if get_tree().paused:
+		return true
+	var main := get_tree().get_first_node_in_group("main")
+	if main == null:
+		return false
+	var active_dialogue: Variant = main.get("dialogue")
+	if is_live_canvas_item(active_dialogue) and (active_dialogue as CanvasItem).visible:
+		return true
+	for property_name in ["pause_root", "wheel_root", "menu_root"]:
+		var modal: Variant = main.get(property_name)
+		if is_live_canvas_item(modal):
+			return true
+	return false
 
 func _get_view() -> String:
 	for node in get_tree().get_nodes_in_group("world"):
