@@ -388,6 +388,7 @@ func _make_hint() -> void:
 	hint_label.add_theme_font_size_override("font_size", 13)
 	hint_label.add_theme_color_override("font_color", Color("#ffe8a0"))
 	hint_label.text = "按 [E] 启动拼图"
+	hint_label.visible = false
 	add_child(hint_label)
 
 func _on_body_entered(body: Node2D) -> void:

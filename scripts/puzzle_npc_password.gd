@@ -5,7 +5,7 @@ class_name PuzzleNPCPassword
 #  许愿堂密码台 — 密码本 + 5位数字密码锁
 #  5个NPC独立分散在世界中，玩家走近按E对话。
 #  密码本: 正常模式=普通文字, 自闭模式=标记字红色高亮
-#  密码锁: 五句线索对应密码本文字序号，小笑到怎别 = 4 8 2 5 7
+#  密码锁: 五句线索对应密码本文字序号，小笑到怎别 = 3 7 1 4 6
 #  视觉: 一个大房子取代原来的许愿堂背景
 # ════════════════════════════════════════════════════════════
 
@@ -34,7 +34,7 @@ const CIPHER_TEXT: String = (
 )
 
 const MARKER_CHARS: Array[String] = ["出","到","错","小","怎","请","别","笑","神","早"]
-const CORRECT_PASSWORD: Array[int] = [4, 8, 2, 5, 7]
+const CORRECT_PASSWORD: Array[int] = [3, 7, 1, 4, 6]
 const PASSWORD_LEN := 5
 
 # ── 状态 ──
@@ -111,12 +111,13 @@ func _make_world_visual() -> void:
 	_house_front.z_index = 4
 	_world_visual.add_child(_house_front)
 
-	# 只保留一个小标记，房子由背景层的房子贴图负责
+	# 房子由背景层贴图负责，世界中不再叠加突兀的程序文字。
 	var marker := Label.new()
-	marker.text = "密码台"
+	marker.text = ""
 	marker.position = Vector2(-24, -80)
 	marker.add_theme_font_size_override("font_size", 16)
 	marker.add_theme_color_override("font_color", Color("#a080f0"))
+	marker.visible = false
 	_world_visual.add_child(marker)
 
 func _set_house_inside(inside: bool) -> void:
@@ -140,50 +141,51 @@ func _make_ui_panel() -> void:
 	# 面板背景
 	var panel := Panel.new()
 	panel.name = "UIPanel"
-	panel.position = Vector2(280, 540)
-	panel.size = Vector2(590, 90)
+	panel.position = Vector2(280, 524)
+	panel.size = Vector2(590, 106)
 	var ps := StyleBoxFlat.new()
-	ps.set_corner_radius_all(10)
-	ps.bg_color = Color("#1a1520", 0.88)
+	ps.set_corner_radius_all(12)
+	ps.bg_color = Color("#2b211d", 0.96)
 	ps.border_width_left = 2; ps.border_width_right = 2
 	ps.border_width_top = 2; ps.border_width_bottom = 2
-	ps.border_color = Color("#6a5080")
+	ps.border_color = Color("#b88952")
 	panel.add_theme_stylebox_override("panel", ps)
 	_ui_canvas.add_child(panel)
 
 	# 标题
 	var ui_title := Label.new()
-	ui_title.text = "许愿堂 · 密码台"
+	ui_title.text = "许愿堂  ·  旧密码锁"
 	ui_title.position = Vector2(20, 10)
 	ui_title.add_theme_font_size_override("font_size", 16)
-	ui_title.add_theme_color_override("font_color", Color("#b0a0f0"))
+	ui_title.add_theme_color_override("font_color", Color("#f1cc8b"))
 	panel.add_child(ui_title)
 
 	# ── 密码本按钮 ──
 	var book_btn := Button.new()
 	book_btn.name = "BookBtn"
-	book_btn.text = "密码本"
+	book_btn.text = "打开密码本"
 	book_btn.position = Vector2(20, 38)
-	book_btn.size = Vector2(260, 36)
+	book_btn.size = Vector2(260, 44)
 	book_btn.add_theme_font_size_override("font_size", 15)
 	book_btn.pressed.connect(_open_zoom)
-	_style_button(book_btn, Color("#6a5080"), Color("#d4c4ff"))
+	_style_button(book_btn, Color("#594333"), Color("#f2d49b"))
 	panel.add_child(book_btn)
 
 	# ── 密码锁按钮 ──
 	var lock_btn := Button.new()
 	lock_btn.name = "LockBtn"
-	lock_btn.text = "密码锁"
+	lock_btn.text = "拨动五位锁芯"
 	lock_btn.position = Vector2(300, 38)
-	lock_btn.size = Vector2(270, 36)
+	lock_btn.size = Vector2(270, 44)
 	lock_btn.add_theme_font_size_override("font_size", 15)
 	lock_btn.pressed.connect(_open_lock)
-	_style_button(lock_btn, Color("#5a3050"), Color("#e0b0d0"))
+	_style_button(lock_btn, Color("#713a35"), Color("#ffe0ae"))
 	panel.add_child(lock_btn)
 
 	# 提示
 	var tip := Label.new()
-	tip.text = "走进按下 E 也可交互 · 点击按钮或按 E 键"
+	tip.text = ""
+	tip.visible = false
 	tip.position = Vector2(20, 46)
 	tip.add_theme_font_size_override("font_size", 12)
 	tip.add_theme_color_override("font_color", Color("#807080"))
@@ -355,8 +357,8 @@ func _highlight_all_markers(text: String) -> String:
 
 const LOCK_DIAL_R := 48          # 轮盘半径
 const LOCK_DIAL_GAP := 24        # 轮盘间距
-const LOCK_PANEL_W := 600
-const LOCK_PANEL_H := 300
+const LOCK_PANEL_W := 720
+const LOCK_PANEL_H := 370
 var _auto_check_timer: float = -1.0  # -1 表示不检测
 
 func _make_lock_overlay() -> void:
@@ -380,29 +382,56 @@ func _make_lock_overlay() -> void:
 	panel.size = Vector2(LOCK_PANEL_W, LOCK_PANEL_H)
 	panel.name = "LockPanel"
 	var ps := StyleBoxFlat.new()
-	ps.set_corner_radius_all(14)
-	ps.bg_color = Color("#1a1028")
+	ps.set_corner_radius_all(16)
+	ps.bg_color = Color("#2b211d")
 	ps.border_width_left = 3; ps.border_width_right = 3
 	ps.border_width_top = 3; ps.border_width_bottom = 3
-	ps.border_color = Color("#4a3060")
+	ps.border_color = Color("#c49558")
 	panel.add_theme_stylebox_override("panel", ps)
 	lock_overlay.add_child(panel)
+
+	var inner := Panel.new()
+	inner.position = Vector2(16, 62)
+	inner.size = Vector2(LOCK_PANEL_W - 32, LOCK_PANEL_H - 92)
+	var inner_style := StyleBoxFlat.new()
+	inner_style.set_corner_radius_all(10)
+	inner_style.bg_color = Color("#403025")
+	inner_style.border_color = Color("#775538")
+	inner_style.set_border_width_all(1)
+	inner.add_theme_stylebox_override("panel", inner_style)
+	inner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(inner)
 
 	# 标题
 	var tl := Label.new()
 	tl.text = "五位密码锁"
-	tl.position = Vector2(20, 14)
+	tl.position = Vector2(28, 14)
 	tl.add_theme_font_size_override("font_size", 22)
-	tl.add_theme_color_override("font_color", Color("#c0a0e0"))
+	tl.add_theme_color_override("font_color", Color("#ffe0a6"))
 	panel.add_child(tl)
 
 	# 副标题：锁体纹理
 	var sub := Label.new()
-	sub.text = "旋转每个轮盘至正确数字"
-	sub.position = Vector2(20, 42)
+	sub.text = "从密码本里找出五个字，拨动锁芯"
+	sub.position = Vector2(220, 21)
 	sub.add_theme_font_size_override("font_size", 13)
-	sub.add_theme_color_override("font_color", Color("#706090"))
+	sub.add_theme_color_override("font_color", Color("#c8a77b"))
 	panel.add_child(sub)
+
+	var lamps := HBoxContainer.new()
+	lamps.name = "LockLamps"
+	lamps.position = Vector2(28, 49)
+	lamps.size = Vector2(130, 10)
+	lamps.add_theme_constant_override("separation", 8)
+	panel.add_child(lamps)
+	for _index in range(PASSWORD_LEN):
+		var lamp := Panel.new()
+		lamp.custom_minimum_size = Vector2(16, 6)
+		var lamp_style := StyleBoxFlat.new()
+		lamp_style.bg_color = Color("#d29a53")
+		lamp_style.set_corner_radius_all(3)
+		lamp.add_theme_stylebox_override("panel", lamp_style)
+		lamps.add_child(lamp)
 
 	# 5个旋转轮盘
 	var total_w := PASSWORD_LEN * (LOCK_DIAL_R * 2) + (PASSWORD_LEN - 1) * LOCK_DIAL_GAP
@@ -413,16 +442,16 @@ func _make_lock_overlay() -> void:
 	# 提示文字
 	var tip := Label.new()
 	tip.name = "LockTip"
-	tip.text = "点击上下箭头旋转数字 0-9"
-	tip.position = Vector2(20, LOCK_PANEL_H - 30)
+	tip.text = "▲ ▼ 拨动锁芯  ·  每次转动后自动检查"
+	tip.position = Vector2(28, LOCK_PANEL_H - 31)
 	tip.add_theme_font_size_override("font_size", 13)
-	tip.add_theme_color_override("font_color", Color("#706090"))
+	tip.add_theme_color_override("font_color", Color("#c8a77b"))
 	panel.add_child(tip)
 
 
 # 画一个旋转轮盘（圆形锁风格）
 func _draw_lock_dial(panel: Panel, digit_idx: int, cx: float) -> void:
-	var cy := 130.0  # 轮盘中心Y
+	var cy := 178.0  # 轮盘中心Y
 
 	# 轮盘背景圆（用Panel + 全圆角模拟）
 	var dial_bg := Panel.new()
@@ -431,13 +460,25 @@ func _draw_lock_dial(panel: Panel, digit_idx: int, cx: float) -> void:
 	dial_bg.size = Vector2(LOCK_DIAL_R * 2, LOCK_DIAL_R * 2)
 	var bs := StyleBoxFlat.new()
 	bs.set_corner_radius_all(LOCK_DIAL_R)
-	bs.bg_color = Color("#0d0818")
+	bs.bg_color = Color("#17191e")
 	bs.border_width_left = 2; bs.border_width_right = 2
 	bs.border_width_top = 2; bs.border_width_bottom = 2
-	bs.border_color = Color("#4a3060")
+	bs.border_color = Color("#d09b58")
 	dial_bg.add_theme_stylebox_override("panel", bs)
 	dial_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_child(dial_bg)
+
+	var inner := Panel.new()
+	inner.position = Vector2(cx - 36, cy - 36)
+	inner.size = Vector2(72, 72)
+	var inner_style := StyleBoxFlat.new()
+	inner_style.set_corner_radius_all(36)
+	inner_style.bg_color = Color("#25242a")
+	inner_style.border_color = Color("#624b37")
+	inner_style.set_border_width_all(1)
+	inner.add_theme_stylebox_override("panel", inner_style)
+	inner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(inner)
 
 	# 数字标签
 	var label := Label.new()
@@ -447,33 +488,27 @@ func _draw_lock_dial(panel: Panel, digit_idx: int, cx: float) -> void:
 	label.size = Vector2(LOCK_DIAL_R * 2, 36)
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	label.add_theme_font_size_override("font_size", 40)
-	label.add_theme_color_override("font_color", Color("#ffe8a0"))
+	label.add_theme_font_size_override("font_size", 38)
+	label.add_theme_color_override("font_color", Color("#ffe1a0"))
 	panel.add_child(label)
 
 	# 上箭头按钮
 	var up := Button.new()
 	up.name = "UpBtn_%d" % digit_idx
-	up.text = "▴"
-	up.flat = true
+	up.text = "▲"
 	up.position = Vector2(cx - 16, cy - LOCK_DIAL_R - 28)
 	up.size = Vector2(32, 24)
-	up.add_theme_font_size_override("font_size", 14)
-	up.add_theme_color_override("font_color", Color("#a080d0"))
-	up.add_theme_color_override("font_hover_color", Color("#ffffff"))
+	_style_lock_arrow(up)
 	up.pressed.connect(_on_digit_up.bind(digit_idx))
 	panel.add_child(up)
 
 	# 下箭头按钮
 	var dn := Button.new()
 	dn.name = "DnBtn_%d" % digit_idx
-	dn.text = "▾"
-	dn.flat = true
+	dn.text = "▼"
 	dn.position = Vector2(cx - 16, cy + LOCK_DIAL_R + 4)
 	dn.size = Vector2(32, 24)
-	dn.add_theme_font_size_override("font_size", 14)
-	dn.add_theme_color_override("font_color", Color("#a080d0"))
-	dn.add_theme_color_override("font_hover_color", Color("#ffffff"))
+	_style_lock_arrow(dn)
 	dn.pressed.connect(_on_digit_down.bind(digit_idx))
 	panel.add_child(dn)
 
@@ -484,8 +519,26 @@ func _draw_lock_dial(panel: Panel, digit_idx: int, cx: float) -> void:
 	idxl.size = Vector2(24, 16)
 	idxl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	idxl.add_theme_font_size_override("font_size", 12)
-	idxl.add_theme_color_override("font_color", Color("#504070"))
+	idxl.add_theme_color_override("font_color", Color("#d09b58"))
 	panel.add_child(idxl)
+
+
+func _style_lock_arrow(button: Button) -> void:
+	button.add_theme_font_size_override("font_size", 12)
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = Color("#5b3a31")
+	normal.border_color = Color("#9d7043")
+	normal.set_border_width_all(1)
+	normal.set_corner_radius_all(7)
+	button.add_theme_stylebox_override("normal", normal)
+	var hover := StyleBoxFlat.new()
+	hover.bg_color = Color("#8f4d3e")
+	hover.border_color = Color("#ffe0a6")
+	hover.set_border_width_all(2)
+	hover.set_corner_radius_all(7)
+	button.add_theme_stylebox_override("hover", hover)
+	button.add_theme_color_override("font_color", Color("#f8d18e"))
+	button.add_theme_color_override("font_hover_color", Color.WHITE)
 
 
 func _on_digit_up(idx: int) -> void:

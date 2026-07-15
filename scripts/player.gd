@@ -11,10 +11,10 @@ const GRAVITY: float = 1600.0
 const MAX_FALL_SPEED: float = 900.0
 const COYOTE_TIME: float = 0.08
 const JUMP_BUFFER: float = 0.1
-const DOCTOR_SPRITESHEET_PATH: String = "res://assets/characters/generated/doctor_spritesheet_512.png"
-const UNDERGROUND_SPRITESHEET_PATH: String = "res://assets/characters/generated/underground_doctor_spritesheet.png"
-const DOCTOR_FRAME_SIZE: Vector2i = Vector2i(32, 32)
-const DOCTOR_DISPLAY_SCALE: Vector2 = Vector2(3.0, 3.0)
+const DOCTOR_SPRITESHEET_PATH: String = "res://assets/characters/generated/doctor_handdrawn_spritesheet.png"
+const UNDERGROUND_SPRITESHEET_PATH: String = "res://assets/characters/generated/underground_doctor_handdrawn_spritesheet.png"
+const DOCTOR_FRAME_SIZE: Vector2i = Vector2i(96, 128)
+const DOCTOR_DISPLAY_SCALE: Vector2 = Vector2(0.54, 0.54)
 
 var current_view: String = "normal"
 var dash_time: float = 0.0
@@ -190,19 +190,19 @@ func _update_animation(dir: float) -> void:
 	if is_on_ladder:
 		var climbing: bool = Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP) or Input.is_action_pressed("ui_up") or Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN) or Input.is_action_pressed("ui_down")
 		if facing_dir >= 0.0:
-			_play_animation(&"climb_right", climbing, true)
+			_play_animation(&"climb_right", climbing, false)
 		else:
-			_play_animation(&"climb_left", climbing, false)
+			_play_animation(&"climb_left", climbing, true)
 		return
 	if not is_on_floor():
-		_play_animation(&"jump", false, facing_dir >= 0.0)
+		_play_animation(&"jump", false, facing_dir < 0.0)
 		return
 	if dir < 0.0:
-		_play_animation(&"walk_left", true, false)
+		_play_animation(&"walk_left", true, true)
 	elif dir > 0.0:
-		_play_animation(&"walk_right", true, true)
+		_play_animation(&"walk_right", true, false)
 	else:
-		_play_animation(&"idle", false, facing_dir >= 0.0)
+		_play_animation(&"idle", false, facing_dir < 0.0)
 
 func _play_animation(anim: StringName, should_play: bool, flip_h: bool) -> void:
 	sprite.flip_h = flip_h
@@ -279,8 +279,11 @@ static func create_with_outfit(outfit: String) -> MindscapePlayer:
 	sprite.sprite_frames = _create_sprite_frames(outfit)
 	sprite.animation = &"idle"
 	sprite.scale = DOCTOR_DISPLAY_SCALE
+	# Keep the same crisp pixel clusters as the NPC atlas; linear filtering
+	# softens the dark outline and makes the character look like a different game.
+	sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	# 透明帧里的鞋底与 62px 高碰撞体底部对齐，避免角色悬浮。
-	sprite.position = Vector2(0, -3)
+	sprite.position = Vector2(0, -1)
 	sprite.play(&"idle")
 	player.add_child(sprite)
 
@@ -301,48 +304,34 @@ static func _create_sprite_frames(outfit: String) -> SpriteFrames:
 	return _create_doctor_sprite_frames()
 
 static func _create_doctor_sprite_frames() -> SpriteFrames:
-	var sheet := load(DOCTOR_SPRITESHEET_PATH) as Texture2D
-	var frames := SpriteFrames.new()
-	if frames.has_animation(&"default"):
-		frames.remove_animation(&"default")
-	if sheet == null:
-		push_warning("Doctor spritesheet not found: %s" % DOCTOR_SPRITESHEET_PATH)
-		return frames
-	_add_doctor_animation(frames, sheet, &"idle", [Vector2i(0, 0)], 1.0, true)
-	_add_doctor_animation(frames, sheet, &"walk_left", [Vector2i(1, 0), Vector2i(2, 0)], 6.5, true)
-	_add_doctor_animation(frames, sheet, &"walk_right", [Vector2i(1, 0), Vector2i(2, 0)], 6.5, true)
-	_add_doctor_animation(frames, sheet, &"jump", [Vector2i(5, 0)], 1.0, false)
-	_add_doctor_animation(frames, sheet, &"research", [Vector2i(6, 0)], 1.0, true)
-	_add_doctor_animation(frames, sheet, &"climb_left", [Vector2i(7, 0), Vector2i(1, 1)], 6.5, true)
-	_add_doctor_animation(frames, sheet, &"climb_right", [Vector2i(7, 0), Vector2i(1, 1)], 6.5, true)
-	return frames
+	return _create_handdrawn_sprite_frames(DOCTOR_SPRITESHEET_PATH)
 
 static func _create_underground_sprite_frames() -> SpriteFrames:
-	var sheet := load(UNDERGROUND_SPRITESHEET_PATH) as Texture2D
+	return _create_handdrawn_sprite_frames(UNDERGROUND_SPRITESHEET_PATH)
+
+static func _create_handdrawn_sprite_frames(texture_path: String) -> SpriteFrames:
+	var texture := load(texture_path) as Texture2D
 	var frames := SpriteFrames.new()
 	if frames.has_animation(&"default"):
 		frames.remove_animation(&"default")
-	if sheet == null:
-		push_warning("Underground spritesheet not found: %s" % UNDERGROUND_SPRITESHEET_PATH)
-		return _create_doctor_sprite_frames()
-	_add_doctor_animation(frames, sheet, &"idle", [Vector2i(0, 0)], 1.0, true)
-	_add_doctor_animation(frames, sheet, &"walk_left", [Vector2i(1, 0), Vector2i(2, 0)], 6.5, true)
-	_add_doctor_animation(frames, sheet, &"walk_right", [Vector2i(1, 0), Vector2i(2, 0)], 6.5, true)
-	_add_doctor_animation(frames, sheet, &"jump", [Vector2i(5, 0)], 1.0, false)
-	_add_doctor_animation(frames, sheet, &"research", [Vector2i(6, 0)], 1.0, true)
-	_add_doctor_animation(frames, sheet, &"climb_left", [Vector2i(7, 0), Vector2i(1, 1)], 6.5, true)
-	_add_doctor_animation(frames, sheet, &"climb_right", [Vector2i(7, 0), Vector2i(1, 1)], 6.5, true)
+	if texture == null:
+		push_warning("Hand-drawn player texture not found: %s" % texture_path)
+		return frames
+	_add_atlas_animation(frames, texture, &"idle", [0], 1.0, true)
+	_add_atlas_animation(frames, texture, &"walk_left", [1, 2], 6.5, true)
+	_add_atlas_animation(frames, texture, &"walk_right", [1, 2], 6.5, true)
+	_add_atlas_animation(frames, texture, &"jump", [3], 1.0, false)
+	_add_atlas_animation(frames, texture, &"research", [7], 1.0, true)
+	_add_atlas_animation(frames, texture, &"climb_left", [5, 6], 6.5, true)
+	_add_atlas_animation(frames, texture, &"climb_right", [5, 6], 6.5, true)
 	return frames
 
-static func _add_doctor_animation(frames: SpriteFrames, sheet: Texture2D, anim: StringName, cells: Array, fps: float, loop: bool) -> void:
+static func _add_atlas_animation(frames: SpriteFrames, texture: Texture2D, anim: StringName, indices: Array, fps: float, loop: bool) -> void:
 	frames.add_animation(anim)
 	frames.set_animation_speed(anim, fps)
 	frames.set_animation_loop(anim, loop)
-	for cell: Vector2i in cells:
-		frames.add_frame(anim, _create_doctor_frame(sheet, cell))
-
-static func _create_doctor_frame(sheet: Texture2D, cell: Vector2i) -> AtlasTexture:
-	var frame := AtlasTexture.new()
-	frame.atlas = sheet
-	frame.region = Rect2(cell.x * DOCTOR_FRAME_SIZE.x, cell.y * DOCTOR_FRAME_SIZE.y, DOCTOR_FRAME_SIZE.x, DOCTOR_FRAME_SIZE.y)
-	return frame
+	for index in indices:
+		var atlas := AtlasTexture.new()
+		atlas.atlas = texture
+		atlas.region = Rect2(int(index) * DOCTOR_FRAME_SIZE.x, 0, DOCTOR_FRAME_SIZE.x, DOCTOR_FRAME_SIZE.y)
+		frames.add_frame(anim, atlas)

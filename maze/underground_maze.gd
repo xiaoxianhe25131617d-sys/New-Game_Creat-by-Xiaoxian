@@ -7,6 +7,7 @@ const CLIMB_SPEED := 180.0
 const BLIND_VISION_SHADER := preload("res://shaders/blind_vision.gdshader")
 const UNDERGROUND_DARKNESS_SHADER := preload("res://shaders/underground_darkness.gdshader")
 const MAIN_SCENE_PATH := "res://scenes/Main.tscn"
+const PUZZLE_NOTE_POPUP_SCRIPT := preload("res://scripts/puzzle_note_popup.gd")
 const MAIN_RETURN_POSITION := Vector2(9000.0, 3150.0)
 const MAIN_EXIT_RETURN_POSITION := Vector2(10400.0, 3150.0)
 const CHEST_TEXTURE := preload("res://assets/stone_chest.png")
@@ -178,7 +179,7 @@ static func sample_route(player_position: Vector2, route: Array[Vector2]) -> Dic
 	}
 
 static func route_volume_db(progress: float) -> float:
-	return lerpf(-6.1, 6.0, pow(clampf(progress, 0.0, 1.0), 0.55))
+	return lerpf(2.0, 14.0, pow(clampf(progress, 0.0, 1.0), 0.55))
 
 static func route_interval(progress: float) -> float:
 	return lerpf(0.20, 0.075, pow(clampf(progress, 0.0, 1.0), 0.75))
@@ -223,7 +224,8 @@ var compass_heading_label: Label
 var compass_distance_label: Label
 var compass_error_flash: ColorRect
 var compass_error_tween: Tween
-var compass_audio: AudioStreamPlayer2D
+var compass_audio: AudioStreamPlayer
+var route_audio: AudioStreamPlayer
 var maze_bgm_player: AudioStreamPlayer
 var compass_route_index: int = 0
 var compass_ping_timer: float = 0.0
@@ -236,8 +238,13 @@ var _ending_playing: bool = false
 var _route_feedback_correct: bool = true
 var _route_feedback_initialized: bool = false
 var _route_feedback_timer: float = 0.0
+var _route_feedback_beep_timer: float = 0.0
+var _route_feedback_last_progress: float = 0.0
 var _navigation_cue_remaining: float = 0.0
+var _compass_cue_remaining: float = 0.0
+var _route_cue_remaining: float = 0.0
 var exit_route_segment_index: int = 0
+var note_popup: CanvasLayer
 
 func _ready() -> void:
 	add_to_group("world")
@@ -261,6 +268,8 @@ func _ready() -> void:
 	exit_route_segment_index = nearest_route_segment_index(runtime_player.global_position, EXIT_GUIDANCE_ROUTE)
 	compass_route_index = clampi(int(maze_state.get("maze_compass_route_index", 0)), 0, COMPASS_ROUTE.size() - 2)
 	process_priority = 1000
+	if not get_tree().has_meta("mindscape_play_formal_ending") and not bool(maze_state.get("ending_pending", false)):
+		call_deferred("_show_underground_note_once")
 	if get_tree().has_meta("mindscape_play_formal_ending"):
 		get_tree().remove_meta("mindscape_play_formal_ending")
 		var ending_source := str(get_tree().get_meta("mindscape_ending_source", "time_capsule"))
@@ -273,6 +282,29 @@ func _ready() -> void:
 
 func _exit_tree() -> void:
 	_stop_maze_bgm()
+	if compass_audio != null:
+		compass_audio.stop()
+	if route_audio != null:
+		route_audio.stop()
+
+func _show_underground_note_once() -> void:
+	if bool(maze_state.get("ending_pending", false)) or runtime_player == null:
+		return
+	var seen: Array = maze_state.get("seen_notes", []) as Array
+	if seen.has("underground_maze"):
+		return
+	seen.append("underground_maze")
+	maze_state["seen_notes"] = seen
+	ProfileManager.save_state(maze_state)
+	runtime_player.suspend_for_interaction()
+	note_popup = PUZZLE_NOTE_POPUP_SCRIPT.new()
+	note_popup.name = "UndergroundPuzzleNote"
+	add_child(note_popup)
+	note_popup.connect("closed", func():
+		if runtime_player != null and is_instance_valid(runtime_player):
+			runtime_player.resume_after_interaction()
+	)
+	note_popup.call("open_note", GameData.PUZZLE_NOTES["underground_maze"], str(maze_state.get("current_view", "blind")))
 
 func _make_maze_bgm() -> void:
 	maze_bgm_player = AudioStreamPlayer.new()
@@ -571,13 +603,23 @@ func _make_compass_hud() -> void:
 	_refresh_compass_ui()
 
 func _make_compass_audio() -> void:
-	compass_audio = AudioStreamPlayer2D.new()
+	# Navigation cues must remain clearly audible even when the player is
+	# near a wall or outside the camera's 2D listener falloff.
+	compass_audio = AudioStreamPlayer.new()
 	compass_audio.name = "MazeNavigationAudio"
-	compass_audio.volume_db = -4.0
-	compass_audio.max_distance = 6000.0
-	compass_audio.attenuation = 0.01
-	compass_audio.panning_strength = 1.5
+	compass_audio.volume_db = 0.0
+	compass_audio.bus = "Master"
 	add_child(compass_audio)
+	route_audio = AudioStreamPlayer.new()
+	route_audio.name = "MazeExitRouteAudio"
+	route_audio.volume_db = 0.0
+	route_audio.bus = "Master"
+	route_audio.finished.connect(_on_route_audio_finished)
+	add_child(route_audio)
+
+func _on_route_audio_finished() -> void:
+	if route_audio != null and _route_feedback_correct and not bool(maze_state.get("maze_compass_enabled", false)) and not _leaving_maze and not _ending_playing:
+		route_audio.play()
 
 func _toggle_compass() -> void:
 	var enabled := GameData.toggle_maze_compass(maze_state)
@@ -589,6 +631,8 @@ func _toggle_compass() -> void:
 	compass_ping_timer = 0.0
 	if not enabled and compass_audio != null:
 		compass_audio.stop()
+	if enabled and route_audio != null:
+		route_audio.stop()
 	_refresh_compass_ui()
 	if not bool(maze_state.get("maze_compass_owned", false)):
 		_show_maze_toast("指南针还没有进入物品栏。完成激光聚焦后再来看看。")
@@ -654,11 +698,10 @@ func _update_compass(delta: float) -> void:
 	if compass_ping_timer <= 0.0:
 		if compass_route_correct:
 			var distance_ratio := clampf(distance / 900.0, 0.0, 1.0)
-			_play_navigation_cue(MAZE_CORRECT_AUDIO, lerpf(-3.0, 3.0, pow(clampf(1.0 - distance_ratio, 0.0, 1.0), 0.8)), 1.02, 0.10)
+			_play_navigation_cue(compass_audio, MAZE_CORRECT_AUDIO, lerpf(-1.0, 8.0, pow(clampf(1.0 - distance_ratio, 0.0, 1.0), 0.8)), 1.02, 0.16)
 			compass_ping_timer = lerpf(0.14, 0.42, distance_ratio)
 		else:
-			compass_audio.global_position = runtime_player.global_position
-			_play_navigation_cue(MAZE_WRONG_AUDIO, 6.0, 0.78, 0.12)
+			_play_navigation_cue(compass_audio, MAZE_WRONG_AUDIO, 8.0, 0.78, 0.18)
 			AudioManager.play_tone(145.0, 0.10)
 			_flash_compass_error()
 			compass_ping_timer = 0.14
@@ -701,65 +744,88 @@ func _show_maze_toast(message: String, duration: float = 2.4) -> void:
 	tween.tween_callback(canvas.queue_free)
 
 func _update_route_feedback(delta: float) -> void:
-	if bool(maze_state.get("maze_compass_enabled", false)) or _ending_playing:
+	if current_view != "blind" or bool(maze_state.get("maze_compass_enabled", false)) or _ending_playing:
 		_route_feedback_initialized = false
+		if route_audio != null:
+			route_audio.stop()
 		return
 	exit_route_segment_index = advance_ordered_route(runtime_player.global_position, EXIT_GUIDANCE_ROUTE, exit_route_segment_index, ROUTE_ADVANCE_DISTANCE)
 	var sample := sample_active_route_segment(runtime_player.global_position, EXIT_GUIDANCE_ROUTE, exit_route_segment_index)
 	var distance := float(sample.get("distance", INF))
 	var progress := float(sample.get("progress", 0.0))
+	var route_index := int(sample.get("segment_index", exit_route_segment_index))
+	var route_segment := EXIT_GUIDANCE_ROUTE[mini(route_index + 1, EXIT_GUIDANCE_ROUTE.size() - 1)] - EXIT_GUIDANCE_ROUTE[route_index]
+	var route_dir := route_segment.normalized() if route_segment.length_squared() > 0.001 else Vector2.RIGHT
+	var velocity := Vector2.ZERO
+	if runtime_player != null and "velocity" in runtime_player:
+		velocity = runtime_player.get("velocity")
+	var speed := velocity.length()
+	var moving_forward := speed < 8.0 or velocity.normalized().dot(route_dir) > 0.2
 	var should_be_correct := _route_feedback_correct
-	if distance <= ROUTE_CORRECT_DISTANCE:
+	if distance <= ROUTE_CORRECT_DISTANCE and moving_forward and progress >= _route_feedback_last_progress - 0.015:
 		should_be_correct = true
-	elif distance >= ROUTE_WRONG_DISTANCE:
+	elif distance >= ROUTE_WRONG_DISTANCE or (speed > 8.0 and velocity.normalized().dot(route_dir) < -0.3):
 		should_be_correct = false
 	if not _route_feedback_initialized or should_be_correct != _route_feedback_correct:
 		_route_feedback_correct = should_be_correct
 		_route_feedback_initialized = true
 		_route_feedback_timer = 0.0
-		if compass_audio != null:
-			compass_audio.stop()
+		_route_feedback_beep_timer = 0.0
+		if route_audio != null:
+			route_audio.stop()
+	if _route_feedback_correct:
+		_route_feedback_last_progress = maxf(_route_feedback_last_progress, progress)
+	elif progress < _route_feedback_last_progress - 0.08:
+		_route_feedback_last_progress = progress
 	_route_feedback_timer -= delta
-	if _route_feedback_timer > 0.0:
-		return
 	if _route_feedback_correct:
 		var pitch := lerpf(0.98, 1.24, pow(progress, 0.55))
-		var segment_index := int(sample.get("segment_index", exit_route_segment_index))
-		var route_target := EXIT_GUIDANCE_ROUTE[mini(segment_index + 1, EXIT_GUIDANCE_ROUTE.size() - 1)]
-		_set_navigation_source(route_target)
-		_play_navigation_cue(MAZE_CORRECT_AUDIO, route_volume_db(progress), pitch, 0.065)
-		_route_feedback_timer = route_interval(progress)
+		# Correct-route guidance is continuous and loud; a short buzzer tone
+		# rides on top so the player can hear it immediately.
+		if route_audio != null:
+			route_audio.stream = MAZE_CORRECT_AUDIO
+			route_audio.volume_db = clampf(route_volume_db(progress), 6.0, 18.0)
+			route_audio.pitch_scale = clampf(pitch, 0.72, 1.35)
+			if not route_audio.playing:
+				route_audio.play()
+		_route_feedback_beep_timer -= delta
+		if _route_feedback_beep_timer <= 0.0:
+			AudioManager.play_tone(920.0 + progress * 220.0, 0.05)
+			_route_feedback_beep_timer = lerpf(0.08, 0.022, progress)
+		return
+	if _route_feedback_timer > 0.0:
+		return
 	else:
-		compass_audio.global_position = runtime_player.global_position
-		_play_navigation_cue(MAZE_WRONG_AUDIO, 6.0, 0.78, 0.12)
-		AudioManager.play_tone(145.0, 0.10)
+		_play_navigation_cue(route_audio, MAZE_WRONG_AUDIO, 12.0, 0.72, 0.16)
+		AudioManager.play_tone(1760.0, 0.07)
 		_route_feedback_timer = 0.14
 
 func _set_navigation_source(target: Vector2) -> void:
-	if compass_audio == null or runtime_player == null:
-		return
-	var offset := target - runtime_player.global_position
-	if offset.length_squared() <= 0.001:
-		compass_audio.global_position = runtime_player.global_position
-		return
-	compass_audio.global_position = runtime_player.global_position + offset.normalized() * NAVIGATION_SOURCE_DISTANCE
+	# Direction is represented by the active route segment and compass UI.
+	# The audio itself is non-positional so walls cannot make the guidance
+	# disappear.
+	return
 
-func _play_navigation_cue(stream: AudioStream, volume_db: float, pitch_scale: float, duration: float) -> void:
-	if compass_audio == null or stream == null:
+func _play_navigation_cue(channel: AudioStreamPlayer, stream: AudioStream, volume_db: float, pitch_scale: float, duration: float) -> void:
+	if channel == null or stream == null:
 		return
-	compass_audio.stop()
-	compass_audio.stream = stream
-	compass_audio.volume_db = clampf(volume_db, -6.0, 6.0)
-	compass_audio.pitch_scale = clampf(pitch_scale, 0.72, 1.35)
-	compass_audio.play()
-	_navigation_cue_remaining = duration
+	channel.stop()
+	channel.stream = stream
+	channel.volume_db = clampf(volume_db, -3.0, 8.0)
+	channel.pitch_scale = clampf(pitch_scale, 0.72, 1.35)
+	channel.play()
+	if channel == compass_audio:
+		_compass_cue_remaining = duration
+	else:
+		_route_cue_remaining = duration
 
 func _update_navigation_cue(delta: float) -> void:
-	if _navigation_cue_remaining <= 0.0:
-		return
-	_navigation_cue_remaining -= delta
-	if _navigation_cue_remaining <= 0.0 and compass_audio != null:
+	_compass_cue_remaining -= delta
+	_route_cue_remaining -= delta
+	if _compass_cue_remaining <= 0.0 and compass_audio != null:
 		compass_audio.stop()
+	if _route_cue_remaining <= 0.0 and route_audio != null and route_audio.stream != MAZE_CORRECT_AUDIO:
+		route_audio.stop()
 
 func _laser_focus_completed() -> bool:
 	if bool(maze_state.get("hidden_door_opened", false)):
@@ -836,10 +902,9 @@ func _play_formal_ending() -> void:
 	chest_in.parallel().tween_property(chest, "position:y", 430.0, 0.85).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	await chest_in.finished
 
-	var item_names := ["旧合照", "木陀螺", "玻璃弹珠", "纸飞机", "褪色手绳", "儿时纸条"]
 	var item_targets: Array[Vector2] = [Vector2(270, 150), Vector2(520, 150), Vector2(770, 150), Vector2(270, 330), Vector2(520, 330), Vector2(770, 330)]
 	var photo_target: Vector2 = item_targets[0] + Vector2(110, 80)
-	for index in range(item_names.size()):
+	for index in range(6):
 		var atlas := AtlasTexture.new()
 		atlas.atlas = ending_keepsakes_texture
 		atlas.region = Rect2((index % 3) * 512, floori(float(index) / 3.0) * 512, 512, 512)
@@ -851,13 +916,9 @@ func _play_formal_ending() -> void:
 		item.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 		item.modulate = Color(1, 1, 1, 0)
 		ending_canvas.add_child(item)
-		var item_label := _make_ending_label(item_names[index], item_targets[index] + Vector2(0, 128), Vector2(170, 26), 15, Color("#d7edf0"))
-		item_label.modulate.a = 0.0
-		ending_canvas.add_child(item_label)
 		var item_tween := create_tween()
 		item_tween.tween_property(item, "modulate:a", 1.0, 0.22)
 		item_tween.parallel().tween_property(item, "position", item_targets[index], 0.72).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-		item_tween.parallel().tween_property(item_label, "modulate:a", 1.0, 0.55)
 		await item_tween.finished
 		await get_tree().create_timer(0.32).timeout
 
@@ -891,12 +952,12 @@ func _play_formal_ending() -> void:
 	note_panel.add_child(message_one)
 	var message_two := _make_ending_label("手写体二：我们要永远理解彼此", Vector2(70, 158), Vector2(700, 38), 21, Color("#d8e7d1"))
 	note_panel.add_child(message_two)
-	var braille := _make_ending_label("⠺⠕ ⠭⠊ ⠺⠁⠝⠛ ⠗⠑⠝ ⠍⠑⠝ ⠝⠑⠝⠛ ⠓⠥ ⠭⠊⠁⠝⠛ ⠇⠊ ⠚⠊⠑", Vector2(70, 226), Vector2(700, 42), 20, Color("#8deaf0"))
+	var braille := _make_ending_label("⠕⠄\t⠓⠊⠁⠶⠆\t⠚⠴⠂⠍⠴\t⠝⠼⠂\t⠓⠥⠆⠓⠭⠁\n⠇⠊⠄⠛⠑⠄", Vector2(70, 226), Vector2(700, 64), 20, Color("#8deaf0"))
 	note_panel.add_child(braille)
-	var braille_translation := _make_ending_label("盲文译文：我希望人们能互相理解", Vector2(70, 274), Vector2(700, 38), 20, Color("#8deaf0"))
+	var braille_translation := _make_ending_label("盲文译文：我希望人们能互相理解", Vector2(70, 306), Vector2(700, 38), 20, Color("#8deaf0"))
 	braille_translation.modulate.a = 0.0
 	note_panel.add_child(braille_translation)
-	var message_four := _make_ending_label("歪斜彩铅字：我们要永远理解彼此", Vector2(70, 346), Vector2(700, 38), 21, Color("#f1b6cf"))
+	var message_four := _make_ending_label("歪斜彩铅字：我们要永远理解彼此", Vector2(70, 374), Vector2(700, 38), 21, Color("#f1b6cf"))
 	note_panel.add_child(message_four)
 	var note_in := create_tween()
 	note_in.tween_property(note_panel, "modulate:a", 1.0, 0.6)

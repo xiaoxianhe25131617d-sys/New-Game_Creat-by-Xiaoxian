@@ -28,6 +28,10 @@ const DEMO_SEQ: Array = [0, 4, 2, 3, 1, 1]
 const ANSWER_LEN := 7
 const DEMO_LEN := 6
 const DEMO_STEP_DURATION := 1.1
+const DEMO_GAP_DURATION := 0.28
+const BUTTON_SETTLE_TIME := 0.18
+const BUTTON_CENTER_MARGIN := 0.70
+const BUTTON_PRESS_OFFSET := 4.0
 
 # 画布尺寸
 const CANVAS_W := 280.0
@@ -65,6 +69,9 @@ var check_icon: Label = null
 var status_label: Label = null
 var button_glows: Array[ColorRect] = []
 var button_tops: Array[ColorRect] = []   # 每个按钮的顶面（踩下时下移）
+var button_sensors: Array[Area2D] = []
+var button_press_timers: Array[float] = []
+var button_pressed: Array[bool] = []
 var step_dots: Array[ColorRect] = []
 var reset_zone: Area2D = null
 var near_reset: bool = false
@@ -73,6 +80,7 @@ var _house_back: Sprite2D
 
 const HOUSE_FRONT_TEXTURE := preload("res://assets/houses/banquet_gallery_front.png")
 const HOUSE_BACK_TEXTURE := preload("res://assets/houses/banquet_gallery_back.png")
+const ABSTRACT_PAINTING_TEXTURE := preload("res://assets/environment/generated/banquet_abstract_painting.svg")
 const DANCE_HALL_SCALE := Vector2(0.52, 0.52)
 const DANCE_HALL_POSITION := Vector2(-327.0, -452.0)
 const DANCE_HALL_BACK_SCALE := Vector2(0.521353, 0.494392)
@@ -303,6 +311,9 @@ func _build_ground_buttons() -> void:
 		sensor.add_child(sshape)
 		var btn_idx_cap := i
 		var sensor_cap := sensor
+		button_sensors.append(sensor)
+		button_press_timers.append(0.0)
+		button_pressed.append(false)
 		sensor.body_entered.connect(func(b: Node2D):
 			_on_sensor_entered(b, btn_idx_cap, sensor_cap))
 		sensor.body_exited.connect(func(b: Node2D):
@@ -330,11 +341,13 @@ func _build_status_ui() -> void:
 	status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	status_label.add_theme_font_size_override("font_size", 13)
 	status_label.add_theme_color_override("font_color", Color("#887766"))
+	status_label.visible = false
 	add_child(status_label)
 
 	# 重置提示
 	var reset_tip := Label.new()
 	reset_tip.text = "旁边重置台：靠近按E重置当前输入"
+	reset_tip.visible = false
 	reset_tip.position = Vector2(-200, BTN_Y+70)
 	reset_tip.size = Vector2(400, 20)
 	reset_tip.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -348,14 +361,16 @@ func _build_status_ui() -> void:
 func _on_paint_draw() -> void:
 	# 只有在自闭症/抑郁视角下才能看到小人跳舞
 	var can_see := (current_view == "autism" or current_view == "depression")
+	# 普通状态也保留整幅混乱的舞蹈抽象画；特殊视角只是褪色，
+	# 不再把画布变成空白，避免玩家无法确认这里确实有一幅画。
+	var paint_tint := Color(1.0, 1.0, 1.0, 0.44 if can_see else 1.0)
+	paint_canvas.draw_texture_rect(ABSTRACT_PAINTING_TEXTURE, Rect2(Vector2.ZERO, Vector2(CANVAS_W, FRAME_H)), false, paint_tint)
 
 	if not can_see:
-		# 非自闭/抑郁视角：画面模糊/空白
-		paint_canvas.draw_rect(Rect2(Vector2.ZERO, Vector2(CANVAS_W, FRAME_H)), Color("#1a1510", 0.85))
 		return
 
-	# 先画背景
-	paint_canvas.draw_rect(Rect2(Vector2.ZERO, Vector2(CANVAS_W, FRAME_H)), Color("#f0e4d4"))
+	# 特殊视角下叠加一层很淡的纸面，让动作示范仍然清楚可辨。
+	paint_canvas.draw_rect(Rect2(Vector2.ZERO, Vector2(CANVAS_W, FRAME_H)), Color("#f0e4d4", 0.28))
 	# 画地平线
 	paint_canvas.draw_line(Vector2(10, GROUND_Y), Vector2(CANVAS_W-10, GROUND_Y), Color("#998877"), 1.0)
 
@@ -457,9 +472,9 @@ func _on_button_left() -> void:
 		button_glows[i].color.a = 0.0
 
 func _build_reset_pedestal() -> void:
-	# 在按钮区右侧放一个明显的重置台
+	# 在按钮区左侧放一个明显的重置台，避免和最后一个按钮混在一起。
 	reset_zone = Area2D.new()
-	reset_zone.position = Vector2(BTN_SPACING * 3.2, BTN_Y)
+	reset_zone.position = Vector2(-BTN_SPACING * 3.2, BTN_Y)
 	reset_zone.collision_layer = 0
 	reset_zone.collision_mask = 1
 	var sshape := CollisionShape2D.new()
@@ -480,9 +495,11 @@ func _build_reset_pedestal() -> void:
 	top.color = Color("#5a5a6a")
 	reset_zone.add_child(top)
 	var label := Label.new()
-	label.text = "重置"
-	label.position = Vector2(-22, -48)
-	label.add_theme_font_size_override("font_size", 16)
+	label.text = "按 E 重置"
+	label.position = Vector2(-47, -62)
+	label.size = Vector2(94, 24)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", 15)
 	label.add_theme_color_override("font_color", Color("#ffaa44"))
 	reset_zone.add_child(label)
 
@@ -499,7 +516,10 @@ func _build_reset_pedestal() -> void:
 func _reset_sequence() -> void:
 	step_buffer.clear()
 	_last_stepped = -1
-	for g in button_glows: g.color.a = 0.0
+	for i in range(button_sensors.size()):
+		button_press_timers[i] = 0.0
+		button_pressed[i] = false
+		_set_button_visual(i, false)
 	_update_progress_dots()
 	paint_canvas.queue_redraw()
 	status_label.text = "已重置 · 重新开始踩按钮"
@@ -507,18 +527,34 @@ func _reset_sequence() -> void:
 
 func _highlight_button(idx: int) -> void:
 	for i in range(button_glows.size()):
-		button_glows[i].color.a = 0.5 if i == idx else 0.0
+		if i == idx and i < button_pressed.size() and button_pressed[i]:
+			button_glows[i].color.a = 0.6
+		else:
+			button_glows[i].color.a = 0.0
+
+func _set_button_visual(idx: int, pressed: bool) -> void:
+	if idx < 0 or idx >= button_tops.size():
+		return
+	var top := button_tops[idx]
+	if not is_instance_valid(top):
+		return
+	top.position.y = BUTTON_PRESS_OFFSET if pressed else 0.0
+	top.color.a = 0.75 if pressed else 0.25
+	if idx < button_glows.size() and is_instance_valid(button_glows[idx]):
+		button_glows[idx].color.a = 0.6 if pressed else 0.0
 
 
 # ═══════════════ 示范动画 ═══════════════
 
 func _start_demo() -> void:
+	status_label.visible = true
 	is_demo_playing = true
 	is_waiting_input = false
-	demo_step = 0
+	# 先空白一下，再进入第一个舞步，避免“开始”一按就直接接上动作。
+	demo_step = DEMO_SEQ.size() - 1
 	demo_timer = 0.0
 	demo_complete_count = 0
-	_is_blanking = false
+	_is_blanking = true
 	step_buffer.clear()
 	_last_stepped = -1
 	for g in button_glows: g.color.a = 0.0
@@ -531,6 +567,7 @@ func _start_demo() -> void:
 	paint_canvas.queue_redraw()
 
 func _stop_demo_start_input() -> void:
+	status_label.visible = true
 	# 不停止 demo！demo 始终循环示范，输入独立跟踪
 	is_waiting_input = true
 	step_buffer.clear()
@@ -617,6 +654,7 @@ func _sync_initial_view() -> void:
 func _process(delta: float) -> void:
 	if is_completed: return
 	_vfx_t += delta
+	_update_button_pressure(delta)
 
 	# 抖动
 	if _shake_timer > 0:
@@ -626,20 +664,22 @@ func _process(delta: float) -> void:
 	else:
 		paint_canvas.position = Vector2(-CANVAS_W/2, FRAME_Y)
 
-	# 示范动画：每帧 1.1s，6 帧一个循环，循环完闪一帧空白再重来
+	# 示范动画：动作之间有短暂空白，循环结束也保留一次空白，
+	# 让相邻的两个舞步不会连成一个难以分辨的动作。
 	# demo 始终循环，与输入模式无关
 	if is_demo_playing:
 		demo_timer += delta
-		if demo_timer >= DEMO_STEP_DURATION:
-			demo_timer -= DEMO_STEP_DURATION
+		var frame_duration := DEMO_GAP_DURATION if _is_blanking else DEMO_STEP_DURATION
+		if demo_timer >= frame_duration:
+			demo_timer -= frame_duration
 			if _is_blanking:
 				_is_blanking = false
-				demo_step = 0
-			else:
 				demo_step += 1
 				if demo_step >= DEMO_SEQ.size():
-					_is_blanking = true
+					demo_step = 0
 					demo_complete_count += 1
+			else:
+				_is_blanking = true
 		paint_canvas.queue_redraw()
 
 	# ✓ 闪烁
@@ -664,13 +704,8 @@ func is_solved() -> bool:
 func _on_sensor_entered(b: Node2D, btn_idx: int, sensor: Area2D) -> void:
 	if not b.is_in_group("player") or is_completed:
 		return
-	# 立即凹陷视觉
-	if btn_idx < button_tops.size() and is_instance_valid(button_tops[btn_idx]):
-		button_tops[btn_idx].position.y = 2.0
-		button_tops[btn_idx].color.a = 0.55
-	if btn_idx < button_glows.size() and is_instance_valid(button_glows[btn_idx]):
-		button_glows[btn_idx].color.a = 0.6
-	call_deferred("_on_button_stepped_deferred", btn_idx)
+	# Entering the sensor only arms the button. Pressure is confirmed in
+	# _update_button_pressure after the player is grounded and centered.
 
 func _on_button_stepped_deferred(btn_idx: int) -> void:
 	_on_button_stepped(btn_idx)
@@ -678,11 +713,37 @@ func _on_button_stepped_deferred(btn_idx: int) -> void:
 func _on_sensor_exited(b: Node2D, btn_idx: int) -> void:
 	if not b.is_in_group("player"):
 		return
-	# 恢复视觉
-	if btn_idx < button_tops.size() and is_instance_valid(button_tops[btn_idx]):
-		button_tops[btn_idx].position.y = 0.0
-		button_tops[btn_idx].color.a = 0.25
-	if btn_idx < button_glows.size() and is_instance_valid(button_glows[btn_idx]):
-		button_glows[btn_idx].color.a = 0.0
+	button_press_timers[btn_idx] = 0.0
+	button_pressed[btn_idx] = false
+	_set_button_visual(btn_idx, false)
 	if _last_stepped == btn_idx:
 		_on_button_left()
+
+func _update_button_pressure(delta: float) -> void:
+	var player := _get_player()
+	if player == null or not player is CharacterBody2D:
+		return
+	var character := player as CharacterBody2D
+	for i in range(button_sensors.size()):
+		var sensor := button_sensors[i]
+		var valid_stance := false
+		if is_instance_valid(sensor) and sensor.has_overlapping_bodies():
+			var local_x := player.global_position.x - global_position.x
+			var button_x := -BTN_SPACING * 2.5 + i * BTN_SPACING
+			# The inner portion prevents a player standing between two buttons
+			# from arming either one through the sensor overlap.
+			# BTN_W is the full width; use half-width for the center test.
+			valid_stance = absf(local_x - button_x) <= BTN_W * 0.5 * BUTTON_CENTER_MARGIN
+			valid_stance = valid_stance and character.is_on_floor()
+			valid_stance = valid_stance and absf(character.velocity.x) <= 55.0
+		if valid_stance:
+			button_press_timers[i] = minf(BUTTON_SETTLE_TIME, button_press_timers[i] + delta)
+		else:
+			button_press_timers[i] = 0.0
+			if button_pressed[i]:
+				button_pressed[i] = false
+				_set_button_visual(i, false)
+		if button_press_timers[i] >= BUTTON_SETTLE_TIME and not button_pressed[i]:
+			button_pressed[i] = true
+			_set_button_visual(i, true)
+			_on_button_stepped(i)

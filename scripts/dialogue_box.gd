@@ -17,6 +17,7 @@ var active_lines: Array = []
 var line_index: int = 0
 var current_npc: Dictionary = {}
 var current_view: String = "normal"
+var subtext_label: Label
 
 # Portrait texture paths, set by main.gd
 # Expected per-NPC expression files: "res://assets/portraits/<npc_id>_<expr>.png"
@@ -96,6 +97,17 @@ func _ready() -> void:
 	text_label.custom_minimum_size = Vector2(750, 0)
 	panel.add_child(text_label)
 
+	# 潜台词行：只在抑郁视角且线条带 subtext 时显示
+	subtext_label = Label.new()
+	subtext_label.position = Vector2(175, 116)
+	subtext_label.size = Vector2(750, 72)
+	subtext_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	subtext_label.add_theme_font_size_override("font_size", 20)
+	subtext_label.add_theme_color_override("font_color", Color("#f0df9a"))
+	subtext_label.custom_minimum_size = Vector2(750, 0)
+	subtext_label.visible = false
+	panel.add_child(subtext_label)
+
 
 func open(npc: Dictionary, lines: Array, view: String) -> void:
 	current_npc = npc
@@ -127,6 +139,7 @@ func show_line() -> void:
 	
 	# Text — handle sign_only NPC with autism view (pattern recognition)
 	var text: String = str(line.get("text", "..."))
+	var subtext: String = str(line.get("subtext", ""))
 	if current_npc.get("sign_only", false):
 		if current_view == "autism":
 			text = str(line.get("text_autism", text)) if line.has("text_autism") else text
@@ -138,6 +151,10 @@ func show_line() -> void:
 		text = "他的眼睛不追随你，但声音温和。"
 	
 	text_label.text = text
+	if is_instance_valid(subtext_label):
+		var show_subtext := current_view == "depression" and not subtext.is_empty()
+		subtext_label.visible = show_subtext
+		subtext_label.text = ("潜台词：%s" % subtext) if show_subtext else ""
 	
 	# Draw portrait — try texture first, fallback to ColorRect
 	var expr: String = line.get("expr", "normal")

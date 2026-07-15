@@ -5,6 +5,7 @@ const HIDDEN_DOOR_TEXTURE := preload("res://assets/ui/generated/hidden_stone_doo
 const UNDERGROUND_ENTRY_AUDIO := preload("res://assets/audio/enter_underground_maze.MP3")
 const UNDERGROUND_STAIR_TRANSITION := preload("res://scenes/UndergroundStairTransition.tscn")
 const MAIN_WORLD_SCENE := preload("res://map/MainWorld.tscn")
+const PUZZLE_NOTE_POPUP_SCRIPT := preload("res://scripts/puzzle_note_popup.gd")
 const CAMERA_VIEW_OFFSET := Vector2(0.0, 28.0)
 
 var world: MindscapeWorld
@@ -14,6 +15,7 @@ var hud: CanvasLayer
 var inventory_canvas: CanvasLayer
 var controls_canvas: CanvasLayer
 var dialogue: DialogueBox
+var note_popup: CanvasLayer
 var state: Dictionary
 var current_near: Node2D = null
 var game_running: bool = false
@@ -25,6 +27,8 @@ var hud_label: Label
 var prompt_label: Label
 var objective_label: Label
 var monster_hint_cooldown: float = 0.0
+var active_toast: Label
+var active_toast_tween: Tween
 var login_name_input: LineEdit
 var damage_overlay: ColorRect  # red flash on monster hit
 var damage_tween: Tween  # for damage overlay animation
@@ -350,7 +354,6 @@ func start_game(new_game: bool) -> void:
 	_restore_laser_focus_state()
 	# 连接新系统信号
 	world.puzzle_completed.connect(on_level_completed)
-	world.hint_updated.connect(func(txt: String): show_toast(txt, 3.0))
 	player = MindscapePlayer.create()
 	var spawn_position := world.get_player_spawn()
 	var start_position: Vector2 = state.get("position", spawn_position) as Vector2
@@ -377,6 +380,14 @@ func start_game(new_game: bool) -> void:
 	dialogue = DialogueBox.new()
 	add_child(dialogue)
 	dialogue.closed.connect(_on_dialogue_closed)
+	note_popup = PUZZLE_NOTE_POPUP_SCRIPT.new()
+	note_popup.name = "PuzzleNotePopup"
+	add_child(note_popup)
+	note_popup.visible = false
+	note_popup.connect("closed", func():
+		if player != null and is_instance_valid(player):
+			player.resume_after_interaction()
+	)
 	_make_hud()
 	world.set_view_palette(str(state.get("current_view", "normal")))
 	_set_blind_hud_visible(str(state.get("current_view", "normal")) == "blind")
@@ -450,7 +461,6 @@ ADHD模式：按方向键自动持续行走，跳跃更高
 	add_child(intro)
 	intro.confirmed.connect(func():
 		player.controls_enabled = true
-		show_toast("→ 沿地面金色光点向右走，触摸发光的回声共鸣石。", 4.0)
 	)
 	intro.popup_centered(Vector2(680, 580))
 
@@ -508,30 +518,21 @@ func _update_hud() -> void:
 	var fragment_list: Array = state.get("fragments", [])
 	var collectible_list: Array = state.get("collectibles", [])
 	
-	# HUD - player name + view + progress
-	var profile_name: String = ProfileManager.get_current_profile().get("display_name", "旅行者")
-	var view_color: Color = GameData.VIEW_COLORS.get(view, Color.WHITE)
-	var frag_text := ""
-	if fragment_list.size() > 0:
-		frag_text = " | 信物 %d/7" % fragment_list.size()
-	hud_label.text = "%s  [%s]%s | 收集 %d" % [
-		profile_name,
-		GameData.VIEW_NAMES.get(view, view),
-		frag_text,
-		collectible_list.size(),
-	]
-	hud_label.modulate = view_color.lightened(0.3)
+	# 游戏内不再常驻显示档案、完成度和长目标，避免与关卡画面争夺注意力。
+	hud_label.text = ""
+	hud_label.visible = false
 	
-	# Objective line — always visible
-	objective_label.text = _get_objective()
+	# 关卡说明改为首次触发时出现的纸条，HUD 不再常驻长篇目标。
+	objective_label.text = ""
+	objective_label.visible = false
 	
 	# Build prompt text (E for interact, F for echo in blind mode)
 	var parts: PackedStringArray = []
 	if current_near != null:
-		parts.append("[E] %s" % _describe_interactable(current_near))
+		parts.append("[E] 互动")
 	var v: String = str(state.get("current_view", "normal"))
 	if v == "blind":
-		parts.append("[F] 声波探测 — 按下释放回音感知怪物和地形")
+		parts.append("[F] 回声")
 	prompt_label.text = "  ".join(parts)
 	
 	# 更新侧边物品栏
@@ -601,6 +602,8 @@ func _describe_interactable(node: Node) -> String:
 
 func interact() -> void:
 	if current_near == null:
+		return
+	if _show_puzzle_note_once(current_near):
 		return
 	# 找不同密室：直接转发 interact（不走 meta 分发）
 	if current_near is PuzzleFindDifference:
@@ -987,7 +990,7 @@ func _update_inventory_sidebar() -> void:
 		
 		var idata: Dictionary = slot.get_meta("item_data", {})
 		
-		if item_id.begins_with("key_"):
+		if item_id.begins_with("key_") or item_id == "maze_key":
 			if keys.has(str(item_id)):
 				var kd: Dictionary = GameData.KEYS.get(item_id, {}) as Dictionary
 				var kc: Color = kd.get("color", Color.WHITE) as Color
@@ -1082,13 +1085,16 @@ func talk_to_npc(npc_node: MindscapeNPC) -> void:
 			data = npc
 			break
 	var view: String = str(state.get("current_view", "normal"))
+	if view == "autism":
+		show_toast("自闭视角下不能和NPC交谈。", 2.0)
+		return
 	var raw_lines: Array = GameData.DIALOGUES.get(npc_node.npc_id, [{"expr": "normal", "text": "你好。"}])
 	# 根据视角过滤：抑郁模式才能看到 subtext
 	var lines: Array = []
 	for line in raw_lines:
 		var filtered: Dictionary = line.duplicate()
 		if view == "depression" and line.has("subtext"):
-			filtered["text"] = str(line["text"]) + "\n[潜台词] " + str(line["subtext"])
+			filtered["subtext"] = str(line["subtext"])
 		lines.append(filtered)
 	player.suspend_for_interaction()
 	dialogue.open(data, lines, view)
@@ -1490,6 +1496,7 @@ func toggle_pause() -> void:
 	pause_root.add_child(list)
 	_add_button(list, "继续", func(): toggle_pause())
 	_add_button(list, "纪念相册", func(): show_album())
+	_add_button(list, "纸条日志", func(): show_note_log())
 	if OS.is_debug_build():
 		_add_button(list, "测试工具", _open_debug_tools)
 	_add_button(list, "保存并回主菜单", func():
@@ -1503,6 +1510,23 @@ func show_album() -> void:
 	album.name = "AlbumPuzzleUI"
 	controls_canvas.add_child(album)
 	album.setup(state, func(): ProfileManager.save_state(state))
+
+func show_note_log() -> void:
+	var dialog := AcceptDialog.new()
+	dialog.title = "纸条日志"
+	var seen: Array = state.get("seen_notes", []) as Array
+	var lines: PackedStringArray = []
+	for note_id in GameData.PUZZLE_NOTES:
+		if seen.has(note_id):
+			var note: Dictionary = GameData.PUZZLE_NOTES[note_id]
+			lines.append("【%s】\n%s" % [note.get("title", "纸条"), note.get("text", "")])
+	if lines.is_empty():
+		dialog.dialog_text = "还没有发现纸条。"
+	else:
+		dialog.dialog_text = "\n\n".join(lines)
+	dialog.add_theme_font_size_override("font_size", 18)
+	controls_canvas.add_child(dialog)
+	dialog.popup_centered(Vector2(620, 520))
 
 func _toggle_debug_lasers() -> void:
 	if not OS.is_debug_build():
@@ -1867,7 +1891,12 @@ func _check_monsters() -> void:
 func show_toast(text: String, duration: float = 3.0) -> void:
 	if hud == null:
 		return
+	if is_instance_valid(active_toast):
+		active_toast.queue_free()
+	if active_toast_tween != null and active_toast_tween.is_valid():
+		active_toast_tween.kill()
 	var toast := Label.new()
+	active_toast = toast
 	toast.text = text
 	toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	toast.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -1875,10 +1904,47 @@ func show_toast(text: String, duration: float = 3.0) -> void:
 	toast.size = Vector2(800, 70)
 	toast.add_theme_font_size_override("font_size", 24)
 	hud.add_child(toast)
-	var tween: Tween = create_tween()
-	tween.tween_interval(duration)
-	tween.tween_property(toast, "modulate:a", 0.0, 0.45)
-	tween.tween_callback(toast.queue_free)
+	active_toast_tween = create_tween()
+	active_toast_tween.tween_interval(duration)
+	active_toast_tween.tween_property(toast, "modulate:a", 0.0, 0.45)
+	active_toast_tween.tween_callback(func():
+		if active_toast == toast:
+			active_toast = null
+		toast.queue_free()
+	)
+
+func _show_puzzle_note_once(node: Node) -> bool:
+	if note_popup == null or not is_instance_valid(note_popup):
+		return false
+	var note_id := ""
+	if node is PuzzleTextureWall:
+		note_id = "texture_wall"
+	elif node is PuzzleFindDifference:
+		note_id = "find_difference"
+	elif node is PuzzleBanquetPainting:
+		note_id = "banquet_painting"
+	elif node is PuzzleAmusementLights:
+		note_id = "amusement_lights"
+	elif node is PuzzleNPCPassword:
+		note_id = "npc_password"
+	elif node is PuzzleLaserFocus:
+		var lasers_installed := bool(state.get("laser_focus_1_installed", false)) and bool(state.get("laser_focus_2_installed", false))
+		note_id = "laser_focus_ready" if lasers_installed else "laser_focus"
+	else:
+		var kind := str(node.get_meta("kind", ""))
+		if kind == "puzzle":
+			note_id = str(node.get_meta("id", ""))
+	if note_id.is_empty() or not GameData.PUZZLE_NOTES.has(note_id):
+		return false
+	var seen: Array = state.get("seen_notes", []) as Array
+	if seen.has(note_id):
+		return false
+	seen.append(note_id)
+	state["seen_notes"] = seen
+	ProfileManager.save_state(state)
+	player.suspend_for_interaction()
+	note_popup.call("open_note", GameData.PUZZLE_NOTES[note_id], str(state.get("current_view", "normal")))
+	return true
 
 func _puzzle_by_id(id: String) -> Dictionary:
 	# 在新 LEVELS 数据中查找

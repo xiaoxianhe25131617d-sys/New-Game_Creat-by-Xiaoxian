@@ -153,6 +153,7 @@ func _make_exterior() -> void:
 
 	exterior_label = Label.new()
 	exterior_label.text = "按 [E] 进入密室"
+	exterior_label.visible = false
 	exterior_label.position = Vector2(-60, 80)
 	exterior_label.add_theme_font_size_override("font_size", 12)
 	exterior_label.add_theme_color_override("font_color", Color("#ffe8a0"))
@@ -236,6 +237,7 @@ func _build_room_overlay() -> void:
 	# 标题
 	var title := Label.new()
 	title.text = "找不同密室 — 对比各个视角的观察"
+	title.visible = false
 	title.position = Vector2(20, 14)
 	title.add_theme_font_size_override("font_size", 18)
 	title.add_theme_color_override("font_color", Color("#ffe8a0"))
@@ -243,6 +245,7 @@ func _build_room_overlay() -> void:
 
 	# 说明
 	var desc := Label.new()
+	desc.visible = false
 	desc.text = "每个视角看到的物体状态不一样。退出后切换视角再进入，对比差异找到正确答案。"
 	desc.position = Vector2(20, 36)
 	desc.add_theme_font_size_override("font_size", 11)
@@ -270,6 +273,7 @@ func _build_room_overlay() -> void:
 	panel.add_child(progress_label)
 
 	mode_hint_label = Label.new()
+	mode_hint_label.visible = false
 	mode_hint_label.position = Vector2(280, OH - 30)
 	mode_hint_label.add_theme_font_size_override("font_size", 13)
 	mode_hint_label.add_theme_color_override("font_color", Color("#88cc88"))

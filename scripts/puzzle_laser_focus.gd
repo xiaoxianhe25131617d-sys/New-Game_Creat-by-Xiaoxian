@@ -13,6 +13,7 @@ signal hint_updated(text: String)
 var player_in_range: bool = false
 var is_completed: bool = false
 var challenge_active: bool = false
+var challenge_ready: bool = false
 var lasers_placed: bool = false
 var _slot1_filled: bool = false
 var _slot2_filled: bool = false
@@ -43,7 +44,6 @@ var overlay: CanvasLayer
 var game_panel: Control
 var timer_bar: ColorRect
 var timer_bg: ColorRect
-var score_label: Label
 var status_label: Label
 var hint_label: Label
 var target_sprite: ColorRect
@@ -67,6 +67,7 @@ var device2_screen_center := Vector2.ZERO
 
 # ── 粒子效果 ──
 var particles: Array[ColorRect] = []
+var progress_dots: Array[Panel] = []
 
 
 func _ready() -> void:
@@ -168,6 +169,7 @@ func _make_hint_label() -> void:
 	hint_label.add_theme_color_override("font_color", Color("#ffe8a0"))
 	hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	hint_label.text = "靠近后将激光装置拖入凹槽"
+	hint_label.visible = false
 	add_child(hint_label)
 
 
@@ -241,9 +243,10 @@ func _input(event: InputEvent) -> void:
 			_close_install_panel()
 			get_viewport().set_input_as_handled()
 			return
-		if challenge_active:
+		if challenge_active or challenge_ready:
 			_close_overlay()
 			challenge_active = false
+			challenge_ready = false
 			game_over = false
 			_disable_player(false)
 			get_viewport().set_input_as_handled()
@@ -254,7 +257,8 @@ func _input(event: InputEvent) -> void:
 
 	if not challenge_active:
 		if event.is_action_pressed("interact"):
-			_try_start()
+			if not challenge_ready:
+				_try_start()
 			get_viewport().set_input_as_handled()
 		return
 
@@ -292,6 +296,63 @@ func _try_start() -> void:
 		else:
 			_open_install_panel()
 		return
+	if challenge_ready:
+		return
+	_open_challenge_preview()
+
+
+func _open_challenge_preview() -> void:
+	challenge_ready = true
+	challenge_active = false
+	game_over = false
+	_disable_player(true)
+	_make_game_overlay()
+	_setup_laser_origins()
+	_update_beams()
+	if timer_bg != null:
+		timer_bg.visible = false
+	if timer_bar != null:
+		timer_bar.visible = false
+	if status_label != null:
+		status_label.text = "两束光会在同一个点相遇"
+		status_label.add_theme_color_override("font_color", Color("#f5c4a0"))
+	_make_start_button()
+
+
+func _make_start_button() -> void:
+	if game_panel == null:
+		return
+	var start_button := Button.new()
+	start_button.name = "StartButton"
+	start_button.text = "开始"
+	start_button.position = Vector2((game_panel.size.x - 220.0) * 0.5, game_panel.size.y - 112.0)
+	start_button.size = Vector2(220, 62)
+	start_button.add_theme_font_size_override("font_size", 25)
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = Color("#b9363d")
+	normal.border_color = Color("#f07b6d")
+	normal.set_border_width_all(2)
+	normal.set_corner_radius_all(10)
+	start_button.add_theme_stylebox_override("normal", normal)
+	var hover := StyleBoxFlat.new()
+	hover.bg_color = Color("#dc4f4a")
+	hover.border_color = Color("#ffd0a4")
+	hover.set_border_width_all(3)
+	hover.set_corner_radius_all(10)
+	start_button.add_theme_stylebox_override("hover", hover)
+	start_button.add_theme_color_override("font_color", Color.WHITE)
+	start_button.add_theme_color_override("font_hover_color", Color.WHITE)
+	start_button.pressed.connect(_begin_challenge)
+	game_panel.add_child(start_button)
+
+
+func _begin_challenge() -> void:
+	if not challenge_ready:
+		return
+	challenge_ready = false
+	var start_button := game_panel.get_node_or_null("StartButton")
+	if start_button != null:
+		start_button.queue_free()
 	_start_challenge()
 
 
@@ -494,9 +555,13 @@ func _start_challenge() -> void:
 	else:
 		time_limit = TIME_FAST
 
-	_disable_player(true)
-	_make_game_overlay()
-	_setup_laser_origins()
+	if overlay == null or not is_instance_valid(overlay):
+		_make_game_overlay()
+		_setup_laser_origins()
+	if timer_bg != null:
+		timer_bg.visible = true
+	if timer_bar != null:
+		timer_bar.visible = true
 	_spawn_next_target()
 
 
@@ -556,15 +621,28 @@ func _make_game_overlay() -> void:
 	title.add_theme_color_override("font_color", Color("#88ccff"))
 	game_panel.add_child(title)
 
-	# ── 分数 ──
-	score_label = Label.new()
-	score_label.text = "命中：0 / %d" % TOTAL_TARGETS
-	score_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	score_label.position = Vector2(0, 44)
-	score_label.size = Vector2(game_panel.size.x, 24)
-	score_label.add_theme_font_size_override("font_size", 18)
-	score_label.add_theme_color_override("font_color", Color("#ffd760"))
-	game_panel.add_child(score_label)
+	# ── 十个目标点：成功一个就淡出一个 ──
+	var progress := HBoxContainer.new()
+	progress.name = "ProgressDots"
+	progress.position = Vector2((game_panel.size.x - 220.0) * 0.5, 46)
+	progress.size = Vector2(220, 18)
+	progress.alignment = BoxContainer.ALIGNMENT_CENTER
+	progress.add_theme_constant_override("separation", 7)
+	game_panel.add_child(progress)
+	progress_dots.clear()
+	for _index in range(TOTAL_TARGETS):
+		var dot := Panel.new()
+		dot.custom_minimum_size = Vector2(14, 14)
+		dot.size = Vector2(14, 14)
+		var dot_style := StyleBoxFlat.new()
+		dot_style.bg_color = Color("#e77c61")
+		dot_style.border_color = Color("#ffd0a4")
+		dot_style.set_border_width_all(1)
+		dot_style.set_corner_radius_all(7)
+		dot.add_theme_stylebox_override("panel", dot_style)
+		progress.add_child(dot)
+		progress_dots.append(dot)
+	_update_progress_dots()
 
 	# ── 计时条 ──
 	timer_bg = ColorRect.new()
@@ -644,7 +722,7 @@ func _make_game_overlay() -> void:
 
 	# ── 底部提示 ──
 	var bottom_hint := Label.new()
-	bottom_hint.text = "拖拽红色/蓝色手柄旋转激光 | A/D 调左束  ← → 调右束 | ESC退出"
+	bottom_hint.text = "拖拽红色/蓝色激光仪旋转 | A/D 调红束  ← → 调蓝束 | ESC 退出"
 	bottom_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	bottom_hint.position = Vector2(0, game_panel.size.y - 36)
 	bottom_hint.size = Vector2(game_panel.size.x, 24)
@@ -696,17 +774,27 @@ func _make_laser_handle(color: Color, label_text: String) -> Control:
 	handle.mouse_filter = Control.MOUSE_FILTER_STOP
 	handle.z_index = 10
 
-	var dot := ColorRect.new()
+	var ring := Panel.new()
+	ring.position = Vector2(5, 5)
+	ring.size = Vector2(30, 30)
+	var ring_style := StyleBoxFlat.new()
+	ring_style.bg_color = Color(color, 0.16)
+	ring_style.border_color = Color(color, 0.86)
+	ring_style.set_border_width_all(2)
+	ring_style.set_corner_radius_all(15)
+	ring.add_theme_stylebox_override("panel", ring_style)
+	handle.add_child(ring)
+
+	var dot := Panel.new()
 	dot.position = Vector2(12, 12)
 	dot.size = Vector2(16, 16)
-	dot.color = color
+	var dot_style := StyleBoxFlat.new()
+	dot_style.bg_color = color
+	dot_style.border_color = color.lightened(0.45)
+	dot_style.set_border_width_all(1)
+	dot_style.set_corner_radius_all(8)
+	dot.add_theme_stylebox_override("panel", dot_style)
 	handle.add_child(dot)
-
-	var ring := ColorRect.new()
-	ring.position = Vector2(8, 8)
-	ring.size = Vector2(24, 24)
-	ring.color = Color(color.r, color.g, color.b, 0.25)
-	handle.add_child(ring)
 
 	var lbl := Label.new()
 	lbl.text = label_text
@@ -725,7 +813,7 @@ func _make_laser_handle(color: Color, label_text: String) -> Control:
 # ═══════════════════════════════════════════════════════
 
 func _spawn_next_target() -> void:
-	if targets_attempted >= TOTAL_TARGETS:
+	if targets_hit >= TOTAL_TARGETS:
 		_complete_game()
 		return
 
@@ -743,7 +831,7 @@ func _spawn_next_target() -> void:
 	target_sprite.visible = true
 
 	round_timer = 0.0
-	status_label.text = "目标 #%d 出现！" % (targets_attempted + 1)
+	status_label.text = "目标 #%d 出现" % (targets_hit + 1)
 	status_label.add_theme_color_override("font_color", Color("#ffd760"))
 	update_timer_bar()
 
@@ -869,7 +957,7 @@ func _ray_point_dist(origin: Vector2, angle: float, point: Vector2) -> float:
 
 func _on_target_hit() -> void:
 	_record_attempt(true)
-	status_label.text = "✓ 命中！（%d/%d）" % [targets_hit, TOTAL_TARGETS]
+	status_label.text = "✓ 对上了"
 	status_label.add_theme_color_override("font_color", Color("#44ff44"))
 
 	# 粒子爆发
@@ -878,7 +966,6 @@ func _on_target_hit() -> void:
 	# 音效
 	AudioManager.play_tone(660.0, 0.08)
 	AudioManager.play_tone(880.0, 0.08)
-	score_label.text = "命中：%d / %d" % [targets_hit, TOTAL_TARGETS]
 
 	current_target = Vector2.ZERO
 	target_sprite.visible = false
@@ -959,39 +1046,42 @@ func _record_attempt(hit: bool) -> void:
 	targets_attempted += 1
 	if hit:
 		targets_hit += 1
+	_update_progress_dots()
+
+
+func _update_progress_dots() -> void:
+	for index in range(progress_dots.size()):
+		var dot := progress_dots[index]
+		if not is_instance_valid(dot):
+			continue
+		var target_alpha := 0.0 if index < targets_hit else 1.0
+		var tween := create_tween()
+		tween.tween_property(dot, "modulate:a", target_alpha, 0.16)
 
 
 func _complete_game() -> void:
 	game_over = true
 	challenge_active = false
-
-	var hit_rate := float(targets_hit) / float(TOTAL_TARGETS) * 100.0
-	var result_text: String
-	var reward: String
-
-	if hit_rate >= 80.0:
-		result_text = "完美！（%d/%d - %.0f%%）" % [targets_hit, TOTAL_TARGETS, hit_rate]
-		reward = "laser_focus_master"
-	elif hit_rate >= 50.0:
-		result_text = "不错！（%d/%d - %.0f%%）" % [targets_hit, TOTAL_TARGETS, hit_rate]
-		reward = "laser_focus_pass"
-	else:
-		result_text = "继续努力！（%d/%d - %.0f%%）" % [targets_hit, TOTAL_TARGETS, hit_rate]
-		reward = "laser_focus_pass"
+	var result_text := "通过了"
+	var reward := "laser_focus_pass"
 
 	status_label.text = result_text
 	status_label.add_theme_color_override("font_color", Color("#ffd760"))
-	score_label.text = "完成！命中率：%.0f%%" % hit_rate
 
-	# ── 显示结果按钮（再玩一次 / 退出）──
+	# ── 显示结果按钮：不再展示命中率，只保留通过和下一步 ──
 	if game_panel == null or not is_instance_valid(game_panel):
 		return
 
-	var result_box := ColorRect.new()
+	var result_box := Panel.new()
 	result_box.name = "ResultBox"
-	result_box.color = Color("#0a0a18", 0.95)
+	var result_style := StyleBoxFlat.new()
+	result_style.bg_color = Color("#171421", 0.98)
+	result_style.border_color = Color("#e77c61")
+	result_style.set_border_width_all(2)
+	result_style.set_corner_radius_all(12)
+	result_box.add_theme_stylebox_override("panel", result_style)
 	var vs2 := get_viewport().get_visible_rect().size
-	var bw := 320.0; var bh := 160.0
+	var bw := 340.0; var bh := 178.0
 	var panel_size := Vector2(vs2.x - 280, vs2.y - 80)
 	result_box.position = Vector2((panel_size.x - bw) / 2.0, (panel_size.y - bh) / 2.0)
 	result_box.size = Vector2(bw, bh)
@@ -999,24 +1089,16 @@ func _complete_game() -> void:
 
 	var rl := Label.new()
 	rl.text = result_text
-	rl.position = Vector2(0, 16); rl.size = Vector2(bw, 36)
+	rl.position = Vector2(0, 22); rl.size = Vector2(bw, 40)
 	rl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	rl.add_theme_font_size_override("font_size", 20)
 	rl.add_theme_color_override("font_color", Color("#ffd760"))
 	result_box.add_child(rl)
 
-	var rl2 := Label.new()
-	rl2.text = "命中率：%.0f%%" % hit_rate
-	rl2.position = Vector2(0, 52); rl2.size = Vector2(bw, 24)
-	rl2.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	rl2.add_theme_font_size_override("font_size", 16)
-	rl2.add_theme_color_override("font_color", Color("#88ddff"))
-	result_box.add_child(rl2)
-
-	# 再玩一次
+	# 再来一轮
 	var retry_btn := Button.new()
-	retry_btn.text = "再玩一次"
-	retry_btn.position = Vector2(30, 100); retry_btn.size = Vector2(120, 40)
+	retry_btn.text = "再来一轮"
+	retry_btn.position = Vector2(34, 112); retry_btn.size = Vector2(126, 40)
 	var rs := StyleBoxFlat.new()
 	rs.bg_color = Color("#224488"); rs.set_corner_radius_all(8)
 	retry_btn.add_theme_stylebox_override("normal", rs)
@@ -1034,6 +1116,7 @@ func _complete_game() -> void:
 		targets_attempted = 0
 		round_timer = 0.0
 		current_target = Vector2.ZERO
+		_update_progress_dots()
 		if target_sprite != null:
 			target_sprite.visible = false
 		_setup_laser_origins()
@@ -1046,7 +1129,7 @@ func _complete_game() -> void:
 	# 退出
 	var exit_btn := Button.new()
 	exit_btn.text = "退出关卡"
-	exit_btn.position = Vector2(170, 100); exit_btn.size = Vector2(120, 40)
+	exit_btn.position = Vector2(180, 112); exit_btn.size = Vector2(126, 40)
 	var es2 := StyleBoxFlat.new()
 	es2.bg_color = Color("#442222"); es2.set_corner_radius_all(8)
 	exit_btn.add_theme_stylebox_override("normal", es2)
@@ -1074,7 +1157,6 @@ func _close_overlay() -> void:
 	game_panel = null
 	timer_bar = null
 	timer_bg = null
-	score_label = null
 	status_label = null
 	target_sprite = null
 	beam1_draw = null
@@ -1082,6 +1164,8 @@ func _close_overlay() -> void:
 	laser1_handle = null
 	laser2_handle = null
 	particles.clear()
+	progress_dots.clear()
+	challenge_ready = false
 
 
 # ═══════════════════════════════════════════════════════

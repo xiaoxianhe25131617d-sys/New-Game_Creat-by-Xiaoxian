@@ -55,7 +55,7 @@ func setup(data: Dictionary) -> void:
 		add_child(_create_pixel_figure())
 
 	label_node = Label.new()
-	label_node.text = display_name
+	label_node.text = ""
 	label_node.position = Vector2(-60, -72)
 	label_node.size = Vector2(120, 28)
 	label_node.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER

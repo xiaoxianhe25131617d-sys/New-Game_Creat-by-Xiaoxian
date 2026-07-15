@@ -407,6 +407,7 @@ func _build_ui() -> void:
 	status_label.add_theme_font_size_override("font_size", 13)
 	status_label.add_theme_color_override("font_color", Color("#ffe8a0"))
 	_set_status_text("跳上平台 → 按 E 键点亮灯板\n侧面阶梯可助你爬升 | 按 R 开始闯关 / ESC 取消")
+	status_label.visible = false
 	add_child(status_label)
 
 	# 计时器
@@ -422,6 +423,7 @@ func _build_ui() -> void:
 	# 操作提示
 	var tip := Label.new()
 	tip.text = "自由模式：灯 1.5秒后熄灭 | 按 R 开始闯关 | 侧面阶梯助你爬升"
+	tip.visible = false
 	tip.position = Vector2(-260, 148)
 	tip.size = Vector2(520, 24)
 	tip.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -784,6 +786,7 @@ func _is_blind_mode() -> bool:
 func _set_status_text(text: String) -> void:
 	if status_label != null:
 		status_label.text = text
+		status_label.visible = challenge_active or wrong_pressed or is_completed
 
 # ═══════════════════════════════════════════════════
 #  通关

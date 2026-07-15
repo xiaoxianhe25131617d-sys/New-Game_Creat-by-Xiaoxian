@@ -12,11 +12,15 @@ const SOURCE_PIECE_SIZE := 342.0
 const DISPLAY_PIECE_SIZE := 136.0
 const BOARD_ORIGIN := Vector2(86, 126)
 const TRAY_ORIGIN := Vector2(610, 132)
-const SNAP_DISTANCE := 54.0
+const SNAP_DISTANCE := 42.0
+const MIN_VIEW_ZOOM := 0.55
+const MAX_VIEW_ZOOM := 1.10
+const VIEW_ZOOM_STEP := 0.10
 
 var state: Dictionary
 var save_callback: Callable
 var album_panel: Panel
+var workspace: Control
 var board_layer: Control
 var piece_layer: Control
 var tab_buttons: Array[Button] = []
@@ -26,6 +30,7 @@ var dragging_piece: TextureRect
 var dragging_piece_id := ""
 var dragging_target := Vector2.ZERO
 var dragging_offset := Vector2.ZERO
+var view_zoom: float = 0.72
 
 static func collectible_id(puzzle_index: int, piece_index: int) -> String:
 	return "collectible_%02d" % (puzzle_index * PIECES_PER_PUZZLE + piece_index)
@@ -83,17 +88,37 @@ func _build_ui() -> void:
 	close_button.position = Vector2(1052, 18)
 	close_button.size = Vector2(44, 42)
 	close_button.add_theme_font_size_override("font_size", 24)
-	close_button.pressed.connect(queue_free)
+	close_button.pressed.connect(_close_album)
 	album_panel.add_child(close_button)
+
+	workspace = Control.new()
+	workspace.name = "PuzzleWorkspace"
+	workspace.position = Vector2.ZERO
+	workspace.size = album_panel.size
+	workspace.pivot_offset = album_panel.size * 0.5
+	workspace.scale = Vector2.ONE * view_zoom
+	workspace.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	album_panel.add_child(workspace)
 
 	board_layer = Control.new()
 	board_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
 	board_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	album_panel.add_child(board_layer)
+	workspace.add_child(board_layer)
 	piece_layer = Control.new()
 	piece_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
 	piece_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	album_panel.add_child(piece_layer)
+	workspace.add_child(piece_layer)
+
+	var zoom_label := Label.new()
+	zoom_label.text = "拼图缩放"
+	zoom_label.position = Vector2(32, 548)
+	zoom_label.size = Vector2(78, 28)
+	zoom_label.add_theme_font_size_override("font_size", 14)
+	zoom_label.add_theme_color_override("font_color", Color("#c6b48c"))
+	album_panel.add_child(zoom_label)
+	_add_zoom_button("−", Vector2(112, 544), -1.0)
+	_add_zoom_button("↺", Vector2(150, 544), 0.0)
+	_add_zoom_button("＋", Vector2(202, 544), 1.0)
 
 	status_label = Label.new()
 	status_label.position = Vector2(610, 555)
@@ -149,6 +174,30 @@ func _show_puzzle(puzzle_index: int) -> void:
 
 	_update_status()
 
+func _add_zoom_button(text: String, position: Vector2, direction: float) -> void:
+	var button := Button.new()
+	button.text = text
+	button.position = position
+	button.size = Vector2(38 if direction != 0.0 else 48, 30)
+	button.tooltip_text = "缩小" if direction < 0.0 else "放大" if direction > 0.0 else "恢复默认缩放"
+	button.add_theme_font_size_override("font_size", 15)
+	button.pressed.connect(func():
+		if is_zero_approx(direction):
+			view_zoom = 0.72
+		else:
+			view_zoom = clampf(view_zoom + direction * VIEW_ZOOM_STEP, MIN_VIEW_ZOOM, MAX_VIEW_ZOOM)
+		_apply_view_zoom()
+	)
+	album_panel.add_child(button)
+
+func _apply_view_zoom() -> void:
+	if workspace != null:
+		workspace.scale = Vector2.ONE * view_zoom
+
+func _close_album() -> void:
+	_save()
+	queue_free()
+
 func _make_piece(piece_index: int) -> TextureRect:
 	var atlas := AtlasTexture.new()
 	atlas.atlas = PUZZLE_TEXTURES[active_puzzle]
@@ -182,10 +231,31 @@ func _on_piece_input(event: InputEvent, piece: TextureRect, id: String, target: 
 		accept_event()
 
 func _input(event: InputEvent) -> void:
+	if event.is_action_pressed("interact") or (event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE):
+		_close_album()
+		get_viewport().set_input_as_handled()
+		return
+	if event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_MINUS or event.keycode == KEY_KP_SUBTRACT:
+			view_zoom = clampf(view_zoom - VIEW_ZOOM_STEP, MIN_VIEW_ZOOM, MAX_VIEW_ZOOM)
+			_apply_view_zoom()
+			get_viewport().set_input_as_handled()
+			return
+		if event.keycode == KEY_EQUAL or event.keycode == KEY_KP_ADD:
+			view_zoom = clampf(view_zoom + VIEW_ZOOM_STEP, MIN_VIEW_ZOOM, MAX_VIEW_ZOOM)
+			_apply_view_zoom()
+			get_viewport().set_input_as_handled()
+			return
+	if event is InputEventMouseButton and event.pressed and (event.button_index == MOUSE_BUTTON_WHEEL_UP or event.button_index == MOUSE_BUTTON_WHEEL_DOWN):
+		var amount := VIEW_ZOOM_STEP if event.button_index == MOUSE_BUTTON_WHEEL_UP else -VIEW_ZOOM_STEP
+		view_zoom = clampf(view_zoom + amount, MIN_VIEW_ZOOM, MAX_VIEW_ZOOM)
+		_apply_view_zoom()
+		get_viewport().set_input_as_handled()
+		return
 	if dragging_piece == null:
 		return
 	if event is InputEventMouseMotion:
-		dragging_piece.position = album_panel.get_local_mouse_position() - dragging_offset
+		dragging_piece.position = workspace.get_local_mouse_position() - dragging_offset
 		get_viewport().set_input_as_handled()
 	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
 		_finish_drag()

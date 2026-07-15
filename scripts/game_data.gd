@@ -136,65 +136,62 @@ const NPCS: Array = [
 	{"id": "engineer",      "name": "总工程师",  "region": "dam", "pos": Vector2(5000, 3200), "portrait": "#abb0b8", "sprite_index": 8},
 	{"id": "sign_girl",     "name": "手语少女",  "region": "station", "pos": Vector2(6200, 3200), "portrait": "#a8d5bd", "sign_only": true, "sprite_index": 9},
 	{"id": "painter",       "name": "流浪画家",  "region": "station", "pos": Vector2(6400, 3200), "portrait": "#cba0ff", "sprite_index": 10},
-	{"id": "station_master","name": "站长",      "region": "station", "pos": Vector2(6800, 3200), "portrait": "#94adc6", "sprite_index": 11},
+	{"id": "station_master","name": "看报老人",  "region": "station", "pos": Vector2(6800, 3200), "portrait": "#94adc6", "sprite_index": 11},
 	{"id": "clown",         "name": "小丑",      "region": "park", "pos": Vector2(7500, 3200),  "portrait": "#ff7d7d", "sprite_index": 12},
 	{"id": "mechanic",      "name": "修理工",    "region": "park", "pos": Vector2(7900, 3200),  "portrait": "#d9be6a", "sprite_index": 13},
 	{"id": "ticket",        "name": "售票员",    "region": "park", "pos": Vector2(8300, 3200),  "portrait": "#78d0b8", "sprite_index": 14},
-	{"id": "npc_cipher_1",  "name": "守卫A",     "region": "observatory", "pos": Vector2(9000, 3200), "portrait": "#94adc6", "sprite_index": 15},
-	{"id": "npc_cipher_2",  "name": "学者B",     "region": "observatory", "pos": Vector2(9250, 3200), "portrait": "#80b2d4", "sprite_index": 16},
-	{"id": "npc_cipher_3",  "name": "工匠C",     "region": "observatory", "pos": Vector2(9500, 3200), "portrait": "#abb0b8", "sprite_index": 17},
-	{"id": "npc_cipher_4",  "name": "旅者D",     "region": "observatory", "pos": Vector2(10100, 3200), "portrait": "#b98b62", "sprite_index": 18},
-	{"id": "npc_cipher_5",  "name": "智者E",     "region": "observatory", "pos": Vector2(10350, 3200), "portrait": "#cba0ff", "sprite_index": 19},
+	{"id": "npc_cipher_5",  "name": "智者E",     "region": "observatory", "pos": Vector2(9000, 3198), "portrait": "#cba0ff", "sprite_index": 19},
+	{"id": "npc_cipher_4",  "name": "旅者D",     "region": "observatory", "pos": Vector2(9400, 3200), "portrait": "#b98b62", "sprite_index": 18},
+	{"id": "npc_cipher_3",  "name": "工匠C",     "region": "observatory", "pos": Vector2(9800, 3202), "portrait": "#abb0b8", "sprite_index": 17},
+	{"id": "npc_cipher_2",  "name": "学者B",     "region": "observatory", "pos": Vector2(10220, 3202), "portrait": "#80b2d4", "sprite_index": 16},
+	{"id": "npc_cipher_1",  "name": "守卫A",     "region": "observatory", "pos": Vector2(10940, 3198), "portrait": "#94adc6", "sprite_index": 15},
 ]
 
 const DIALOGUES: Dictionary = {
 	"guide_old_man": [
-		{"expr": "thinking", "text": "欢迎。前方有一堵石墙挡住了去路..."},
-		{"expr": "happy", "text": "闭上眼睛，用手去触摸它。只有放下视觉，才能感知纹理。"},
+		{"expr": "thinking", "text": "我每天都在长椅边扫落叶。那几个孩子小时候总爱把树叶排成一列，摸一摸就知道哪片最厚。"},
 	],
 	"map_keeper": [
-		{"expr": "thinking", "text": "石墙后面有6个挑战在等着你。所有道路都在地面展开。"},
-		{"expr": "happy", "text": "三把钥匙分别藏在油画、灯板和许愿堂的谜题里。"},
+		{"expr": "thinking", "text": "我把地图上的旧钉子都换过一遍了。孩子们以前会在地图边上画小记号，提醒彼此别走丢。"},
 	],
 	"ranger": [
-		{"expr": "thinking", "text": "石墙不只是石头。它上面有盲文一样的纹理。"},
-		{"expr": "happy", "text": "用盲人视角能读懂它的语言。"},
+		{"expr": "thinking", "text": "我巡林时常摸树皮辨方向。那几个孩子也这样玩过，谁先认出老橡树，谁就能挑今天的游戏。"},
 	],
 	"poet": [
-		{"expr": "sad", "text": "那小楼里的画...在不同视线下完全不一样。像人的心情。"},
+		{"expr": "sad", "text": "我喜欢在画廊门口晒墨水。孩子们以前会盯着一幅画看很久，每个人都说自己先看见了不一样的东西。"},
 	],
 	"house_keeper": [
-		{"expr": "thinking", "text": "密室里藏着4个秘密。只有转换视角才能看全。"},
+		{"expr": "thinking", "text": "我看门很多年了，最有用的习惯是先记住原来的样子，再换个角度确认。孩子们玩找不同时也是这么做的。"},
 	],
 	"dock_elder": [
-		{"expr": "thinking", "text": "灯塔那边有回声——有些是真的，有些是假的。"},
+		{"expr": "thinking", "text": "我在码头听潮声吃饭，声音从哪里回来，往往比声音本身更重要。孩子们小时候会在岸边喊彼此的名字。"},
 	],
 	"keeper": [
-		{"expr": "sad", "text": "灯在转，但声音跟不上。声音迷路了。"},
+		{"expr": "sad", "text": "灯塔的齿轮一转，我就知道该给它上油了。孩子们小时候拿手电筒照墙，玩过一整晚的光影。"},
 	],
 	"braille_scholar": [
-		{"expr": "happy", "text": "触觉是另一种语言。闭上眼睛，你就能听到石头的诗。"},
+		{"expr": "happy", "text": "我把每一块盲文板都摸过一遍。那些孩子小时候会用手指摸树皮，然后把摸到的感觉讲给朋友听。"},
 	],
 	"engineer": [
-		{"expr": "thinking", "text": "两台激光装置都能装进中央广场的聚焦台，镜片会帮它们找到同一个方向。"},
+		{"expr": "thinking", "text": "我修机器时喜欢先找两条线的交点。孩子们小时候用镜子和手电筒玩光影，倒也摸到了这个道理。"},
 	],
 	"sign_girl": [
-		{"expr": "happy", "text": "...（她用手语比划）...地板在震动..."},
+		{"expr": "happy", "text": "...她比划着：我记得那天的地板一直在震动。孩子们笑着用脚步回答她。", "text_autism": "地板在震动。她说，孩子们以前用脚步互相回答。"},
 	],
 	"painter": [
-		{"expr": "thinking", "text": "宴会厅那幅油画...小人跳舞的顺序就是密码。"},
+		{"expr": "thinking", "text": "我画画先画动作，再补颜色。孩子们以前会看着画里的小人学跳舞，顺序一乱就笑成一团。"},
 	],
 	"station_master": [
-		{"expr": "surprised", "text": "站台从来没停过。是我们不会看它的预告。"},
+		{"expr": "surprised", "text": "我每天在站台边看报，字看久了会自己排成小路。镇子最右边那几个人，说话里常有和书上相似的字。"},
 	],
 	"clown": [
-		{"expr": "happy", "text": "灯板上的灯会唱歌！跳上去听它们的声音~"},
+		{"expr": "happy", "text": "啊呀，你说那个密码本啊？那个专心的孩子总在书里写写画画，说是在模仿谍战片。顺序才是关键。"},
 	],
 	"mechanic": [
-		{"expr": "thinking", "text": "跳跃才能点到灯。ADHD模式让你跳得更高更快。"},
+		{"expr": "thinking", "text": "我修灯板时会先听声音，再看哪盏灯亮。小房子那边有人说了假话，可孩子在意的还有那个人没说出口的心里话。"},
 	],
 	"ticket": [
-		{"expr": "happy", "text": "两台激光装置都找到后，中央广场的聚焦台就能派上用场了。"},
+		{"expr": "happy", "text": "我每天撕票根，孩子们以前会把票根折成小风筝，跑到风最大的地方去放。"},
 	],
 	"npc_cipher_1": [
 		{"expr": "thinking", "text": "你说那些孩子们啊，他们以前可顽皮啊。他们过去常常爬那棵老橡树，最高那个枝丫只有最小的那个敢爬上去。"},
@@ -211,6 +208,47 @@ const DIALOGUES: Dictionary = {
 	"npc_cipher_5": [
 		{"expr": "thinking", "text": "等等别打扰我，我还在等邮差送信呢。"},
 	],
+}
+
+const PUZZLE_NOTES: Dictionary = {
+	"texture_wall": {
+		"title": "纹理墙",
+		"text": "石墙上面的机关很难感觉出来，\n要触感特别敏锐的人才可以......\n那时候我们只有一个人能摸出来。"
+	},
+	"find_difference": {
+		"title": "找不同密室",
+		"text": "我们布置了一个小房间，这个房间按我们都记得的那个样子布置就会打开机关！\n我们也许都会记混一些事情，但是找到共同点，能行！\n只要我们一起合作..."
+	},
+	"banquet_painting": {
+		"title": "宴会厅",
+		"text": "我想，我是不是也能跳出那样的舞蹈。\n跳得高一些就跳得远一些，看清方向，从红色开始。\n我还藏了更多提示在这个小镇里，是一些小方块。"
+	},
+	"nine_grid": {
+		"title": "九宫格",
+		"text": "我有点难过的时候会想到这些。\n所以我把它们一格一格画下来了。"
+	},
+	"amusement_lights": {
+		"title": "游乐园灯板",
+		"text": "在空的地方按开始后，就可以很快地按下所有正确的灯了。\n要快，十五秒内！",
+		"braille": "⠕⠄\t⠝⠼⠂\t⠞⠡⠁⠙⠖⠆\t⠌⠼⠆⠅⠾⠆\t⠙⠢\t⠙⠼⠁\n⠋⠔⠁⠟⠥⠁\t⠅⠡⠁⠉⠺⠆\t⠙⠢\t⠱⠼⠁⠣⠁",
+		"translation": "我能听到正确的灯发出清脆的声音。"
+	},
+	"npc_password": {
+		"title": "密码本",
+		"text": "细心就能看出哪些字是关键。\n五句线索的顺序也很重要。"
+	},
+	"laser_focus": {
+		"title": "激光聚焦台",
+		"text": "我们藏了两个激光仪哦，需要都找到才能玩这个。"
+	},
+	"laser_focus_ready": {
+		"title": "激光聚焦台",
+		"text": "两个激光可以确定一个点嘿嘿，但是贼快，只有动作很快的人才能更容易地玩。"
+	},
+	"underground_maze": {
+		"title": "地下迷宫",
+		"text": "这里的路不会告诉你答案。\n走对时，声音会越来越近；走偏时，先停下来听一听。"
+	}
 }
 
 const COLLECTIBLE_NAMES: Array = [
@@ -244,6 +282,7 @@ static func default_state() -> Dictionary:
 		"album": [],
 		"album_piece_positions": {},
 		"album_puzzles_completed": [],
+		"seen_notes": [],
 		"visited_anchors": [],
 		"play_time": 0.0,
 		"finished": false,
@@ -290,6 +329,7 @@ static func migrate_state(state: Dictionary) -> bool:
 		"debug_spawn_target": "",
 		"album_piece_positions": {},
 		"album_puzzles_completed": [],
+		"seen_notes": [],
 	}
 	for key in defaults:
 		if not state.has(key):

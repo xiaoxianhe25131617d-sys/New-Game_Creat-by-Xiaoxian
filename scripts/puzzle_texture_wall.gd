@@ -62,6 +62,9 @@ const WALL_TEXTURE_PATH := "res://assets/environment/generated/stone_wall.png"
 
 var wall_visual: Sprite2D
 var hint_label: Label
+var overlay_layer: CanvasLayer
+var overlay_root: Control
+var overlay_hint: Label
 var stone_visuals: Array[Polygon2D] = []
 
 
@@ -81,6 +84,7 @@ func _ready() -> void:
 	_make_wall_visual()
 	_make_stones()
 	_make_hint_label()
+	_make_overlay()
 
 
 func _make_wall_visual() -> void:
@@ -142,7 +146,38 @@ func _make_hint_label() -> void:
 	hint_label.add_theme_color_override("font_color", Color("#ffe8a0"))
 	hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	hint_label.text = "靠近后按 [E] 触摸墙面"
+	hint_label.visible = false
 	add_child(hint_label)
+
+
+func _make_overlay() -> void:
+	overlay_layer = CanvasLayer.new()
+	overlay_layer.name = "TextureWallOverlay"
+	overlay_layer.layer = 5000
+	overlay_layer.follow_viewport_enabled = false
+	add_child(overlay_layer)
+
+	overlay_root = Control.new()
+	overlay_root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	overlay_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay_root.clip_contents = false
+	overlay_layer.add_child(overlay_root)
+
+	overlay_hint = Label.new()
+	overlay_hint.name = "OverlayHint"
+	overlay_hint.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	overlay_hint.position = Vector2(0, 54)
+	overlay_hint.size = Vector2(0, 160)
+	overlay_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	overlay_hint.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	overlay_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	overlay_hint.add_theme_font_size_override("font_size", 28)
+	overlay_hint.add_theme_constant_override("outline_size", 5)
+	overlay_hint.add_theme_color_override("font_color", Color("#fff1bf"))
+	overlay_hint.add_theme_color_override("font_outline_color", Color("#050505"))
+	overlay_hint.text = ""
+	overlay_hint.visible = false
+	overlay_root.add_child(overlay_hint)
 
 
 # ════════════════════════════════════════════════════════════
@@ -153,6 +188,7 @@ func _on_body_entered(body: Node2D) -> void:
 	if body.is_in_group("player"):
 		player_in_range = true
 		if not is_completed and current_step == -1:
+			_set_overlay_hint("把手放到面前的板子上，感受凹凸不平\n按 [E] 开始触摸石墙")
 			hint_label.text = "按 [E] 开始触摸石墙..."
 			_pulse_all_stones()
 
@@ -160,9 +196,10 @@ func _on_body_entered(body: Node2D) -> void:
 func _on_body_exited(body: Node2D) -> void:
 	if body.is_in_group("player"):
 		player_in_range = false
-		if current_step >= 0 and not is_completed:
-			hint_label.text = "手离开了墙面..."
-			hint_updated.emit("手指离开了石墙。")
+		# The range prompt belongs to the interaction area, so it must never
+		# remain visible after the player walks away from the wall.
+		hint_label.text = ""
+		_set_overlay_hint("")
 
 
 func _input(event: InputEvent) -> void:
@@ -190,7 +227,8 @@ func _try_start() -> void:
 func _start_puzzle() -> void:
 	current_step = 0
 	hint_label.text = "你伸手摸向石墙..."
-	hint_updated.emit("手指触碰到了粗糙的石面。墙上似乎有几个凸起的石块。试着按任意键触摸不同的位置...")
+	_set_overlay_hint("把手放到面前的板子上，感受凹凸不平\n试着按任意键触摸不同的位置")
+	hint_updated.emit("手指触碰到了粗糙的石面。墙上似乎有几个凸起的石块。把手放到面前的板子上，感受凹凸不平。")
 	_disable_player(true)
 	_tween_wall_pulse()
 	_pulse_all_stones()
@@ -247,6 +285,7 @@ func _evaluate_touch(touched_key: String) -> void:
 	# 视觉反馈：墙面微闪
 	_tween_wall_flash(dist < 2.0)
 	_flash_stone_closest_to(touched_key)
+	_spawn_touch_fx(touched_key, false, Vector2(dx, dy))
 
 
 # ════════════════════════════════════════════════════════════
@@ -351,8 +390,14 @@ func _on_correct_key(key_name: String) -> void:
 	_depress_stone(current_step)
 
 	hint_label.text = "石块「%s」凹陷下去了！（%d/4）" % [key_name, current_step + 1]
+	var overlay_text := "石门正在松动..."
+	if current_step + 1 < TARGETS.size():
+		var next_target_key := TARGETS[current_step + 1]
+		overlay_text = "摸对了！\n往%s方向再靠一点..." % _describe_target_compact(next_target_key)
+	_set_overlay_hint(overlay_text)
 	hint_updated.emit("指尖陷入了石块！「%s」的纹理吻合——石块沉入墙中。（%d/4）" % [key_name, current_step + 1])
 	AudioManager.play_sfx("wall_correct")
+	_spawn_touch_fx(key_name, true, _target_delta_for_key(key_name, TARGETS[current_step]))
 
 	current_step += 1
 	_tween_wall_flash(true)
@@ -363,6 +408,7 @@ func _on_correct_key(key_name: String) -> void:
 		# 给一个提示描述下一个要找的
 		var next_hint := _describe_next_target()
 		hint_label.text += "\n" + next_hint
+		_set_overlay_hint("把手放到面前的板子上，感受凹凸不平\n接下来往%s方向摸" % _describe_target_compact(TARGETS[current_step]))
 
 
 func _describe_next_target() -> String:
@@ -385,6 +431,35 @@ func _describe_next_target() -> String:
 	else: h = "偏右"
 
 	return "接下来手往%s%s的方向摸..." % [v, h]
+
+
+func _describe_target_compact(target: String) -> String:
+	var pos: Array = KEYBOARD[target]
+	var row := int(pos[0])
+	var col: float = pos[1]
+
+	var parts := PackedStringArray()
+	match row:
+		0: parts.append("上")
+		1: parts.append("上一点")
+		2: parts.append("平着")
+		3: parts.append("往下")
+		_: parts.append("靠近下方")
+
+	if col < 4.0:
+		parts.append("左")
+	elif col < 7.0:
+		parts.append("中间")
+	else:
+		parts.append("右")
+
+	return " ".join(parts)
+
+
+func _target_delta_for_key(from_key: String, to_key: String) -> Vector2:
+	var from_pos: Array = KEYBOARD[from_key]
+	var to_pos: Array = KEYBOARD[to_key]
+	return Vector2(float(to_pos[1] - from_pos[1]), float(to_pos[0] - from_pos[0]))
 
 
 # ════════════════════════════════════════════════════════════
@@ -452,6 +527,7 @@ func _complete_puzzle() -> void:
 	is_completed = true
 	_disable_player(false)
 	hint_label.text = "四块石头全部凹陷！石门颤动..."
+	_flash_overlay_hint("石门打开了。", 0.95)
 	hint_updated.emit("石门上所有凸起的石块都沉入墙中——门缓缓打开了！")
 	puzzle_completed.emit("stone_door")
 	AudioManager.play_sfx("stone_door")
@@ -473,6 +549,106 @@ func _get_view() -> String:
 		if node.has_method("get_current_view"):
 			return node.get_current_view()
 	return "normal"
+
+
+func _set_overlay_hint(text: String) -> void:
+	if overlay_hint == null or not is_instance_valid(overlay_hint):
+		return
+	var clean := text.strip_edges()
+	overlay_hint.text = clean
+	overlay_hint.visible = not clean.is_empty()
+
+
+func _flash_overlay_hint(text: String, duration: float = 1.0) -> void:
+	_set_overlay_hint(text)
+	if duration <= 0.0:
+		return
+	await get_tree().create_timer(duration).timeout
+	if is_instance_valid(overlay_hint):
+		_set_overlay_hint("")
+
+
+func _spawn_touch_fx(key_name: String, is_correct: bool, key_delta: Vector2) -> void:
+	if overlay_root == null or not is_instance_valid(overlay_root):
+		return
+	var fx := TouchFx.new()
+	var direction := key_delta.normalized()
+	if direction == Vector2.ZERO:
+		direction = Vector2(0, -1)
+	fx.setup(get_viewport_rect().size * 0.5 + direction * minf(get_viewport_rect().size.x, get_viewport_rect().size.y) * 0.16, is_correct, direction)
+	overlay_root.add_child(fx)
+
+
+class TouchFx extends Control:
+	var age: float = 0.0
+	var lifetime: float = 0.65
+	var origin: Vector2 = Vector2.ZERO
+	var ring_offset: Vector2 = Vector2.ZERO
+	var ring_color: Color = Color("#f3dbb0")
+	var dust_color: Color = Color("#d7c1a0")
+	var _correct: bool = false
+	var _dust: Array[Vector2] = []
+	var _dust_radii: Array[float] = []
+	var _dust_speeds: Array[float] = []
+
+	func setup(screen_position: Vector2, correct: bool, direction: Vector2) -> void:
+		origin = screen_position
+		position = origin
+		size = get_viewport_rect().size
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		set_anchors_preset(Control.PRESET_FULL_RECT)
+		_correct = correct
+		ring_offset = direction * minf(size.x, size.y) * 0.06
+		ring_color = Color("#fff1bf") if correct else Color("#d8c59a")
+		dust_color = Color("#f0d7be") if correct else Color("#bfa98a")
+		lifetime = 0.9 if correct else 0.7
+		_build_dust()
+
+	func _ready() -> void:
+		process_mode = Node.PROCESS_MODE_ALWAYS
+		_play_feedback()
+
+	func _process(delta: float) -> void:
+		age += delta
+		queue_redraw()
+		if age >= lifetime:
+			queue_free()
+
+	func _build_dust() -> void:
+		_dust.clear()
+		_dust_radii.clear()
+		_dust_speeds.clear()
+		var count := 8 if _correct else 5
+		for i in range(count):
+			var a := TAU * float(i) / float(count) + randf_range(-0.18, 0.18)
+			var dist := randf_range(10.0, 24.0)
+			_dust.append(Vector2(cos(a), sin(a)) * dist)
+			_dust_radii.append(randf_range(2.0, 4.0))
+			_dust_speeds.append(randf_range(18.0, 36.0) * (1.2 if _correct else 1.0))
+
+	func _play_feedback() -> void:
+		if _correct:
+			AudioManager.play_sfx("blind_correct")
+			await get_tree().create_timer(0.12).timeout
+			if is_inside_tree():
+				AudioManager.play_sfx("blind_correct")
+		else:
+			AudioManager.play_sfx("blind_wrong")
+
+	func _draw() -> void:
+		var t := clampf(age / lifetime, 0.0, 1.0)
+		var alpha := (1.0 - t) * (0.55 if _correct else 0.35)
+		var pulse := 1.0 + (0.28 * sin(age * 18.0) if _correct else 0.10 * sin(age * 10.0))
+		var radius := (96.0 + t * 120.0) * pulse
+		var center := origin + ring_offset * (0.8 + 0.2 * sin(age * 3.0))
+		draw_circle(center, radius * 0.85, Color(ring_color.r, ring_color.g, ring_color.b, alpha * 0.12))
+		draw_arc(center, radius, 0.0, TAU, 96, Color(ring_color.r, ring_color.g, ring_color.b, alpha), 4.0)
+		for i in range(_dust.size()):
+			var p := _dust[i]
+			var spread := (p.normalized() * (_dust_speeds[i] * age)) + ring_offset * (0.35 + 0.25 * t)
+			var pos := center + p + spread
+			var dust_alpha := alpha * (0.9 if _correct else 0.65)
+			draw_circle(pos, _dust_radii[i] * (1.0 - 0.35 * t), Color(dust_color.r, dust_color.g, dust_color.b, dust_alpha))
 
 
 func get_progress() -> int:

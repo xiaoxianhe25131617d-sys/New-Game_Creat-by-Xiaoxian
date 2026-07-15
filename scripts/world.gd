@@ -190,11 +190,12 @@ const MEMORY_BENCH_TEXTURE_PATH := "res://assets/environment/generated/memory_be
 const MEMORY_BENCH_SIZE_RATIO := 2.0 / 3.0
 const REMOVED_BANQUET_COLLECTIBLE_IDS := [&"collectible_05", &"collectible_06"]
 const REMOVED_BANQUET_ANCHOR_IDS := [&"dam"]
-const REMOVED_WORLD_NPC_IDS := [&"npc_cipher_1"]
+const REMOVED_WORLD_NPC_IDS := []
 const MAZE_ENTRANCE_SIZE_RATIO := 2.0 / 3.0
 const MAZE_ENTRANCE_BACK_TEXTURE := preload("res://assets/environment/generated/maze_entrance_back.png")
 const MAZE_ENTRANCE_FRONT_TEXTURE := preload("res://assets/environment/generated/maze_entrance_front.png")
 const TOWN_DISTANT_TREES_TEXTURE := preload("res://assets/town/town_distant_tree_line.png")
+const TOWN_DISTANT_MOUNTAINS_TEXTURE := preload("res://assets/town/generated/town_distant_mountains.png")
 const TOWN_FOREGROUND_CLUSTER_1 := preload("res://assets/town/foreground_cluster_01.png")
 const TOWN_FOREGROUND_CLUSTER_2 := preload("res://assets/town/foreground_cluster_02.png")
 const TOWN_FOREGROUND_CLUSTER_3 := preload("res://assets/town/foreground_cluster_03.png")
@@ -206,6 +207,10 @@ const WORLD_WIDTH := WORLD_TILE_W * TILE_SIZE
 const TOWN_DISTANT_TREE_BASE_PX := 536.0
 const TOWN_TREE_PARALLAX_FACTOR := 0.40
 const TOWN_TREE_REPEAT_OVERLAP_PX := 24.0
+const TOWN_MOUNTAIN_SCALE := 0.39
+const TOWN_MOUNTAIN_BOTTOM_GAP_PX := 0.0
+const TOWN_MOUNTAIN_PARALLAX_FACTOR := 0.12
+const TOWN_MOUNTAIN_REPEAT_OVERLAP_PX := 42.0
 
 const T_GRASS_TL := Vector2i(4, 0)
 const T_GRASS_TR := Vector2i(5, 0)
@@ -314,6 +319,7 @@ func _configure_authored_tree_line() -> void:
 	var tree_line := get_node_or_null("Visuals/Decorations/TownTreeLineParallax") as Node2D
 	if tree_line == null:
 		return
+	tree_line.visible = true
 	parallax_layers.append({
 		"node": tree_line,
 		"factor": TOWN_TREE_PARALLAX_FACTOR,
@@ -357,6 +363,7 @@ func _make_background_canvas() -> void:
 	bg_canvas.add_child(sky_background)
 	_resize_sky_background()
 	get_viewport().size_changed.connect(_resize_sky_background)
+	_make_distant_mountain_layer()
 
 	# View tint (layer 500)
 	view_tint_canvas = CanvasLayer.new()
@@ -420,6 +427,42 @@ func _resize_sky_background() -> void:
 	if is_instance_valid(sky_background):
 		sky_background.size = get_viewport_rect().size
 
+
+func _make_distant_mountain_layer() -> void:
+	# This is a world-space visual layer, just like the ground and buildings.
+	# Its Y coordinate therefore moves with the terrain when the camera follows
+	# a jump; only the horizontal movement receives parallax.
+	var mountain_layer := Node2D.new()
+	mountain_layer.name = "TownDistantMountainsParallax"
+	mountain_layer.z_index = -35
+	add_child(mountain_layer)
+	parallax_layers.append({
+		"node": mountain_layer,
+		"factor": TOWN_MOUNTAIN_PARALLAX_FACTOR,
+		"base_position": mountain_layer.position,
+	})
+
+	var texture_size := TOWN_DISTANT_MOUNTAINS_TEXTURE.get_size()
+	var scaled_width := texture_size.x * TOWN_MOUNTAIN_SCALE
+	var scaled_height := texture_size.y * TOWN_MOUNTAIN_SCALE
+	var repeat_step := scaled_width - TOWN_MOUNTAIN_REPEAT_OVERLAP_PX
+	var mountain_x := -scaled_width
+	var mountain_index := 0
+	var bottom_y := GROUND_Y_PX - TOWN_MOUNTAIN_BOTTOM_GAP_PX
+	while mountain_x < WORLD_WIDTH + scaled_width:
+		var mountain := Sprite2D.new()
+		mountain.name = "DistantMountain_%02d" % mountain_index
+		mountain.texture = TOWN_DISTANT_MOUNTAINS_TEXTURE
+		mountain.centered = false
+		mountain.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+		mountain.scale = Vector2(TOWN_MOUNTAIN_SCALE, TOWN_MOUNTAIN_SCALE)
+		mountain.position = Vector2(mountain_x, bottom_y - scaled_height)
+		mountain.flip_h = mountain_index % 2 == 1
+		mountain.modulate = Color(0.88, 0.91, 1.0, 0.78)
+		mountain_layer.add_child(mountain)
+		mountain_x += repeat_step
+		mountain_index += 1
+
 func _make_depression_spikes() -> void:
 	_spike_canvas = CanvasLayer.new()
 	_spike_canvas.name = "DepressionSpikes"
@@ -447,6 +490,7 @@ func _make_depression_spikes() -> void:
 	label.position = Vector2(12, 12)
 	label.add_theme_font_size_override("font_size", 16)
 	label.add_theme_color_override("font_color", Color("#ff6666"))
+	label.visible = false
 	_spike_canvas.add_child(label)
 
 # ══════════════════════════════════════════════════════════════
@@ -469,15 +513,16 @@ func _add_parallax_layer(parallax_factor: float, draw_func: Callable) -> void:
 
 func _draw_distant_mountains(container: Node2D) -> void:
 	var colors: Array = [Color("#8899bb"), Color("#99aacc"), Color("#7788aa"), Color("#aabbdd")]
+	var mountain_base_y := 3180.0
 	for i in range(12):
 		var mountain := Polygon2D.new()
 		var x: float = i * 1300.0 - 300.0
-		var h: float = 300.0 + fmod(i * 1.7, 1.0) * 250.0
+		var h: float = 420.0 + fmod(i * 1.7, 1.0) * 280.0
 		var w: float = 1100.0 + fmod(i + 3, 1.0) * 500.0
 		mountain.polygon = PackedVector2Array([
-			Vector2(x, 3400.0), Vector2(x + w * 0.25, 3400.0 - h * 0.55),
-			Vector2(x + w * 0.5, 3400.0 - h), Vector2(x + w * 0.75, 3400.0 - h * 0.5),
-			Vector2(x + w, 3400.0),
+			Vector2(x, mountain_base_y), Vector2(x + w * 0.25, mountain_base_y - h * 0.55),
+			Vector2(x + w * 0.5, mountain_base_y - h), Vector2(x + w * 0.75, mountain_base_y - h * 0.5),
+			Vector2(x + w, mountain_base_y),
 		])
 		mountain.color = colors[i % colors.size()]
 		mountain.modulate.a = 0.4
@@ -487,8 +532,8 @@ func _draw_distant_mountains(container: Node2D) -> void:
 		var snow := Polygon2D.new()
 		var x := i * 1900.0 + 200.0
 		snow.polygon = PackedVector2Array([
-			Vector2(x - 120, 3400 - 400), Vector2(x + 120, 3400 - 400),
-			Vector2(x - 40, 3400 - 460), Vector2(x + 40, 3400 - 460),
+			Vector2(x - 120, mountain_base_y - 400), Vector2(x + 120, mountain_base_y - 400),
+			Vector2(x - 40, mountain_base_y - 460), Vector2(x + 40, mountain_base_y - 460),
 		])
 		snow.color = Color(1, 1, 1, 0.5)
 		container.add_child(snow)
@@ -844,6 +889,7 @@ func _make_underground_portal() -> void:
 	entry_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	entry_label.add_theme_font_size_override("font_size", 16)
 	entry_label.add_theme_color_override("font_color", Color("#9ed8dc"))
+	entry_label.visible = false
 	entry.add_child(entry_label)
 	entry.set_meta("kind", "underground_entry")
 	entry.set_meta("scene_path", "res://maze/UndergroundMaze.tscn")
@@ -945,6 +991,7 @@ func _label_region(text: String, pos: Vector2, color: Color) -> void:
 	label.position = pos
 	label.modulate = color.darkened(0.2)
 	label.add_theme_font_size_override("font_size", 38)
+	label.visible = false
 	label.z_index = -7
 	add_child(label)
 
@@ -969,6 +1016,7 @@ func _add_zone_marker(pos: Vector2, text: String, color: Color) -> void:
 	label.position = Vector2(-36, -48)
 	label.add_theme_font_size_override("font_size", 11)
 	label.add_theme_color_override("font_color", color.lightened(0.2))
+	label.visible = false
 	marker.add_child(label)
 	marker.set_meta("kind", "zone_indicator")
 
@@ -1147,6 +1195,7 @@ func _add_memory_bench(pos: Vector2) -> Area2D:
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.add_theme_font_size_override("font_size", 14)
 	label.add_theme_color_override("font_color", Color("#e8f4f0"))
+	label.visible = false
 	area.add_child(label)
 	area.add_to_group("interactable")
 	return area
@@ -1203,22 +1252,69 @@ func _add_collectible_marker(pos: Vector2, color: Color) -> Area2D:
 	shape.shape = circle
 	area.add_child(shape)
 
+	# 纪念品不是大色块，而是一枚贴地的小碎片：深色像素边、亮面和
+	# 一道很克制的高光，让它在背景里可见但不会抢过 NPC 和谜题。
 	var root := Node2D.new()
-	root.name = "PixelCollectible"
-	root.scale = Vector2(2.0, 2.0)
+	root.name = "MemoryShard"
+	root.position = Vector2(0, -7)
 	root.z_index = 8
 	area.add_child(root)
-	_add_pixel_rect(root, Rect2(-3, -12, 6, 2), color.lightened(0.35))
-	_add_pixel_rect(root, Rect2(-5, -10, 10, 4), color)
-	_add_pixel_rect(root, Rect2(-4, -6, 8, 5), color.darkened(0.18))
-	_add_pixel_rect(root, Rect2(-2, -4, 4, 3), color.lightened(0.18))
-	_add_pixel_rect(root, Rect2(-1, -15, 2, 3), Color("#fff3b0"))
+
+	var glow := Polygon2D.new()
+	glow.name = "ShardGlow"
+	glow.polygon = PackedVector2Array([
+		Vector2(-5, 1), Vector2(-1, -13), Vector2(7, -5), Vector2(5, 4), Vector2(-2, 8),
+	])
+	glow.color = Color(color.lightened(0.35), 0.18)
+	root.add_child(glow)
+
+	var outline := Polygon2D.new()
+	outline.name = "ShardOutline"
+	outline.polygon = PackedVector2Array([
+		Vector2(-4, 2), Vector2(-1, -11), Vector2(2, -14), Vector2(8, -5),
+		Vector2(5, 4), Vector2(-2, 7),
+	])
+	outline.color = Color("#3c3440")
+	root.add_child(outline)
+
+	var shard := Polygon2D.new()
+	shard.name = "Shard"
+	shard.polygon = PackedVector2Array([
+		Vector2(-3, 2), Vector2(0, -10), Vector2(2, -11), Vector2(6, -4),
+		Vector2(4, 3), Vector2(-1, 5),
+	])
+	shard.color = color
+	root.add_child(shard)
+
+	var facet := Polygon2D.new()
+	facet.name = "ShardFacet"
+	facet.polygon = PackedVector2Array([
+		Vector2(0, -9), Vector2(2, -10), Vector2(5, -4), Vector2(1, -2),
+	])
+	facet.color = color.lightened(0.38)
+	root.add_child(facet)
+
+	var shadow_facet := Polygon2D.new()
+	shadow_facet.name = "ShardShadowFacet"
+	shadow_facet.polygon = PackedVector2Array([
+		Vector2(-3, 2), Vector2(-1, -1), Vector2(1, -2), Vector2(4, 3), Vector2(-1, 5),
+	])
+	shadow_facet.color = color.darkened(0.28)
+	root.add_child(shadow_facet)
+
+	var glint := Line2D.new()
+	glint.name = "ShardGlint"
+	glint.points = PackedVector2Array([Vector2(0, -8), Vector2(1, -6)])
+	glint.width = 1.5
+	glint.default_color = Color("#fff3b0", 0.92)
+	root.add_child(glint)
 
 	var label := Label.new()
-	label.text = "纪念物"
+	label.text = ""
 	label.position = Vector2(-28, -48)
 	label.add_theme_font_size_override("font_size", 11)
 	label.add_theme_color_override("font_color", Color("#fff1a8"))
+	label.visible = false
 	area.add_child(label)
 	area.add_to_group("interactable")
 	return area
@@ -1723,6 +1819,7 @@ func _make_single_vane(pos: Vector2, vane_idx: int, hint_angle: float) -> void:
 	label.position = Vector2(-30, -96)
 	label.add_theme_font_size_override("font_size", 14)
 	label.add_theme_color_override("font_color", Color("#ffe8a0"))
+	label.visible = false
 	vane.add_child(label)
 	
 	# 放置区域（更大的碰撞区，用于拖放检测）
@@ -1804,6 +1901,7 @@ func place_laser_device(device_id: String, vane_idx: int) -> bool:
 	dev_label.position = Vector2(-18, -24)
 	dev_label.add_theme_font_size_override("font_size", 11)
 	dev_label.add_theme_color_override("font_color", dev_color.lightened(0.3))
+	dev_label.visible = false
 	device.add_child(dev_label)
 	
 	# 激光束（初始水平）
