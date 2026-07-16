@@ -8,6 +8,7 @@ const MAIN_WORLD_SCENE := preload("res://map/MainWorld.tscn")
 const MENU_BG_TEXTURE := preload("res://assets/town/town_street_background.png")
 const INTRO_COMIC_TEXTURE := preload("res://assets/intro_comic.png")
 const INTRO_DOCTOR_TEXTURE := preload("res://assets/characters/generated/doctor_handdrawn_spritesheet.png")
+const OPENING_FX_SCRIPT := preload("res://scripts/opening_fx.gd")
 const PUZZLE_NOTE_POPUP_SCRIPT := preload("res://scripts/puzzle_note_popup.gd")
 const VIEW_WHEEL_UI_SCRIPT := preload("res://scripts/view_wheel_ui.gd")
 const PAUSE_MENU_UI_SCRIPT := preload("res://scripts/pause_menu_ui.gd")
@@ -45,6 +46,7 @@ var opening_caption: Label
 var opening_speaker: Label
 var opening_portrait: TextureRect
 var opening_progress: Label
+var opening_fx: Control
 var opening_phase_index: int = 0
 var opening_phase_elapsed: float = 0.0
 var opening_phase_duration: float = 4.6
@@ -441,6 +443,10 @@ func show_opening_cinematic() -> void:
 	opening_art.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 	opening_art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	opening_root.add_child(opening_art)
+	opening_fx = OPENING_FX_SCRIPT.new()
+	opening_fx.name = "OpeningEnergyFX"
+	opening_fx.set_anchors_preset(Control.PRESET_FULL_RECT)
+	opening_root.add_child(opening_fx)
 
 	var art_tint := ColorRect.new()
 	art_tint.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -482,6 +488,10 @@ func show_opening_cinematic() -> void:
 	subtitle.position = Vector2(58, 148)
 	subtitle.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	opening_root.add_child(subtitle)
+	var invention_tag := _make_header_label("MEMORY HELMET // PROTOTYPE 01", 12, Color("#8edcff"))
+	invention_tag.position = Vector2(58, 180)
+	invention_tag.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	opening_root.add_child(invention_tag)
 
 	var dialogue_panel := PanelContainer.new()
 	dialogue_panel.name = "OpeningDialogue"
@@ -554,6 +564,8 @@ func _sync_opening_cinematic() -> void:
 		opening_caption.text = str(phase[1])
 	if opening_progress != null:
 		opening_progress.text = "%02d / %02d    ·    点击画面快进" % [opening_phase_index + 1, opening_phase_regions.size()]
+	if opening_fx != null and is_instance_valid(opening_fx):
+		opening_fx.set_scene(opening_phase_index)
 	if opening_portrait != null:
 		var portrait := AtlasTexture.new()
 		portrait.atlas = INTRO_DOCTOR_TEXTURE
@@ -593,6 +605,7 @@ func _finish_opening_cinematic() -> void:
 	opening_speaker = null
 	opening_portrait = null
 	opening_progress = null
+	opening_fx = null
 	var profile: Dictionary = ProfileManager.get_current_profile()
 	var saved_state: Dictionary = profile.get("state", GameData.default_state()) as Dictionary
 	saved_state["opening_seen"] = true
