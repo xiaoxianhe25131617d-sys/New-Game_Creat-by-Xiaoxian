@@ -5,7 +5,7 @@
       "parts": [
         {
           "name": "index.pck.part00",
-          "sha256": "4674ec10dfffc82151d0d1edc5b1ac3ab7ca680ba637a72499807ce363743dd6",
+          "sha256": "db6ef776289c286d12804f023b6e8eed3e1c658e52beb8202030f3b8e134ece7",
           "size": 24000000
         },
         {
@@ -20,12 +20,12 @@
         },
         {
           "name": "index.pck.part03",
-          "sha256": "68ff656c5d4aacbf2eeb6b633c60e977d91bf9c3871538ba79c6bf9d06888cc6",
-          "size": 5380160
+          "sha256": "6d708a34a8321f060b882f2b3a87664cc7c687527fd48e0ff5a548c6fd5399a9",
+          "size": 5381344
         }
       ],
-      "sha256": "debc80831b3285bb8bd4df6ec8b138c4f58617830ca4554c8b7ce99d814f894c",
-      "size": 77380160
+      "sha256": "95427bf2236fc2aba4c3494b4d2b14311d1f7aed394f614de051d2b37770a3cc",
+      "size": 77381344
     },
     "index.wasm": {
       "content_type": "application/wasm",
