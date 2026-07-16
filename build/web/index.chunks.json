@@ -1,0 +1,49 @@
+{
+  "files": {
+    "index.pck": {
+      "content_type": "application/octet-stream",
+      "parts": [
+        {
+          "name": "index.pck.part00",
+          "sha256": "bded854a9d921dfbab7314ff9b6195c0f1589bad95de2e1bee2d6c9933fa8ab1",
+          "size": 24000000
+        },
+        {
+          "name": "index.pck.part01",
+          "sha256": "58ebd5198fd186729a884a1cc432f6ca3cf3c35db37e3df09cb22991c5241f65",
+          "size": 24000000
+        },
+        {
+          "name": "index.pck.part02",
+          "sha256": "ea67fe9dce18d762fa459db25adb9d1a79885b76356678e3ae070013bd99afdc",
+          "size": 24000000
+        },
+        {
+          "name": "index.pck.part03",
+          "sha256": "440c81a7dd1d69cbe8ee80d0790a2876832e4261bacecea3c7f7b8d19d22e1e1",
+          "size": 5352152
+        }
+      ],
+      "sha256": "c8fa5226fc7be43e7fdec072a2eab9d8e4c6870b74d97ad85fc6f8a8876460e1",
+      "size": 77352152
+    },
+    "index.wasm": {
+      "content_type": "application/wasm",
+      "parts": [
+        {
+          "name": "index.wasm.part00",
+          "sha256": "9f756e5eecfa805d38798a892996fc7f0bee034cc38ef0fea45b41bd0ecbd3d4",
+          "size": 24000000
+        },
+        {
+          "name": "index.wasm.part01",
+          "sha256": "ae8c1d4f3e506a887b97ad5f9701e58d9d6be37c5ac86dc6f12a40bcd0933546",
+          "size": 15509339
+        }
+      ],
+      "sha256": "7eda98958eb09135a1acb54a4323a00b1a55af1997f15fa1cdc2b93e3df46656",
+      "size": 39509339
+    }
+  },
+  "version": 1
+}
