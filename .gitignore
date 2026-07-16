@@ -23,4 +23,6 @@ Thumbs.db
 *.wav
 
 # Generated game exports
-/build/
+/build/*
+!/build/web/
+!/build/web/**
