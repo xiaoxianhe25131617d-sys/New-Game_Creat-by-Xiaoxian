@@ -938,6 +938,7 @@ func start_game(new_game: bool) -> void:
 	var loaded_state: Dictionary = profile.get("state", GameData.default_state()) as Dictionary
 	state = loaded_state.duplicate(true)
 	_normalize_state()
+	AudioManager.start_gameplay_bgm(str(state.get("current_view", "normal")))
 	world = MAIN_WORLD_SCENE.instantiate() as MindscapeWorld
 	if world == null:
 		push_error("MainWorld.tscn root must use scripts/world.gd")

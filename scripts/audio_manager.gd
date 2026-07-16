@@ -230,6 +230,12 @@ func set_view(view: String) -> void:
 		return
 	_play_current_view_bgm()
 
+## 从登录/菜单进入主世界时，明确结束菜单阶段的播放并重启存档视角 BGM。
+func start_gameplay_bgm(view: String) -> void:
+	current_view = view if bgm_cache.has(view) else "normal"
+	_bgm_suspended = false
+	_play_current_view_bgm()
+
 func stop_bgm() -> void:
 	_bgm_suspended = true
 	if bgm_player != null:
