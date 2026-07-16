@@ -5,6 +5,9 @@ const HIDDEN_DOOR_TEXTURE := preload("res://assets/ui/generated/hidden_stone_doo
 const UNDERGROUND_ENTRY_AUDIO := preload("res://assets/audio/enter_underground_maze.MP3")
 const UNDERGROUND_STAIR_TRANSITION := preload("res://scenes/UndergroundStairTransition.tscn")
 const MAIN_WORLD_SCENE := preload("res://map/MainWorld.tscn")
+const MENU_BG_TEXTURE := preload("res://assets/town/town_street_background.png")
+const INTRO_COMIC_TEXTURE := preload("res://assets/intro_comic.png")
+const INTRO_DOCTOR_TEXTURE := preload("res://assets/characters/generated/doctor_handdrawn_spritesheet.png")
 const PUZZLE_NOTE_POPUP_SCRIPT := preload("res://scripts/puzzle_note_popup.gd")
 const VIEW_WHEEL_UI_SCRIPT := preload("res://scripts/view_wheel_ui.gd")
 const PAUSE_MENU_UI_SCRIPT := preload("res://scripts/pause_menu_ui.gd")
@@ -36,6 +39,32 @@ var agreement_check_box: CheckBox
 var login_current_button: Button
 var create_profile_button: Button
 var agreement_hint_label: Label
+var opening_root: Control
+var opening_art: TextureRect
+var opening_caption: Label
+var opening_speaker: Label
+var opening_portrait: TextureRect
+var opening_progress: Label
+var opening_phase_index: int = 0
+var opening_phase_elapsed: float = 0.0
+var opening_phase_duration: float = 4.6
+var opening_phase_regions: Array = [
+	Rect2(0, 0, 250, 164), Rect2(0, 164, 250, 164),
+	Rect2(0, 328, 250, 164), Rect2(0, 492, 250, 164),
+	Rect2(0, 656, 250, 164), Rect2(0, 820, 250, 164),
+	Rect2(0, 984, 250, 164), Rect2(0, 1148, 250, 162),
+]
+var opening_phase_lines: Array = [
+	["发明家 · 米洛", "我想做一顶头盔，让人真正看见另一个人眼里的世界。"],
+	["发明家 · 米洛", "放下镜片，世界会换一种方式回来。"],
+	["记录员", "消息传开以后，四个很久没见的孩子重新走到了一起。"],
+	["盲人朋友", "如果长椅还能把我们接回去，也许那份宝藏还在等我们。"],
+	["聋人朋友", "我们不必用同一种方式理解，只要愿意一起看。"],
+	["四位朋友", "头盔亮起来的那一刻，童年的路又在眼前展开。"],
+	["记忆花园", "每一种感知，都会照亮一条别人看不见的路。"],
+	["心灵视界", "故事从这里开始。点击画面继续。"],
+]
+var opening_active: bool = false
 var damage_overlay: ColorRect  # red flash on monster hit
 var damage_tween: Tween  # for damage overlay animation
 var _ladder_space_was_held: bool = false  # 梯子跳跃：检测 Space 刚按下的边沿
@@ -70,10 +99,15 @@ func _ready() -> void:
 		saved_state["return_to_game"] = false
 		ProfileManager.save_state(saved_state)
 		call_deferred("start_game", false)
+	elif int(saved_state.get("opening_version", 0)) < 2:
+		call_deferred("show_opening_cinematic")
 	else:
 		show_login_screen()
 
 func _process(delta: float) -> void:
+	if opening_active:
+		_update_opening_cinematic(delta)
+		return
 	if not game_running:
 		return
 	state["play_time"] = float(state.get("play_time", 0.0)) + delta
@@ -93,6 +127,183 @@ func _load_runtime_assets() -> void:
 		_maze_compass_texture = MAZE_COMPASS_TEXTURE
 	if _hidden_door_texture == null:
 		_hidden_door_texture = HIDDEN_DOOR_TEXTURE
+
+func _hide_login_comic_preview() -> void:
+	if is_instance_valid(menu_root):
+		var comic_preview := menu_root.find_child("ComicPreview", true, false)
+		if is_instance_valid(comic_preview):
+			comic_preview.queue_free()
+
+func _build_menu_root(tint: Color, frame_glow: Color) -> Control:
+	var root := Control.new()
+	root.name = "MenuRoot"
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(root)
+
+	var bg := TextureRect.new()
+	bg.name = "MenuBackground"
+	bg.texture = MENU_BG_TEXTURE
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	bg.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	bg.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	root.add_child(bg)
+
+	var overlay := ColorRect.new()
+	overlay.name = "MenuOverlay"
+	overlay.color = tint
+	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.add_child(overlay)
+
+	var glow := ColorRect.new()
+	glow.name = "MenuGlow"
+	glow.color = frame_glow
+	glow.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.add_child(glow)
+	return root
+
+func _menu_frame_style(bg: Color, border: Color, radius: int = 10) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = bg
+	style.border_color = border
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(radius)
+	style.shadow_color = Color(0, 0, 0, 0.28)
+	style.shadow_size = 10
+	return style
+
+func _menu_button_style(accent: Color, hovered: bool = false) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color("#1a1f29e6") if not hovered else Color("#263245f2")
+	style.border_color = accent
+	style.set_border_width_all(2 if hovered else 1)
+	style.set_corner_radius_all(6)
+	style.shadow_color = Color(0, 0, 0, 0.2)
+	style.shadow_size = 4
+	return style
+
+func _make_header_label(text: String, size: int, color: Color, centered: bool = false) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.add_theme_font_size_override("font_size", size)
+	label.add_theme_color_override("font_color", color)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER if centered else HORIZONTAL_ALIGNMENT_LEFT
+	return label
+
+func _make_chip(text: String, color: Color) -> PanelContainer:
+	var chip := PanelContainer.new()
+	chip.add_theme_stylebox_override("panel", _menu_frame_style(Color("#111620cc"), color, 999))
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 10)
+	margin.add_theme_constant_override("margin_right", 10)
+	margin.add_theme_constant_override("margin_top", 4)
+	margin.add_theme_constant_override("margin_bottom", 4)
+	chip.add_child(margin)
+	var label := Label.new()
+	label.text = text
+	label.add_theme_font_size_override("font_size", 12)
+	label.add_theme_color_override("font_color", color.lightened(0.2))
+	margin.add_child(label)
+	return chip
+
+func _set_panel_padding(node: Control, left: int, top: int, right: int, bottom: int) -> void:
+	if node is MarginContainer:
+		node.add_theme_constant_override("margin_left", left)
+		node.add_theme_constant_override("margin_top", top)
+		node.add_theme_constant_override("margin_right", right)
+		node.add_theme_constant_override("margin_bottom", bottom)
+
+func _build_profile_stat_row(name: String, value: String, accent: Color) -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	var key := Label.new()
+	key.text = name
+	key.custom_minimum_size = Vector2(88, 0)
+	key.add_theme_font_size_override("font_size", 13)
+	key.add_theme_color_override("font_color", Color("#ccbca0"))
+	row.add_child(key)
+	var val := Label.new()
+	val.text = value
+	val.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	val.add_theme_font_size_override("font_size", 14)
+	val.add_theme_color_override("font_color", accent)
+	row.add_child(val)
+	return row
+
+func _build_profile_card(profile: Dictionary) -> Button:
+	var stats: Dictionary = profile.get("stats", {})
+	var profile_state: Dictionary = profile.get("state", {}) as Dictionary
+	var finished := bool(profile_state.get("finished", false))
+	var avatar := str(profile.get("avatar", "sun"))
+	var accent_map: Dictionary = {
+		"sun": Color("#f0c98a"),
+		"moon": Color("#a8d0ff"),
+		"leaf": Color("#9bd8a2"),
+	}
+	var accent: Color = accent_map.get(avatar, Color("#f0c98a")) as Color
+	var button := Button.new()
+	button.custom_minimum_size = Vector2(0, 116)
+	button.add_theme_stylebox_override("normal", _menu_button_style(accent, false))
+	button.add_theme_stylebox_override("hover", _menu_button_style(accent, true))
+	button.add_theme_stylebox_override("pressed", _menu_button_style(accent.darkened(0.15), true))
+	button.add_theme_stylebox_override("focus", _menu_button_style(accent.lightened(0.12), true))
+	button.focus_mode = Control.FOCUS_ALL
+	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	button.pressed.connect(func():
+		ProfileManager.set_current_profile(str(profile.get("id", "")))
+		if ProfileManager.current_profile_has_accepted_agreement():
+			show_main_menu()
+		else:
+			show_login_screen()
+	)
+
+	var shell := HBoxContainer.new()
+	shell.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	shell.offset_left = 16.0
+	shell.offset_right = -16.0
+	shell.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	shell.add_theme_constant_override("separation", 14)
+	button.add_child(shell)
+
+	var avatar_box := PanelContainer.new()
+	avatar_box.custom_minimum_size = Vector2(80, 80)
+	avatar_box.add_theme_stylebox_override("panel", _menu_frame_style(Color("#141a22d8"), accent))
+	shell.add_child(avatar_box)
+	var avatar_margin := MarginContainer.new()
+	avatar_margin.add_theme_constant_override("margin_left", 10)
+	avatar_margin.add_theme_constant_override("margin_top", 8)
+	avatar_margin.add_theme_constant_override("margin_right", 10)
+	avatar_margin.add_theme_constant_override("margin_bottom", 8)
+	avatar_box.add_child(avatar_margin)
+	var avatar_label := Label.new()
+	avatar_label.text = {"sun": "☀", "moon": "☾", "leaf": "❧"}.get(avatar, "◎")
+	avatar_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	avatar_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	avatar_label.add_theme_font_size_override("font_size", 34)
+	avatar_label.add_theme_color_override("font_color", accent)
+	avatar_margin.add_child(avatar_label)
+
+	var text_col := VBoxContainer.new()
+	text_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	text_col.add_theme_constant_override("separation", 4)
+	shell.add_child(text_col)
+	var title := Label.new()
+	title.text = "%s%s" % [str(profile.get("display_name", "旅行者")), "  ·  已通关" if finished else ""]
+	title.add_theme_font_size_override("font_size", 18)
+	title.add_theme_color_override("font_color", Color("#f7ebd6"))
+	text_col.add_child(title)
+	var stats_row := HBoxContainer.new()
+	stats_row.add_theme_constant_override("separation", 12)
+	text_col.add_child(stats_row)
+	stats_row.add_child(_make_chip("完成度 %d%%" % int(stats.get("completion", 0)), accent))
+	stats_row.add_child(_make_chip("相册 %d" % int(stats.get("album_count", 0)), Color("#b9d6ff")))
+	stats_row.add_child(_make_chip("游玩 %s" % _format_time(stats.get("play_time", 0.0)), Color("#d8c6a2")))
+	var updated := Label.new()
+	updated.text = "上次记录：%s" % profile.get("updated_at", "—")
+	updated.add_theme_font_size_override("font_size", 11)
+	updated.add_theme_color_override("font_color", Color("#a6a08f"))
+	text_col.add_child(updated)
+	return button
 
 # ═══════════════════════════════════════════════════════
 #  梯子爬行：玩家在梯子内时禁用重力，按 W/↑ 持续上移，按 S/↓ 持续下移
@@ -169,6 +380,14 @@ func _input(event: InputEvent) -> void:
 		return
 	
 func _unhandled_input(event: InputEvent) -> void:
+	if opening_active:
+		if event.is_action_pressed("pause_menu") or event.is_action_pressed("interact") or event.is_action_pressed("jump"):
+			_advance_opening_cinematic(true)
+			get_viewport().set_input_as_handled()
+		elif event is InputEventMouseButton and event.pressed:
+			_advance_opening_cinematic(true)
+			get_viewport().set_input_as_handled()
+		return
 	if not game_running:
 		return
 	# Don't handle game input while dialogue is open
@@ -196,81 +415,274 @@ func _unhandled_input(event: InputEvent) -> void:
 	# elif event.is_action_pressed("quick_depression"):
 	# 	try_switch_view("depression")
 
+func show_opening_cinematic() -> void:
+	clear_scene()
+	opening_active = true
+	game_running = false
+	AudioManager.stop_bgm()
+	AudioManager.stop_walk_sfx()
+
+	opening_root = Control.new()
+	opening_root.name = "OpeningCinematic"
+	opening_root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	opening_root.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(opening_root)
+
+	var bg := ColorRect.new()
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.color = Color("#070b13")
+	opening_root.add_child(bg)
+
+	opening_art = TextureRect.new()
+	opening_art.name = "OpeningSceneArt"
+	opening_art.set_anchors_preset(Control.PRESET_FULL_RECT)
+	opening_art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	opening_art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	opening_art.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	opening_art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	opening_root.add_child(opening_art)
+
+	var art_tint := ColorRect.new()
+	art_tint.set_anchors_preset(Control.PRESET_FULL_RECT)
+	art_tint.color = Color("#07101acc")
+	art_tint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	opening_root.add_child(art_tint)
+
+	var scanline := ColorRect.new()
+	scanline.name = "CinematicScanline"
+	scanline.set_anchors_preset(Control.PRESET_FULL_RECT)
+	scanline.color = Color("#84d8ff0b")
+	scanline.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	opening_root.add_child(scanline)
+
+	var top_bar := HBoxContainer.new()
+	top_bar.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	top_bar.position = Vector2(46, 28)
+	top_bar.size = Vector2(1180, 52)
+	top_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	opening_root.add_child(top_bar)
+	var mark := _make_header_label("MIND / SCAPE", 16, Color("#92d8ff"))
+	mark.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top_bar.add_child(mark)
+	var skip_button := Button.new()
+	skip_button.text = "跳过序章  ›"
+	skip_button.focus_mode = Control.FOCUS_NONE
+	skip_button.mouse_filter = Control.MOUSE_FILTER_STOP
+	skip_button.z_index = 20
+	skip_button.add_theme_stylebox_override("normal", _menu_button_style(Color("#9bd8ff"), false))
+	skip_button.add_theme_stylebox_override("hover", _menu_button_style(Color("#f0c98a"), true))
+	skip_button.pressed.connect(_finish_opening_cinematic)
+	top_bar.add_child(skip_button)
+
+	var title := _make_header_label("心灵视界", 52, Color("#f6e2b8"))
+	title.position = Vector2(54, 88)
+	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	opening_root.add_child(title)
+	var subtitle := _make_header_label("一顶头盔 · 一张长椅 · 五种看见世界的方式", 16, Color("#b7d4e5"))
+	subtitle.position = Vector2(58, 148)
+	subtitle.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	opening_root.add_child(subtitle)
+
+	var dialogue_panel := PanelContainer.new()
+	dialogue_panel.name = "OpeningDialogue"
+	dialogue_panel.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	dialogue_panel.position = Vector2(46, -196)
+	dialogue_panel.size = Vector2(1188, 150)
+	dialogue_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	dialogue_panel.add_theme_stylebox_override("panel", _menu_frame_style(Color("#09121ce8"), Color("#8ec9ff"), 12))
+	opening_root.add_child(dialogue_panel)
+	var dialogue_margin := MarginContainer.new()
+	_set_panel_padding(dialogue_margin, 24, 18, 24, 18)
+	dialogue_panel.add_child(dialogue_margin)
+	var dialogue_row := HBoxContainer.new()
+	dialogue_row.add_theme_constant_override("separation", 18)
+	dialogue_margin.add_child(dialogue_row)
+	opening_portrait = TextureRect.new()
+	opening_portrait.name = "OpeningPortrait"
+	opening_portrait.custom_minimum_size = Vector2(92, 110)
+	opening_portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	opening_portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	opening_portrait.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	opening_portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	dialogue_row.add_child(opening_portrait)
+	var dialogue_copy := VBoxContainer.new()
+	dialogue_copy.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	dialogue_copy.add_theme_constant_override("separation", 5)
+	dialogue_row.add_child(dialogue_copy)
+	opening_speaker = _make_header_label("", 16, Color("#f0c98a"))
+	dialogue_copy.add_child(opening_speaker)
+	opening_caption = _make_header_label("", 24, Color("#f4f0e5"))
+	opening_caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	dialogue_copy.add_child(opening_caption)
+	opening_progress = _make_header_label("", 13, Color("#8ec9ff"))
+	dialogue_copy.add_child(opening_progress)
+
+	var click_hint := _make_header_label("点击画面继续", 14, Color("#d5e9f4"))
+	click_hint.position = Vector2(56, -34)
+	click_hint.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	click_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	opening_root.add_child(click_hint)
+
+	var advance_area := Button.new()
+	advance_area.name = "AdvanceOpeningOnClick"
+	advance_area.set_anchors_preset(Control.PRESET_FULL_RECT)
+	advance_area.flat = true
+	advance_area.focus_mode = Control.FOCUS_NONE
+	advance_area.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	advance_area.mouse_filter = Control.MOUSE_FILTER_STOP
+	advance_area.pressed.connect(func(): _advance_opening_cinematic(true))
+	opening_root.add_child(advance_area)
+
+	opening_phase_index = 0
+	opening_phase_elapsed = 0.0
+	_sync_opening_cinematic()
+
+func _sync_opening_cinematic() -> void:
+	if not opening_active or opening_art == null or not is_instance_valid(opening_art):
+		return
+	var atlas := AtlasTexture.new()
+	atlas.atlas = INTRO_COMIC_TEXTURE
+	atlas.region = opening_phase_regions[opening_phase_index]
+	opening_art.texture = atlas
+	opening_art.modulate = Color(1, 1, 1, 0.0)
+	var fade := create_tween()
+	fade.tween_property(opening_art, "modulate", Color.WHITE, 0.45)
+	var phase: Array = opening_phase_lines[opening_phase_index]
+	if opening_speaker != null:
+		opening_speaker.text = str(phase[0])
+	if opening_caption != null:
+		opening_caption.text = str(phase[1])
+	if opening_progress != null:
+		opening_progress.text = "%02d / %02d    ·    点击画面快进" % [opening_phase_index + 1, opening_phase_regions.size()]
+	if opening_portrait != null:
+		var portrait := AtlasTexture.new()
+		portrait.atlas = INTRO_DOCTOR_TEXTURE
+		portrait.region = Rect2(0, 0, 96, 128)
+		opening_portrait.texture = portrait
+
+func _update_opening_cinematic(delta: float) -> void:
+	if not opening_active:
+		return
+	opening_phase_elapsed += delta
+	if opening_art != null and is_instance_valid(opening_art):
+		var pulse := 1.0 + 0.012 * sin(opening_phase_elapsed * 2.2)
+		opening_art.scale = Vector2(pulse, pulse)
+	if opening_phase_elapsed >= opening_phase_duration:
+		_advance_opening_cinematic(false)
+
+func _advance_opening_cinematic(force: bool) -> void:
+	if not opening_active:
+		return
+	if opening_phase_index < opening_phase_regions.size() - 1:
+		if force or opening_phase_elapsed >= opening_phase_duration:
+			opening_phase_index += 1
+			opening_phase_elapsed = 0.0
+			_sync_opening_cinematic()
+		return
+	_finish_opening_cinematic()
+
+func _finish_opening_cinematic() -> void:
+	if not opening_active:
+		return
+	opening_active = false
+	if is_instance_valid(opening_root):
+		opening_root.queue_free()
+	opening_root = null
+	opening_art = null
+	opening_caption = null
+	opening_speaker = null
+	opening_portrait = null
+	opening_progress = null
+	var profile: Dictionary = ProfileManager.get_current_profile()
+	var saved_state: Dictionary = profile.get("state", GameData.default_state()) as Dictionary
+	saved_state["opening_seen"] = true
+	saved_state["opening_version"] = 2
+	ProfileManager.save_state(saved_state)
+	show_login_screen()
+
 func show_login_screen() -> void:
 	clear_scene()
-	menu_root = Control.new()
-	menu_root.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(menu_root)
-	var bg := ColorRect.new()
-	bg.color = Color("#17232f")
-	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	menu_root.add_child(bg)
-	var title := Label.new()
-	title.text = "心灵视界\nMindscape"
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.position = Vector2(410, 38)
-	title.size = Vector2(460, 120)
-	title.add_theme_font_size_override("font_size", 52)
-	menu_root.add_child(title)
-	var card := Panel.new()
-	card.position = Vector2(410, 178)
-	card.size = Vector2(460, 468)
-	menu_root.add_child(card)
+	menu_root = _build_menu_root(Color("#0f1621d8"), Color("#7ec7ff1a"))
+	var shell := MarginContainer.new()
+	shell.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_set_panel_padding(shell, 56, 42, 56, 36)
+	menu_root.add_child(shell)
+
+	var layout := HBoxContainer.new()
+	layout.set_anchors_preset(Control.PRESET_FULL_RECT)
+	layout.add_theme_constant_override("separation", 24)
+	shell.add_child(layout)
+
+	var left := VBoxContainer.new()
+	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left.custom_minimum_size = Vector2(560, 0)
+	left.add_theme_constant_override("separation", 18)
+	layout.add_child(left)
+
+	var title_block := VBoxContainer.new()
+	title_block.add_theme_constant_override("separation", 0)
+	left.add_child(title_block)
+	var title := _make_header_label("心灵视界", 54, Color("#f6e2b8"))
+	title_block.add_child(title)
+	var title_sub := _make_header_label("Mindscape", 26, Color("#96d7ff"))
+	title_sub.modulate = Color(1, 1, 1, 0.85)
+	title_block.add_child(title_sub)
+	var opening := _make_header_label("发明、重聚、以及重新看见彼此的方式。", 18, Color("#ddd3c0"))
+	opening.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	opening.custom_minimum_size = Vector2(520, 0)
+	left.add_child(opening)
+
+	var card := PanelContainer.new()
+	card.custom_minimum_size = Vector2(0, 0)
+	card.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	card.add_theme_stylebox_override("panel", _menu_frame_style(Color("#151a23e8"), Color("#88bde5")))
+	left.add_child(card)
+	var card_margin := MarginContainer.new()
+	_set_panel_padding(card_margin, 22, 20, 22, 20)
+	card.add_child(card_margin)
+	var card_body := VBoxContainer.new()
+	card_body.add_theme_constant_override("separation", 12)
+	card_margin.add_child(card_body)
+
 	var current_profile: Dictionary = ProfileManager.get_current_profile()
-	var avatar := Label.new()
-	avatar.text = "本地档案"
-	avatar.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	avatar.position = Vector2(135, 28)
-	avatar.size = Vector2(190, 34)
-	avatar.add_theme_font_size_override("font_size", 28)
-	card.add_child(avatar)
-	var profile_label := Label.new()
-	profile_label.text = "当前玩家：%s" % current_profile.get("display_name", "旅行者")
-	profile_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	profile_label.position = Vector2(45, 78)
-	profile_label.size = Vector2(370, 36)
-	profile_label.add_theme_font_size_override("font_size", 22)
-	card.add_child(profile_label)
+	var intro_line := _make_header_label("当前档案：%s" % current_profile.get("display_name", "旅行者"), 22, Color("#ffe8a0"))
+	card_body.add_child(intro_line)
+	var intro_note := _make_header_label("输入名字后创建新档案，或直接登录已存在的旅程。", 15, Color("#a9b6c6"))
+	intro_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	card_body.add_child(intro_note)
+
 	login_name_input = LineEdit.new()
 	login_name_input.placeholder_text = "输入新玩家名字"
-	login_name_input.position = Vector2(80, 132)
-	login_name_input.size = Vector2(300, 42)
-	card.add_child(login_name_input)
+	login_name_input.custom_minimum_size = Vector2(0, 42)
+	login_name_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card_body.add_child(login_name_input)
+
 	agreement_check_box = CheckBox.new()
 	agreement_check_box.name = "AgreementCheckBox"
-	agreement_check_box.text = "我已阅读并同意以下协议"
-	agreement_check_box.position = Vector2(68, 190)
-	agreement_check_box.size = Vector2(324, 36)
-	agreement_check_box.add_theme_font_size_override("font_size", 17)
-	card.add_child(agreement_check_box)
+	agreement_check_box.text = "我已阅读并同意用户协议与隐私说明"
+	agreement_check_box.add_theme_font_size_override("font_size", 16)
+	card_body.add_child(agreement_check_box)
+
 	var links := HBoxContainer.new()
-	links.position = Vector2(112, 228)
-	links.size = Vector2(236, 32)
 	links.add_theme_constant_override("separation", 18)
-	card.add_child(links)
+	card_body.add_child(links)
 	var terms_link := LinkButton.new()
 	terms_link.name = "UserAgreementLink"
-	terms_link.text = "《用户协议》"
+	terms_link.text = "用户协议"
 	terms_link.pressed.connect(show_agreement_document.bind("terms"))
 	links.add_child(terms_link)
 	var privacy_link := LinkButton.new()
 	privacy_link.name = "PrivacyAgreementLink"
-	privacy_link.text = "《隐私说明》"
+	privacy_link.text = "隐私说明"
 	privacy_link.pressed.connect(show_agreement_document.bind("privacy"))
 	links.add_child(privacy_link)
-	agreement_hint_label = Label.new()
-	agreement_hint_label.name = "AgreementHint"
-	agreement_hint_label.text = "勾选后才能进入或创建档案"
-	agreement_hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	agreement_hint_label.position = Vector2(45, 266)
-	agreement_hint_label.size = Vector2(370, 28)
-	agreement_hint_label.modulate = Color("#f0c98a")
-	card.add_child(agreement_hint_label)
+
+	agreement_hint_label = _make_header_label("勾选后才能进入或创建档案。", 14, Color("#f0c98a"))
+	card_body.add_child(agreement_hint_label)
+
 	var buttons := VBoxContainer.new()
-	buttons.position = Vector2(115, 314)
-	buttons.size = Vector2(230, 100)
-	buttons.add_theme_constant_override("separation", 12)
-	card.add_child(buttons)
+	buttons.add_theme_constant_override("separation", 10)
+	card_body.add_child(buttons)
 	login_current_button = _add_button(buttons, "登录当前档案", _accept_agreement_and_show_main_menu)
 	login_current_button.name = "LoginCurrentButton"
 	create_profile_button = _add_button(buttons, "创建并登录", func():
@@ -287,6 +699,10 @@ func show_login_screen() -> void:
 	agreement_check_box.disabled = already_accepted
 	agreement_check_box.toggled.connect(_update_agreement_gate)
 	_update_agreement_gate(already_accepted)
+	if already_accepted:
+		login_current_button.call_deferred("grab_focus")
+	else:
+		agreement_check_box.call_deferred("grab_focus")
 
 func _update_agreement_gate(accepted: bool) -> void:
 	if is_instance_valid(login_current_button):
@@ -342,43 +758,49 @@ func _agreement_document_text(kind: String) -> String:
 
 func show_main_menu() -> void:
 	clear_scene()
-	menu_root = Control.new()
-	menu_root.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(menu_root)
-	var bg := ColorRect.new()
-	bg.color = Color("#25384a")
-	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	menu_root.add_child(bg)
-	var title := Label.new()
-	title.text = "心灵视界\nMindscape"
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.position = Vector2(420, 90)
-	title.size = Vector2(440, 130)
-	title.add_theme_font_size_override("font_size", 54)
-	menu_root.add_child(title)
+	menu_root = _build_menu_root(Color("#13202ad8"), Color("#8ec9ff18"))
+	var shell := MarginContainer.new()
+	shell.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_set_panel_padding(shell, 56, 40, 56, 38)
+	menu_root.add_child(shell)
+
+	var layout := HBoxContainer.new()
+	layout.set_anchors_preset(Control.PRESET_FULL_RECT)
+	layout.add_theme_constant_override("separation", 26)
+	shell.add_child(layout)
+
+	var left := VBoxContainer.new()
+	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left.custom_minimum_size = Vector2(540, 0)
+	left.add_theme_constant_override("separation", 18)
+	layout.add_child(left)
+
+	left.add_child(_make_header_label("心灵视界", 56, Color("#f6e2b8")))
+	left.add_child(_make_header_label("Mindscape", 24, Color("#8ec9ff")))
 	var current_profile: Dictionary = ProfileManager.get_current_profile()
 	var current_state: Dictionary = current_profile.get("state", {}) as Dictionary
-	var player_name := Label.new()
-	player_name.text = "玩家：%s%s" % [current_profile.get("display_name", "旅行者"), "  ·  已通关" if bool(current_state.get("finished", false)) else ""]
-	player_name.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	player_name.position = Vector2(330, 230)
-	player_name.size = Vector2(620, 32)
-	player_name.add_theme_font_size_override("font_size", 22)
-	player_name.modulate = Color("#ffe8a0")
-	menu_root.add_child(player_name)
-	var capsule := Label.new()
-	capsule.text = "旅程已经完成，仍可继续寻找遗漏的纪念物" if bool(current_state.get("finished", false)) else "中央广场的时间胶囊正在等待被重新理解"
-	capsule.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	capsule.position = Vector2(330, 268)
-	capsule.size = Vector2(620, 42)
-	capsule.add_theme_font_size_override("font_size", 22)
-	menu_root.add_child(capsule)
+	var summary := PanelContainer.new()
+	summary.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	summary.add_theme_stylebox_override("panel", _menu_frame_style(Color("#111821ea"), Color("#8ec9ff")))
+	left.add_child(summary)
+	var summary_margin := MarginContainer.new()
+	_set_panel_padding(summary_margin, 22, 20, 22, 20)
+	summary.add_child(summary_margin)
+	var summary_body := VBoxContainer.new()
+	summary_body.add_theme_constant_override("separation", 10)
+	summary_margin.add_child(summary_body)
+	summary_body.add_child(_make_header_label("当前档案", 20, Color("#f0c98a")))
+	summary_body.add_child(_make_header_label("%s%s" % [current_profile.get("display_name", "旅行者"), "  ·  已通关" if bool(current_state.get("finished", false)) else ""], 22, Color("#ffe8a0")))
+	summary_body.add_child(_make_header_label("时间胶囊已经被重新理解，但纪念仍可以继续收集。", 15, Color("#b7c6d6")))
+	summary_body.add_child(_build_profile_stat_row("完成度", "%d%%" % int((current_profile.get("stats", {}) as Dictionary).get("completion", 0)), Color("#f0c98a")))
+	summary_body.add_child(_build_profile_stat_row("相册", "%d 张" % int((current_profile.get("stats", {}) as Dictionary).get("album_count", 0)), Color("#8ec9ff")))
+	summary_body.add_child(_build_profile_stat_row("游玩", _format_time((current_profile.get("stats", {}) as Dictionary).get("play_time", 0.0)), Color("#b9d6ff")))
+	summary_body.add_child(_make_chip("已通关" if bool(current_state.get("finished", false)) else "未通关", Color("#9bd8a2") if bool(current_state.get("finished", false)) else Color("#f0c98a")))
+
 	var buttons := VBoxContainer.new()
-	buttons.position = Vector2(510, 340)
-	buttons.size = Vector2(260, 280)
-	buttons.add_theme_constant_override("separation", 14)
-	menu_root.add_child(buttons)
-	_add_button(buttons, "继续游戏", func(): start_game(false))
+	buttons.add_theme_constant_override("separation", 10)
+	summary_body.add_child(buttons)
+	var continue_button := _add_button(buttons, "继续游戏", func(): start_game(false))
 	_add_button(buttons, "新游戏", func():
 		ProfileManager.reset_current_profile()
 		start_game(true)
@@ -386,43 +808,108 @@ func show_main_menu() -> void:
 	_add_button(buttons, "切换档案", func(): show_profile_menu())
 	_add_button(buttons, "设置", func(): show_settings())
 	_add_button(buttons, "退出", func(): get_tree().quit())
+	continue_button.call_deferred("grab_focus")
+
+	var right := PanelContainer.new()
+	right.custom_minimum_size = Vector2(360, 0)
+	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right.add_theme_stylebox_override("panel", _menu_frame_style(Color("#10141be8"), Color("#86d9ff")))
+	layout.add_child(right)
+	var right_margin := MarginContainer.new()
+	_set_panel_padding(right_margin, 18, 18, 18, 18)
+	right.add_child(right_margin)
+	var right_body := VBoxContainer.new()
+	right_body.add_theme_constant_override("separation", 12)
+	right_margin.add_child(right_body)
+	right_body.add_child(_make_header_label("开篇漫画 / 记忆长卷", 22, Color("#f6e2b8"), true))
+	var comic_note := _make_header_label("按“继续游戏”回到中央广场，按“新游戏”从序章开始。", 14, Color("#a9b6c6"), true)
+	comic_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	right_body.add_child(comic_note)
+	var comic_frame := PanelContainer.new()
+	comic_frame.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	comic_frame.add_theme_stylebox_override("panel", _menu_frame_style(Color("#0e1118e6"), Color("#86d9ff")))
+	right_body.add_child(comic_frame)
+	var comic_scroll := ScrollContainer.new()
+	comic_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	comic_scroll.custom_minimum_size = Vector2(0, 510)
+	comic_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	comic_frame.add_child(comic_scroll)
+	var comic := TextureRect.new()
+	comic.texture = INTRO_COMIC_TEXTURE
+	comic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	comic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	comic.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	comic.custom_minimum_size = Vector2(0, 1310)
+	comic.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	comic_scroll.add_child(comic)
+	right_body.add_child(_make_header_label("故事已经翻开，旅程可以继续。", 13, Color("#8ec9ff"), true))
 
 func show_profile_menu() -> void:
 	clear_scene()
-	menu_root = Control.new()
-	menu_root.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(menu_root)
-	var bg := ColorRect.new()
-	bg.color = Color("#1f3141")
-	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	menu_root.add_child(bg)
-	var title := Label.new()
-	title.text = "玩家档案"
-	title.position = Vector2(90, 60)
-	title.add_theme_font_size_override("font_size", 44)
-	menu_root.add_child(title)
+	menu_root = _build_menu_root(Color("#101823dc"), Color("#8ec9ff16"))
+	var shell := MarginContainer.new()
+	shell.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_set_panel_padding(shell, 56, 40, 56, 38)
+	menu_root.add_child(shell)
+	var layout := HBoxContainer.new()
+	layout.set_anchors_preset(Control.PRESET_FULL_RECT)
+	layout.add_theme_constant_override("separation", 24)
+	shell.add_child(layout)
+
+	var left := VBoxContainer.new()
+	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left.custom_minimum_size = Vector2(420, 0)
+	left.add_theme_constant_override("separation", 14)
+	layout.add_child(left)
+	left.add_child(_make_header_label("玩家档案", 46, Color("#f6e2b8")))
+	left.add_child(_make_header_label("每个档案都保留独立进度、头像和完成统计。", 15, Color("#b7c6d6")))
+	var current_profile: Dictionary = ProfileManager.get_current_profile()
+	var current_stats: Dictionary = current_profile.get("stats", {}) as Dictionary
+	var current_card := PanelContainer.new()
+	current_card.add_theme_stylebox_override("panel", _menu_frame_style(Color("#111821ea"), Color("#8ec9ff")))
+	left.add_child(current_card)
+	var current_margin := MarginContainer.new()
+	_set_panel_padding(current_margin, 18, 18, 18, 18)
+	current_card.add_child(current_margin)
+	var current_body := VBoxContainer.new()
+	current_body.add_theme_constant_override("separation", 8)
+	current_margin.add_child(current_body)
+	current_body.add_child(_make_header_label("当前档案：%s" % current_profile.get("display_name", "旅行者"), 20, Color("#ffe8a0")))
+	current_body.add_child(_build_profile_stat_row("完成度", "%d%%" % int(current_stats.get("completion", 0)), Color("#f0c98a")))
+	current_body.add_child(_build_profile_stat_row("相册", "%d 张" % int(current_stats.get("album_count", 0)), Color("#8ec9ff")))
+	current_body.add_child(_build_profile_stat_row("游玩", _format_time(current_stats.get("play_time", 0.0)), Color("#b9d6ff")))
+	current_body.add_child(_make_chip("已通关" if bool((current_profile.get("state", {}) as Dictionary).get("finished", false)) else "进行中", Color("#9bd8a2") if bool((current_profile.get("state", {}) as Dictionary).get("finished", false)) else Color("#f0c98a")))
+	_add_button(current_body, "返回登录", func(): show_login_screen())
+
+	var right := PanelContainer.new()
+	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	right.custom_minimum_size = Vector2(600, 0)
+	right.add_theme_stylebox_override("panel", _menu_frame_style(Color("#111821ea"), Color("#8ec9ff")))
+	layout.add_child(right)
+	var right_margin := MarginContainer.new()
+	_set_panel_padding(right_margin, 18, 18, 18, 18)
+	right.add_child(right_margin)
+	var right_body := VBoxContainer.new()
+	right_body.add_theme_constant_override("separation", 12)
+	right_margin.add_child(right_body)
+	right_body.add_child(_make_header_label("存档卡片墙", 22, Color("#f6e2b8"), true))
+	right_body.add_child(_make_header_label("点击任意一张卡片切换档案。", 14, Color("#a9b6c6"), true))
+	var list_scroll := ScrollContainer.new()
+	list_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	list_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	right_body.add_child(list_scroll)
 	var list := VBoxContainer.new()
-	list.position = Vector2(90, 140)
-	list.size = Vector2(760, 420)
 	list.add_theme_constant_override("separation", 10)
-	menu_root.add_child(list)
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	list_scroll.add_child(list)
 	for profile in ProfileManager.list_profiles():
-		var stats: Dictionary = profile.get("stats", {})
-		var profile_state: Dictionary = profile.get("state", {}) as Dictionary
-		var status := "已通关  ·  " if bool(profile_state.get("finished", false)) else ""
-		var text := "%s  ·  %s完成度 %d%%  ·  相册 %d  ·  游玩 %s" % [
-			profile.get("display_name", "旅行者"),
-			status,
-			stats.get("completion", 0),
-			stats.get("album_count", 0),
-			_format_time(stats.get("play_time", 0.0)),
-		]
-		_add_profile_button(list, text, profile.get("id", ""))
+		list.add_child(_build_profile_card(profile))
 	_add_button(list, "创建新档案", func():
 		ProfileManager.create_profile("旅行者%d" % (ProfileManager.list_profiles().size() + 1), ["sun", "moon", "leaf"][ProfileManager.list_profiles().size() % 3])
 		show_profile_menu()
 	)
-	_add_button(list, "返回登录", func(): show_login_screen())
+	right_body.add_child(_make_header_label("存档页保留独立头像、完成度、相册数和游玩时长。", 12, Color("#8ec9ff"), true))
 
 func show_settings() -> void:
 	var box := AcceptDialog.new()
@@ -493,8 +980,6 @@ func start_game(new_game: bool) -> void:
 			node.player_touched.connect(_on_monster_damage)
 	game_running = true
 	autosave()
-	if new_game:
-		show_intro()
 
 func _normalize_state() -> void:
 	var fragments: Array = state.get("fragments", []) as Array
@@ -516,49 +1001,93 @@ func _normalize_state() -> void:
 	state["completed_levels"] = completed
 
 func show_intro() -> void:
-	player.controls_enabled = false
-	var intro := AcceptDialog.new()
-	intro.title = "心灵花园 · 序章"
-	intro.dialog_text = """━━━━━━ 心灵花园 Mindscape ━━━━━━
+	if player == null or not is_instance_valid(player):
+		return
+	player.suspend_for_interaction()
 
-五个人曾经是最好的朋友。
-
-阿明——看不见光，但听得见风从湖面来的颜色。
-阿冲——总是停不下来，跑得最快的人不用解释自己。
-小静——安静地注视，只有她能看见被忽略的痕迹。
-小远——从细节中发现规律，把混乱变成秩序。
-而你——你学会了理解每个人眼中的风景。
-
-后来，时间胶囊被封印了。
-怪物侵入了每个区域，把真正的感知
-变成了噪音、干扰和阴影。
-
-要打开胶囊，你需要重新走入四种视角——
-在记忆长椅旁坐下来，切换感知方式。
-
-━━━━━━━━━━━━━━━━━━
-【操作】
-A/D 左右移动    Space 跳跃
-E   互动（对话/解谜/收集）
-F   特殊能力（ADHD冲刺）
-TAB 视角轮盘    ESC 暂停
-
-【四种视角】
-盲人模式：画面全黑，依靠听觉与触觉探索
-ADHD模式：按方向键自动持续行走，跳跃更高
-自闭症模式：细节放大，能发现隐藏模式
-抑郁模式：画面灰暗，地面尖刺显露，能看到潜台词
-
-━━━━━━━━━━━━━━━━━━
-━━━━━━━━━━━━━━━━━━
-
-风铃、手套、风筝、照片和纪念徽章，
-还在等你把它们带回家。"""
+	var intro := Control.new()
+	intro.name = "OpeningComic"
+	intro.set_anchors_preset(Control.PRESET_FULL_RECT)
+	intro.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(intro)
-	intro.confirmed.connect(func():
-		player.controls_enabled = true
+
+	var bg := ColorRect.new()
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.color = Color("#0a1118f0")
+	intro.add_child(bg)
+
+	var shell := MarginContainer.new()
+	shell.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_set_panel_padding(shell, 40, 32, 40, 32)
+	intro.add_child(shell)
+
+	var frame := PanelContainer.new()
+	frame.add_theme_stylebox_override("panel", _menu_frame_style(Color("#111821f2"), Color("#86d9ff"), 12))
+	shell.add_child(frame)
+	var margin := MarginContainer.new()
+	_set_panel_padding(margin, 20, 18, 20, 18)
+	frame.add_child(margin)
+	var layout := HBoxContainer.new()
+	layout.add_theme_constant_override("separation", 18)
+	margin.add_child(layout)
+
+	var left := VBoxContainer.new()
+	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left.custom_minimum_size = Vector2(340, 0)
+	left.add_theme_constant_override("separation", 12)
+	layout.add_child(left)
+	left.add_child(_make_header_label("开篇漫画", 38, Color("#f6e2b8")))
+	left.add_child(_make_header_label("发明家、头盔、记忆长椅，以及回到童年冒险的路。", 16, Color("#b7c6d6")))
+	left.add_child(_make_chip("可跳过", Color("#8ec9ff")))
+	left.add_child(_make_chip("按 Enter 继续", Color("#f0c98a")))
+	var story := RichTextLabel.new()
+	story.fit_content = true
+	story.scroll_active = false
+	story.bbcode_enabled = true
+	story.custom_minimum_size = Vector2(0, 0)
+	story.add_theme_font_size_override("normal_font_size", 18)
+	story.add_theme_color_override("default_color", Color("#ebe6d8"))
+	story.text = "[center]发明家做出了一顶能看见他人世界的头盔。[/center]\n\n[center]一张记忆长椅，把不同视角重新接回同一个世界。[/center]\n\n[center]童年的伙伴们听见这个消息后，一个个重新聚了起来。[/center]\n\n[center]他们回到熟悉的地方，准备找回那份被封住的宝藏记忆。[/center]"
+	left.add_child(story)
+	var buttons := HBoxContainer.new()
+	buttons.add_theme_constant_override("separation", 12)
+	left.add_child(buttons)
+	var start_button := _add_button(buttons, "开始序章", func():
+		state["intro_seen"] = true
+		ProfileManager.save_state(state)
+		player.resume_after_interaction()
+		intro.queue_free()
 	)
-	intro.popup_centered(Vector2(680, 580))
+	var skip_button := _add_button(buttons, "跳过开篇", func():
+		state["intro_seen"] = true
+		ProfileManager.save_state(state)
+		player.resume_after_interaction()
+		intro.queue_free()
+	)
+	start_button.call_deferred("grab_focus")
+	skip_button.focus_neighbor_top = start_button.get_path()
+
+	var right := PanelContainer.new()
+	right.custom_minimum_size = Vector2(360, 0)
+	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right.add_theme_stylebox_override("panel", _menu_frame_style(Color("#10141bf0"), Color("#86d9ff")))
+	layout.add_child(right)
+	var right_margin := MarginContainer.new()
+	_set_panel_padding(right_margin, 12, 12, 12, 12)
+	right.add_child(right_margin)
+	var comic_scroll := ScrollContainer.new()
+	comic_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	comic_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	comic_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	right_margin.add_child(comic_scroll)
+	var comic := TextureRect.new()
+	comic.texture = INTRO_COMIC_TEXTURE
+	comic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	comic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	comic.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	comic.custom_minimum_size = Vector2(0, 1310)
+	comic.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	comic_scroll.add_child(comic)
 
 func clear_scene() -> void:
 	game_running = false
@@ -2009,19 +2538,29 @@ func _puzzle_by_id(id: String) -> Dictionary:
 func _add_button(parent: Control, text: String, callback: Callable) -> Button:
 	var button := Button.new()
 	button.text = text
-	button.custom_minimum_size = Vector2(230, 48)
+	button.custom_minimum_size = Vector2(0, 48)
+	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	button.focus_mode = Control.FOCUS_ALL
+	button.add_theme_font_size_override("font_size", 16)
+	button.add_theme_color_override("font_color", Color("#f5ead7"))
+	button.add_theme_stylebox_override("normal", _menu_button_style(Color("#8ec9ff"), false))
+	button.add_theme_stylebox_override("hover", _menu_button_style(Color("#8ec9ff"), true))
+	button.add_theme_stylebox_override("pressed", _menu_button_style(Color("#5ba8ff"), true))
+	button.add_theme_stylebox_override("focus", _menu_button_style(Color("#f0c98a"), true))
 	button.pressed.connect(callback)
 	parent.add_child(button)
 	return button
 
 func _add_profile_button(parent: Control, text: String, profile_id: String) -> Button:
-	return _add_button(parent, text, func():
+	var button := _add_button(parent, text, func():
 		ProfileManager.set_current_profile(profile_id)
 		if ProfileManager.current_profile_has_accepted_agreement():
 			show_main_menu()
 		else:
 			show_login_screen()
 	)
+	button.custom_minimum_size = Vector2(0, 116)
+	return button
 
 func _add_view_button(parent: Control, view: String) -> Button:
 	return _add_button(parent, GameData.VIEW_NAMES[view], func():

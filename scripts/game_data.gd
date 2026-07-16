@@ -310,6 +310,9 @@ static func default_state() -> Dictionary:
 		"is_debug_profile": false,
 		"debug_preset": "",
 		"debug_spawn_target": "",
+		"intro_seen": false,
+		"opening_seen": false,
+		"opening_version": 0,
 	}
 
 static func migrate_state(state: Dictionary) -> bool:
@@ -327,6 +330,9 @@ static func migrate_state(state: Dictionary) -> bool:
 		"is_debug_profile": false,
 		"debug_preset": "",
 		"debug_spawn_target": "",
+		"intro_seen": false,
+		"opening_seen": false,
+		"opening_version": 0,
 		"album_piece_positions": {},
 		"album_puzzles_completed": [],
 		"seen_notes": [],
