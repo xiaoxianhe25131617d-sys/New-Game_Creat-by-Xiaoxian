@@ -3,6 +3,8 @@ class_name PuzzleNotePopup
 
 signal closed
 
+const BRAILLE_FONT := preload("res://assets/fonts/NotoSansSymbols2-Regular.ttf")
+
 var _note: Dictionary = {}
 var _view := "normal"
 var _panel: Panel
@@ -63,6 +65,7 @@ func _build() -> void:
 	_braille.position = Vector2(58, 215)
 	_braille.size = Vector2(564, 58)
 	_braille.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_braille.add_theme_font_override("font", BRAILLE_FONT)
 	_braille.add_theme_font_size_override("font_size", 27)
 	_braille.add_theme_color_override("font_color", Color("#243f55"))
 	_panel.add_child(_braille)
