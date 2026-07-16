@@ -92,6 +92,11 @@ func on_view_changed(view: String) -> void:
 		set_deferred("monitorable", true)
 	else:
 		target_alpha = 0.0
+		current_alpha = 0.0
+		if body_node != null:
+			body_node.modulate.a = 0.0
+		if label_node != null:
+			label_node.modulate.a = 0.0
 		is_active = false
 		set_deferred("monitoring", false)
 		set_deferred("monitorable", false)

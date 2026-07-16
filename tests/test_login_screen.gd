@@ -12,6 +12,14 @@ func _ready() -> void:
 	if bool(source_state.get("finished", false)):
 		_fail("Debug profile progress must not mutate the real profile state")
 		return
+	ProfileManager.profiles = [{
+		"id": "login_test",
+		"display_name": "旅行者",
+		"avatar": "sun",
+		"state": source_state,
+		"stats": ProfileManager.compute_stats(source_state),
+	}]
+	ProfileManager.current_profile_id = "login_test"
 	var packed := load("res://scenes/Main.tscn") as PackedScene
 	if packed == null:
 		_fail("Main scene must load without script parse errors")
@@ -24,6 +32,29 @@ func _ready() -> void:
 		return
 	if main.menu_root.find_children("*", "Label", true, false).is_empty():
 		_fail("Login screen must contain visible UI content")
+		return
+	var agreement_check := main.menu_root.find_child("AgreementCheckBox", true, false) as CheckBox
+	var login_button := main.menu_root.find_child("LoginCurrentButton", true, false) as Button
+	var create_button := main.menu_root.find_child("CreateProfileButton", true, false) as Button
+	if agreement_check == null or login_button == null or create_button == null:
+		_fail("Login screen must expose agreement controls")
+		return
+	if not login_button.disabled or not create_button.disabled:
+		_fail("Profile entry actions must stay locked before agreement")
+		return
+	agreement_check.button_pressed = true
+	agreement_check.toggled.emit(true)
+	await get_tree().process_frame
+	if login_button.disabled or create_button.disabled:
+		_fail("Agreement checkbox must unlock profile entry actions")
+		return
+	if not main.has_method("show_agreement_document"):
+		_fail("Agreement documents must be readable from the login screen")
+		return
+	main.show_agreement_document("privacy")
+	await get_tree().process_frame
+	if main.menu_root.find_child("AgreementDocument", true, false) == null:
+		_fail("Privacy link must open a readable agreement document")
 		return
 	print("PASS: login screen startup check")
 	get_tree().quit(0)

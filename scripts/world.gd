@@ -1467,18 +1467,9 @@ func _add_pixel_rect(parent: Node2D, rect: Rect2, color: Color) -> void:
 	px.color = color
 	parent.add_child(px)
 
-func _make_monsters(state: Dictionary) -> void:
-	var completed: Array = state.get("completed_regions", [])
-	var data: Array = [
-		{"id": "noise_lighthouse", "type": "noise", "region": "lighthouse"},
-		{"id": "shadow_forest", "type": "shadow", "region": "forest"},
-	]
-	for item in data:
-		if completed.has(item["region"]): continue
-		var monster := MindscapeMonster.new()
-		var monster_id := str(item["id"])
-		monster.setup(monster_id, item["type"], get_marker_position(&"monsters", StringName(monster_id)))
-		monster_canvas.add_child(monster)
+func _make_monsters(_state: Dictionary) -> void:
+	# Procedural monster polygons are intentionally disabled.
+	pass
 
 # ══════════════════════════════════════════════════════════════
 #  INTERACTION
@@ -1705,39 +1696,6 @@ func _finish_adhd_attention_cue(ring: Panel) -> void:
 		ring.queue_free()
 	if _adhd_attention_cue == ring:
 		_adhd_attention_cue = null
-
-func trigger_echo_pulse(_center: Vector2) -> void:
-	if current_palette_view != "blind" or not is_instance_valid(view_overlay_canvas): return
-	var ss := get_viewport().get_visible_rect().size
-	var start_sz: float = 14.0
-	var end_sz: float = minf(ss.x, ss.y) * 1.5
-	var ring := Panel.new()
-	ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var rs := StyleBoxFlat.new()
-	rs.bg_color = Color.TRANSPARENT
-	rs.border_width_left = 3; rs.border_width_right = 3
-	rs.border_width_top = 3; rs.border_width_bottom = 3
-	rs.border_color = Color(1.0, 1.0, 1.0, 0.9)
-	ring.add_theme_stylebox_override("panel", rs)
-	ring.size = Vector2(start_sz, start_sz)
-	ring.position = _get_player_screen_position() - Vector2(start_sz, start_sz) / 2.0
-	view_overlay_canvas.add_child(ring)
-	var tween := create_tween().set_parallel(true)
-	tween.tween_method(_echo_ring_step.bind(ring, start_sz, end_sz), 0.0, 1.0, 0.55)
-	tween.tween_callback(_echo_ring_done.bind(ring))
-
-func _echo_ring_step(val: float, ring: Panel, start_sz: float, end_sz: float) -> void:
-	if not is_instance_valid(ring): return
-	var sz := lerpf(start_sz, end_sz, val)
-	ring.size = Vector2(sz, sz)
-	ring.position = _get_player_screen_position() - Vector2(sz, sz) / 2.0
-	var st := ring.get_theme_stylebox("panel") as StyleBoxFlat
-	if st != null:
-		st.set_corner_radius_all(int(sz / 2.0))
-		st.border_color = Color(1.0, 1.0, 1.0, lerpf(0.9, 0.0, val))
-
-func _echo_ring_done(ring: Panel) -> void:
-	if is_instance_valid(ring): ring.queue_free()
 
 func _notify_monsters_view_changed(view: String) -> void:
 	for node in get_tree().get_nodes_in_group("monster"):

@@ -216,12 +216,11 @@ func _play_animation(anim: StringName, should_play: bool, flip_h: bool) -> void:
 		sprite.frame = 0
 
 func use_special() -> void:
+	if current_view == "blind":
+		return
 	if current_view == "adhd":
 		dash_time = 0.18
 		special_cooldown = 0.35
-	elif current_view == "blind":
-		pulse_echo()
-		special_cooldown = 1.2
 	special_used.emit(current_view)
 
 func set_view(view: String) -> void:
@@ -240,14 +239,6 @@ func suspend_for_interaction() -> void:
 
 func resume_after_interaction() -> void:
 	controls_enabled = true
-
-func pulse_echo() -> void:
-	var tween: Tween = create_tween()
-	aura.width = 10.0
-	aura.modulate.a = 1.0
-	aura.scale = Vector2.ONE
-	tween.parallel().tween_property(aura, "scale", Vector2(5.0, 5.0), 0.55)
-	tween.parallel().tween_property(aura, "modulate:a", 0.0, 0.55)
 
 static func create() -> MindscapePlayer:
 	return create_with_outfit("doctor")

@@ -9,7 +9,7 @@ const VIEWS: Array = ["normal", "blind", "adhd", "autism", "depression"]
 
 const VIEW_NAMES: Dictionary = {
 	"normal": "普通视角",
-	"blind": "盲人视角（全黑+回声定位）",
+	"blind": "盲人视角（全黑+听觉感知）",
 	"adhd": "ADHD视角（自动行走+冲刺）",
 	"autism": "自闭症视角（细节放大+模式识别）",
 	"depression": "抑郁视角（灰暗+潜台词+尖刺）",

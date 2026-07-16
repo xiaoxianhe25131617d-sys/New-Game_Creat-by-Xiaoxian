@@ -1,0 +1,31 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://maze/wind_trigger_line.gd" id="1_script"]
+[ext_resource type="AudioStream" path="res://assets/audio/黑色迷宫正确声音.MP3" id="2_wind"]
+
+[sub_resource type="Curve2D" id="Curve2D_sample"]
+_data = {
+"points": PackedVector2Array(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 256, 0)
+}
+point_count = 2
+
+[node name="WindTriggerLine" type="Path2D"]
+curve = SubResource("Curve2D_sample")
+script = ExtResource("1_script")
+
+[node name="TriggerArea" type="Area2D" parent="."]
+collision_layer = 0
+collision_mask = 1
+monitorable = false
+
+[node name="EditorPreview" type="Line2D" parent="."]
+width = 12.0
+default_color = Color(0.0784314, 0.901961, 1, 0.82)
+joint_mode = 2
+begin_cap_mode = 2
+end_cap_mode = 2
+
+[node name="WindAudio" type="AudioStreamPlayer" parent="."]
+stream = ExtResource("2_wind")
+volume_db = -60.0
+bus = &"Master"

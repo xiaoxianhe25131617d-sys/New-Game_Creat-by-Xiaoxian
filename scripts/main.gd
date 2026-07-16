@@ -6,6 +6,8 @@ const UNDERGROUND_ENTRY_AUDIO := preload("res://assets/audio/enter_underground_m
 const UNDERGROUND_STAIR_TRANSITION := preload("res://scenes/UndergroundStairTransition.tscn")
 const MAIN_WORLD_SCENE := preload("res://map/MainWorld.tscn")
 const PUZZLE_NOTE_POPUP_SCRIPT := preload("res://scripts/puzzle_note_popup.gd")
+const VIEW_WHEEL_UI_SCRIPT := preload("res://scripts/view_wheel_ui.gd")
+const PAUSE_MENU_UI_SCRIPT := preload("res://scripts/pause_menu_ui.gd")
 const CAMERA_VIEW_OFFSET := Vector2(0.0, 28.0)
 
 var world: MindscapeWorld
@@ -30,6 +32,10 @@ var monster_hint_cooldown: float = 0.0
 var active_toast: Label
 var active_toast_tween: Tween
 var login_name_input: LineEdit
+var agreement_check_box: CheckBox
+var login_current_button: Button
+var create_profile_button: Button
+var agreement_hint_label: Label
 var damage_overlay: ColorRect  # red flash on monster hit
 var damage_tween: Tween  # for damage overlay animation
 var _ladder_space_was_held: bool = false  # 梯子跳跃：检测 Space 刚按下的边沿
@@ -202,13 +208,13 @@ func show_login_screen() -> void:
 	var title := Label.new()
 	title.text = "心灵视界\nMindscape"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.position = Vector2(410, 70)
+	title.position = Vector2(410, 38)
 	title.size = Vector2(460, 120)
 	title.add_theme_font_size_override("font_size", 52)
 	menu_root.add_child(title)
 	var card := Panel.new()
-	card.position = Vector2(410, 230)
-	card.size = Vector2(460, 330)
+	card.position = Vector2(410, 178)
+	card.size = Vector2(460, 468)
 	menu_root.add_child(card)
 	var current_profile: Dictionary = ProfileManager.get_current_profile()
 	var avatar := Label.new()
@@ -227,22 +233,112 @@ func show_login_screen() -> void:
 	card.add_child(profile_label)
 	login_name_input = LineEdit.new()
 	login_name_input.placeholder_text = "输入新玩家名字"
-	login_name_input.position = Vector2(80, 135)
+	login_name_input.position = Vector2(80, 132)
 	login_name_input.size = Vector2(300, 42)
 	card.add_child(login_name_input)
+	agreement_check_box = CheckBox.new()
+	agreement_check_box.name = "AgreementCheckBox"
+	agreement_check_box.text = "我已阅读并同意以下协议"
+	agreement_check_box.position = Vector2(68, 190)
+	agreement_check_box.size = Vector2(324, 36)
+	agreement_check_box.add_theme_font_size_override("font_size", 17)
+	card.add_child(agreement_check_box)
+	var links := HBoxContainer.new()
+	links.position = Vector2(112, 228)
+	links.size = Vector2(236, 32)
+	links.add_theme_constant_override("separation", 18)
+	card.add_child(links)
+	var terms_link := LinkButton.new()
+	terms_link.name = "UserAgreementLink"
+	terms_link.text = "《用户协议》"
+	terms_link.pressed.connect(show_agreement_document.bind("terms"))
+	links.add_child(terms_link)
+	var privacy_link := LinkButton.new()
+	privacy_link.name = "PrivacyAgreementLink"
+	privacy_link.text = "《隐私说明》"
+	privacy_link.pressed.connect(show_agreement_document.bind("privacy"))
+	links.add_child(privacy_link)
+	agreement_hint_label = Label.new()
+	agreement_hint_label.name = "AgreementHint"
+	agreement_hint_label.text = "勾选后才能进入或创建档案"
+	agreement_hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	agreement_hint_label.position = Vector2(45, 266)
+	agreement_hint_label.size = Vector2(370, 28)
+	agreement_hint_label.modulate = Color("#f0c98a")
+	card.add_child(agreement_hint_label)
 	var buttons := VBoxContainer.new()
-	buttons.position = Vector2(115, 198)
+	buttons.position = Vector2(115, 314)
 	buttons.size = Vector2(230, 100)
 	buttons.add_theme_constant_override("separation", 12)
 	card.add_child(buttons)
-	_add_button(buttons, "登录当前档案", func(): show_main_menu())
-	_add_button(buttons, "创建并登录", func():
+	login_current_button = _add_button(buttons, "登录当前档案", _accept_agreement_and_show_main_menu)
+	login_current_button.name = "LoginCurrentButton"
+	create_profile_button = _add_button(buttons, "创建并登录", func():
 		var typed_name: String = login_name_input.text.strip_edges()
 		if typed_name.is_empty():
 			typed_name = "旅行者%d" % (ProfileManager.list_profiles().size() + 1)
 		ProfileManager.create_profile(typed_name, "sun")
+		ProfileManager.accept_current_agreement()
 		show_main_menu()
 	)
+	create_profile_button.name = "CreateProfileButton"
+	var already_accepted := ProfileManager.has_accepted_agreement(current_profile)
+	agreement_check_box.button_pressed = already_accepted
+	agreement_check_box.disabled = already_accepted
+	agreement_check_box.toggled.connect(_update_agreement_gate)
+	_update_agreement_gate(already_accepted)
+
+func _update_agreement_gate(accepted: bool) -> void:
+	if is_instance_valid(login_current_button):
+		login_current_button.disabled = not accepted
+	if is_instance_valid(create_profile_button):
+		create_profile_button.disabled = not accepted
+	if is_instance_valid(agreement_hint_label):
+		agreement_hint_label.text = "已同意当前版本" if accepted and agreement_check_box.disabled else "勾选后才能进入或创建档案"
+		agreement_hint_label.modulate = Color("#9ed7bb") if accepted else Color("#f0c98a")
+
+func _accept_agreement_and_show_main_menu() -> void:
+	if not is_instance_valid(agreement_check_box) or not agreement_check_box.button_pressed:
+		return
+	if not ProfileManager.current_profile_has_accepted_agreement():
+		ProfileManager.accept_current_agreement()
+	show_main_menu()
+
+func show_agreement_document(kind: String) -> void:
+	var dialog := Window.new()
+	dialog.name = "AgreementDocument"
+	dialog.title = "隐私说明" if kind == "privacy" else "用户协议"
+	dialog.size = Vector2i(720, 520)
+	dialog.transient = true
+	dialog.exclusive = true
+	dialog.unresizable = true
+	dialog.close_requested.connect(dialog.queue_free)
+	menu_root.add_child(dialog)
+	var background := ColorRect.new()
+	background.color = Color("#17232f")
+	background.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dialog.add_child(background)
+	var document := RichTextLabel.new()
+	document.name = "AgreementDocumentText"
+	document.position = Vector2(36, 32)
+	document.size = Vector2(648, 396)
+	document.fit_content = false
+	document.scroll_active = true
+	document.add_theme_font_size_override("normal_font_size", 19)
+	document.text = _agreement_document_text(kind)
+	background.add_child(document)
+	var close_button := Button.new()
+	close_button.text = "我已阅读"
+	close_button.position = Vector2(270, 448)
+	close_button.size = Vector2(180, 46)
+	close_button.pressed.connect(dialog.queue_free)
+	background.add_child(close_button)
+	dialog.popup_centered()
+
+func _agreement_document_text(kind: String) -> String:
+	if kind == "privacy":
+		return """隐私说明（体验版）\n\n1. 《心灵视界 Mindscape》当前为本地单机游戏。\n\n2. 玩家输入的档案名、游戏进度、设置以及协议接受记录保存在本机 user:// 目录。\n\n3. 当前版本不会把上述数据上传到服务器，也不会用于广告追踪。\n\n4. 若未来加入联网、云存档或统计功能，本说明应先更新，并在新版本中重新征得同意。\n\n5. 本文本适用于项目体验与测试阶段；正式公开发行前应由项目负责人完成法律复核。"""
+	return """用户协议（体验版）\n\n1. 本游戏通过艺术化互动呈现不同人的感知与心理体验。\n\n2. 盲人、ADHD、自闭症与抑郁症相关内容不代表所有人的真实经历，也不能替代医疗诊断、治疗或专业建议。\n\n3. 请尊重游戏中的人物以及现实中具有不同身心体验的人。\n\n4. 游戏进度仅保存在本机；请自行保管设备与本地存档。\n\n5. 本文本适用于项目体验与测试阶段；正式公开发行前应由项目负责人完成法律复核。"""
 
 func show_main_menu() -> void:
 	clear_scene()
@@ -444,11 +540,11 @@ func show_intro() -> void:
 【操作】
 A/D 左右移动    Space 跳跃
 E   互动（对话/解谜/收集）
-F   特殊能力（盲人回声探测/ADHD冲刺）
+F   特殊能力（ADHD冲刺）
 TAB 视角轮盘    ESC 暂停
 
 【四种视角】
-盲人模式：画面全黑，靠F键回声定位
+盲人模式：画面全黑，依靠听觉与触觉探索
 ADHD模式：按方向键自动持续行走，跳跃更高
 自闭症模式：细节放大，能发现隐藏模式
 抑郁模式：画面灰暗，地面尖刺显露，能看到潜台词
@@ -526,13 +622,10 @@ func _update_hud() -> void:
 	objective_label.text = ""
 	objective_label.visible = false
 	
-	# Build prompt text (E for interact, F for echo in blind mode)
+	# Build prompt text for nearby interactions.
 	var parts: PackedStringArray = []
 	if current_near != null:
 		parts.append("[E] 互动")
-	var v: String = str(state.get("current_view", "normal"))
-	if v == "blind":
-		parts.append("[F] 回声")
 	prompt_label.text = "  ".join(parts)
 	
 	# 更新侧边物品栏
@@ -1409,45 +1502,15 @@ func open_view_wheel() -> void:
 		player.suspend_for_interaction()
 	if wheel_root != null and is_instance_valid(wheel_root):
 		wheel_root.queue_free()
-	wheel_root = Panel.new()
-	wheel_root.position = Vector2(440, 180)
-	wheel_root.size = Vector2(400, 320)
-	controls_canvas.add_child(wheel_root)
-	var title := Label.new()
-	title.text = "切换视角"
-	title.position = Vector2(130, 20)
-	title.add_theme_font_size_override("font_size", 30)
-	wheel_root.add_child(title)
-	
 	var unlocked: Array = state.get("unlocked_views", [])
-	var views_available := false
-	var list := VBoxContainer.new()
-	list.position = Vector2(70, 75)
-	list.size = Vector2(260, 220)
-	wheel_root.add_child(list)
-	
-	for view in GameData.VIEWS:
-		if unlocked.has(view):
-			views_available = true
-			_add_view_button(list, view)
-	
-	if not views_available:
-		var hint := Label.new()
-		hint.text = "还没有理解新的视角。\n去灯塔区域触碰回声共鸣石吧。"
-		hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		hint.position = Vector2(20, 60)
-		hint.size = Vector2(220, 80)
-		hint.add_theme_font_size_override("font_size", 18)
-		list.add_child(hint)
-	
-	# Close button
-	var close_btn := Button.new()
-	close_btn.text = "起身"
-	close_btn.position = Vector2(70, 260)
-	close_btn.size = Vector2(260, 44)
-	close_btn.pressed.connect(_close_view_wheel)
-	wheel_root.add_child(close_btn)
+	wheel_root = VIEW_WHEEL_UI_SCRIPT.new()
+	wheel_root.call("configure", unlocked, str(state.get("current_view", "normal")))
+	wheel_root.connect("view_selected", func(view: String):
+		try_switch_view(view)
+		_close_view_wheel()
+	)
+	wheel_root.connect("close_requested", _close_view_wheel)
+	controls_canvas.add_child(wheel_root)
 
 func _close_view_wheel() -> void:
 	if wheel_root != null and is_instance_valid(wheel_root):
@@ -1484,26 +1547,18 @@ func toggle_pause() -> void:
 		get_tree().paused = false
 		return
 	get_tree().paused = true
-	pause_root = Panel.new()
-	pause_root.process_mode = Node.PROCESS_MODE_ALWAYS
-	pause_root.position = Vector2(450, 190)
-	pause_root.size = Vector2(380, 320)
-	controls_canvas.add_child(pause_root)
-	var list := VBoxContainer.new()
-	list.position = Vector2(70, 45)
-	list.size = Vector2(240, 240)
-	list.add_theme_constant_override("separation", 12)
-	pause_root.add_child(list)
-	_add_button(list, "继续", func(): toggle_pause())
-	_add_button(list, "纪念相册", func(): show_album())
-	_add_button(list, "纸条日志", func(): show_note_log())
-	if OS.is_debug_build():
-		_add_button(list, "测试工具", _open_debug_tools)
-	_add_button(list, "保存并回主菜单", func():
+	pause_root = PAUSE_MENU_UI_SCRIPT.new()
+	pause_root.call("configure", OS.is_debug_build())
+	pause_root.connect("resume_requested", toggle_pause)
+	pause_root.connect("album_requested", show_album)
+	pause_root.connect("notes_requested", show_note_log)
+	pause_root.connect("debug_requested", _open_debug_tools)
+	pause_root.connect("save_exit_requested", func():
 		autosave()
 		get_tree().paused = false
 		show_main_menu()
 	)
+	controls_canvas.add_child(pause_root)
 
 func show_album() -> void:
 	var album := AlbumPuzzleUI.new()
@@ -1545,8 +1600,10 @@ func _toggle_debug_lasers() -> void:
 func _open_debug_tools() -> void:
 	if not OS.is_debug_build() or pause_root == null:
 		return
-	for child in pause_root.get_children():
-		child.queue_free()
+	pause_root.queue_free()
+	pause_root = Panel.new()
+	pause_root.process_mode = Node.PROCESS_MODE_ALWAYS
+	controls_canvas.add_child(pause_root)
 	pause_root.position = Vector2(220, 70)
 	pause_root.size = Vector2(840, 580)
 	var title := Label.new()
@@ -1812,10 +1869,6 @@ func autosave() -> void:
 
 func _on_player_special(view: String) -> void:
 	match view:
-		"blind":
-			world.trigger_echo_pulse(Vector2(0.5, 0.5))
-			show_toast("回声扩散——真实物体轮廓浮现。", 1.6)
-			AudioManager.play_sfx("echo")
 		"adhd":
 			show_toast("冲刺！——沿当前方向继续奔跑。", 0.8)
 			AudioManager.play_sfx("dash")
@@ -1964,7 +2017,10 @@ func _add_button(parent: Control, text: String, callback: Callable) -> Button:
 func _add_profile_button(parent: Control, text: String, profile_id: String) -> Button:
 	return _add_button(parent, text, func():
 		ProfileManager.set_current_profile(profile_id)
-		show_main_menu()
+		if ProfileManager.current_profile_has_accepted_agreement():
+			show_main_menu()
+		else:
+			show_login_screen()
 	)
 
 func _add_view_button(parent: Control, view: String) -> Button:

@@ -18,6 +18,7 @@ func _ready() -> void:
 	_test_bush_clues_match_banquet_answer()
 	_test_maze_entrance_layers_share_silhouette()
 	_test_puzzle_building_pairs_match_exactly()
+	_test_banquet_reset_pedestal_does_not_overlap_first_button()
 	if failures.is_empty():
 		print("PASS: world art cleanup regression checks")
 		get_tree().quit(0)
@@ -241,6 +242,17 @@ func _test_puzzle_building_pairs_match_exactly() -> void:
 			if center_door_alpha < 0.8:
 				failures.append("Light-board factory exterior door must be visibly closed")
 		puzzle.free()
+
+func _test_banquet_reset_pedestal_does_not_overlap_first_button() -> void:
+	var puzzle := PuzzleBanquetPainting.new()
+	add_child(puzzle)
+	var pedestal := puzzle.reset_zone
+	var reset_shape := pedestal.get_child(0) as CollisionShape2D if pedestal != null else null
+	var reset_rect := reset_shape.shape as RectangleShape2D if reset_shape != null else null
+	var first_button_left := -PuzzleBanquetPainting.BTN_SPACING * 2.5 - PuzzleBanquetPainting.BTN_W / 2.0
+	if reset_rect == null or pedestal.position.x + reset_rect.size.x / 2.0 >= first_button_left:
+		failures.append("Banquet reset pedestal must not overlap the first dance button")
+	puzzle.free()
 
 func _alpha_masks_match(a: Image, b: Image) -> bool:
 	if a.get_size() != b.get_size():

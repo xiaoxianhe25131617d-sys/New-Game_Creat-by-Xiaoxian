@@ -9,6 +9,8 @@ func _ready() -> void:
 	_test_view_effect_scale_tracks_stretch_transform()
 	_test_monsters_render_below_blind_overlay()
 	_test_blind_view_toggles_overlay_state()
+	_test_blind_view_has_no_special_ability()
+	_test_adhd_special_ability_is_unchanged()
 	_test_player_screen_position_uses_canvas_transform()
 	_test_inventory_and_controls_render_above_blind_mask()
 	if failures.is_empty():
@@ -91,6 +93,28 @@ func _test_blind_view_toggles_overlay_state() -> void:
 	if overlay != null and overlay.visible:
 		failures.append("Blind vision overlay must be hidden outside blind view")
 	world.free()
+
+func _test_blind_view_has_no_special_ability() -> void:
+	var player := MindscapePlayer.create()
+	add_child(player)
+	player.set_view("blind")
+	var emitted_views: Array[String] = []
+	player.special_used.connect(func(view: String): emitted_views.append(view))
+	player.use_special()
+	if not emitted_views.is_empty():
+		failures.append("Blind view must not emit a special ability when F is pressed")
+	if player.special_cooldown > 0.0:
+		failures.append("Blind view must not start a special-ability cooldown")
+	player.free()
+
+func _test_adhd_special_ability_is_unchanged() -> void:
+	var player := MindscapePlayer.create()
+	add_child(player)
+	player.set_view("adhd")
+	player.use_special()
+	if player.dash_time <= 0.0 or player.special_cooldown <= 0.0:
+		failures.append("Removing blind F must not disable the ADHD dash")
+	player.free()
 
 func _test_player_screen_position_uses_canvas_transform() -> void:
 	var world := MindscapeWorld.new()

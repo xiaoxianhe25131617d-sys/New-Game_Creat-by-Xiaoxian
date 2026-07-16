@@ -1,6 +1,7 @@
 extends Node
 
 const SAVE_VERSION: int = 1
+const AGREEMENT_VERSION: String = "2026-07-15"
 const STORAGE_PATH: String = "user://mindscape_profiles.json"
 const TEST_STORAGE_PATH: String = "user://mindscape_profiles_test.json"
 const TOTAL_COLLECTIBLES: float = 27.0
@@ -83,6 +84,22 @@ func set_current_profile(id: String) -> void:
 			current_profile_id = id
 			flush()
 			return
+
+func has_accepted_agreement(profile: Dictionary, version: String = AGREEMENT_VERSION) -> bool:
+	return (
+		str(profile.get("agreement_version", "")) == version
+		and not str(profile.get("agreement_accepted_at", "")).is_empty()
+	)
+
+func current_profile_has_accepted_agreement() -> bool:
+	return has_accepted_agreement(get_current_profile())
+
+func accept_current_agreement() -> void:
+	var profile := get_current_profile()
+	profile["agreement_version"] = AGREEMENT_VERSION
+	profile["agreement_accepted_at"] = Time.get_datetime_string_from_system()
+	profile["updated_at"] = Time.get_datetime_string_from_system()
+	flush()
 
 func save_state(state: Dictionary) -> void:
 	for i in range(profiles.size()):

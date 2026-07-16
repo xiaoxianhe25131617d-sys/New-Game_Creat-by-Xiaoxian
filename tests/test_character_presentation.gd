@@ -9,6 +9,7 @@ func _ready() -> void:
 	_test_npc_motion_stays_on_spawn_y()
 	_test_npc_idle_duration_is_extended_and_randomized()
 	_test_all_npcs_have_distinct_atlas_regions()
+	_test_all_characters_render_in_world_foreground()
 	_test_player_sprite_feet_match_collision_bottom()
 	if failures.is_empty():
 		print("PASS: character presentation regression checks")
@@ -61,6 +62,17 @@ func _test_all_npcs_have_distinct_atlas_regions() -> void:
 		npc.free()
 	if regions.size() != GameData.NPCS.size():
 		failures.append("Expected %d distinct NPC atlas regions, got %d" % [GameData.NPCS.size(), regions.size()])
+
+func _test_all_characters_render_in_world_foreground() -> void:
+	var npc := MindscapeNPC.new()
+	npc.setup({"id": "test", "name": "Test", "pos": Vector2.ZERO})
+	var player := MindscapePlayer.create()
+	if npc.z_index < 100:
+		failures.append("NPC root must render in the world foreground")
+	if player.z_index < 100:
+		failures.append("Player root must render in the world foreground")
+	npc.free()
+	player.free()
 
 func _test_player_sprite_feet_match_collision_bottom() -> void:
 	var player := MindscapePlayer.create()

@@ -14,7 +14,6 @@ const CHEST_TEXTURE := preload("res://assets/stone_chest.png")
 const COMPASS_TEXTURE := preload("res://assets/ui/generated/maze_compass.png")
 const ENDING_KEEPSAKES_TEXTURE := preload("res://assets/ui/generated/ending_keepsakes.png")
 const HIDDEN_DOOR_TEXTURE := preload("res://assets/ui/generated/hidden_stone_door.png")
-const MAZE_CORRECT_AUDIO := preload("res://assets/audio/黑色迷宫正确声音.MP3")
 const MAZE_WRONG_AUDIO := preload("res://assets/audio/黑色迷宫错误.MP3")
 const MAZE_BGM_AUDIO := preload("res://assets/audio/地下迷宫音乐.MP3")
 const COMPASS_ROUTE: Array[Vector2] = [
@@ -614,12 +613,7 @@ func _make_compass_audio() -> void:
 	route_audio.name = "MazeExitRouteAudio"
 	route_audio.volume_db = 0.0
 	route_audio.bus = "Master"
-	route_audio.finished.connect(_on_route_audio_finished)
 	add_child(route_audio)
-
-func _on_route_audio_finished() -> void:
-	if route_audio != null and _route_feedback_correct and not bool(maze_state.get("maze_compass_enabled", false)) and not _leaving_maze and not _ending_playing:
-		route_audio.play()
 
 func _toggle_compass() -> void:
 	var enabled := GameData.toggle_maze_compass(maze_state)
@@ -698,7 +692,7 @@ func _update_compass(delta: float) -> void:
 	if compass_ping_timer <= 0.0:
 		if compass_route_correct:
 			var distance_ratio := clampf(distance / 900.0, 0.0, 1.0)
-			_play_navigation_cue(compass_audio, MAZE_CORRECT_AUDIO, lerpf(-1.0, 8.0, pow(clampf(1.0 - distance_ratio, 0.0, 1.0), 0.8)), 1.02, 0.16)
+			AudioManager.play_tone(920.0 + (1.0 - distance_ratio) * 220.0, 0.08)
 			compass_ping_timer = lerpf(0.14, 0.42, distance_ratio)
 		else:
 			_play_navigation_cue(compass_audio, MAZE_WRONG_AUDIO, 8.0, 0.78, 0.18)
@@ -779,19 +773,8 @@ func _update_route_feedback(delta: float) -> void:
 		_route_feedback_last_progress = progress
 	_route_feedback_timer -= delta
 	if _route_feedback_correct:
-		var pitch := lerpf(0.98, 1.24, pow(progress, 0.55))
-		# Correct-route guidance is continuous and loud; a short buzzer tone
-		# rides on top so the player can hear it immediately.
 		if route_audio != null:
-			route_audio.stream = MAZE_CORRECT_AUDIO
-			route_audio.volume_db = clampf(route_volume_db(progress), 6.0, 18.0)
-			route_audio.pitch_scale = clampf(pitch, 0.72, 1.35)
-			if not route_audio.playing:
-				route_audio.play()
-		_route_feedback_beep_timer -= delta
-		if _route_feedback_beep_timer <= 0.0:
-			AudioManager.play_tone(920.0 + progress * 220.0, 0.05)
-			_route_feedback_beep_timer = lerpf(0.08, 0.022, progress)
+			route_audio.stop()
 		return
 	if _route_feedback_timer > 0.0:
 		return
@@ -824,7 +807,7 @@ func _update_navigation_cue(delta: float) -> void:
 	_route_cue_remaining -= delta
 	if _compass_cue_remaining <= 0.0 and compass_audio != null:
 		compass_audio.stop()
-	if _route_cue_remaining <= 0.0 and route_audio != null and route_audio.stream != MAZE_CORRECT_AUDIO:
+	if _route_cue_remaining <= 0.0 and route_audio != null:
 		route_audio.stop()
 
 func _laser_focus_completed() -> bool:

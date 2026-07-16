@@ -6,6 +6,7 @@ Open `UndergroundMaze.tscn` directly in Godot and press F6 to run it independent
 - Edit solid gray geometry on the `Walls` TileMapLayer with atlas tile `(0, 0)`.
 - Edit jump-through diagonal steps on `OneWayStairs` with atlas tile `(1, 0)`.
 - Move or scale each `Ladders/LadderXX` Area2D to change a climb route. Its collision and drawn rungs scale together.
+- Select `WindTriggerLine`, use the Path2D curve tool to add/move points, and draw the correct route. The cyan line is editor-only; it is invisible in the running game, and its wind audio is audible only in the blind view. Its collision width and audio fade time are editable in the Inspector.
 - Move the five `Markers` freely. Their `persistent_id` metadata must remain unique.
 - Keep content inside the `Bounds` rectangle (`3096 x 1758`).
 

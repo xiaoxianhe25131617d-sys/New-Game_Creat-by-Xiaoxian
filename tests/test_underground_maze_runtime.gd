@@ -14,6 +14,7 @@ func _test_locked_and_unlocked_runtime_states() -> void:
 	add_child(locked_maze)
 	await get_tree().process_frame
 	_test_underground_audio(locked_maze)
+	await _test_wind_trigger_audio(locked_maze)
 	if locked_maze.get_node_or_null("HiddenDoorCollision") == null:
 		failures.append("Locked maze must create a physical hidden-door collision")
 	if locked_maze.compass_button == null or not locked_maze.compass_button.disabled:
@@ -63,6 +64,45 @@ func _test_underground_audio(maze: UndergroundMaze) -> void:
 		failures.append("Changing views underground must not restart a ground view BGM")
 	if not AudioManager.has_method("stop_bgm") or not AudioManager.has_method("resume_view_bgm"):
 		failures.append("AudioManager must expose explicit stop/resume controls for scene transitions")
+
+func _test_wind_trigger_audio(maze: UndergroundMaze) -> void:
+	var wind_line := maze.get_node_or_null("WindTriggerLine")
+	if wind_line == null:
+		failures.append("Runtime maze must include WindTriggerLine")
+		return
+	var wind_audio := wind_line.get_node_or_null("WindAudio") as AudioStreamPlayer
+	if wind_audio == null:
+		failures.append("WindTriggerLine must own a wind audio player")
+		return
+	if wind_audio.playing:
+		failures.append("Wind audio must be silent before the player touches the line")
+	maze._update_route_feedback(0.1)
+	if maze.route_audio != null and maze.route_audio.playing:
+		failures.append("The old hard-coded route must not play correct wind audio away from the line")
+	wind_line.set("fade_duration", 0.01)
+	maze.runtime_player.set_view("normal")
+	wind_line.call("_on_body_entered", maze.runtime_player)
+	await get_tree().create_timer(0.03).timeout
+	if not bool(wind_line.call("is_player_touching")):
+		failures.append("WindTriggerLine must retain physical contact in every view")
+	if wind_audio.playing:
+		failures.append("Non-blind views must not hear wind while touching WindTriggerLine")
+	maze.runtime_player.set_view("blind")
+	wind_line.call("_process", 0.01)
+	await get_tree().create_timer(0.03).timeout
+	if not wind_audio.playing:
+		failures.append("Blind view must fade in wind while touching WindTriggerLine")
+	if wind_audio.stream == null or wind_audio.stream.resource_path != "res://assets/audio/黑色迷宫正确声音.MP3":
+		failures.append("WindTriggerLine must use the black-maze correct wind sound")
+	maze.runtime_player.set_view("normal")
+	wind_line.call("_process", 0.01)
+	await get_tree().create_timer(0.03).timeout
+	if wind_audio.playing:
+		failures.append("Leaving blind view while still touching the line must fade out the wind")
+	wind_line.call("_on_body_exited", maze.runtime_player)
+	await get_tree().create_timer(0.03).timeout
+	if bool(wind_line.call("is_player_touching")) or wind_audio.playing:
+		failures.append("Leaving WindTriggerLine must fade out and stop the wind audio")
 
 func _test_spawn_return_interaction(maze: UndergroundMaze) -> void:
 	maze.runtime_player.global_position = maze.player_spawn.global_position

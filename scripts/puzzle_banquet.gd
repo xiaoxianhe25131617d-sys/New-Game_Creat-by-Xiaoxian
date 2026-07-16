@@ -43,6 +43,7 @@ const BTN_W := 56.0
 const BTN_H := 18.0
 const BTN_SPACING := 64.0
 const BTN_Y := 55.0
+const RESET_PEDESTAL_W := 32.0
 const FRAME_Y := -170.0
 const FRAME_H := 180.0
 
@@ -479,19 +480,19 @@ func _build_reset_pedestal() -> void:
 	reset_zone.collision_mask = 1
 	var sshape := CollisionShape2D.new()
 	var srect := RectangleShape2D.new()
-	srect.size = Vector2(120, 90)
+	srect.size = Vector2(RESET_PEDESTAL_W, 90)
 	sshape.shape = srect
 	reset_zone.add_child(sshape)
 
 	# 台面视觉
 	var base := ColorRect.new()
-	base.position = Vector2(-60, -10)
-	base.size = Vector2(120, 14)
+	base.position = Vector2(-RESET_PEDESTAL_W / 2.0, -10)
+	base.size = Vector2(RESET_PEDESTAL_W, 14)
 	base.color = Color("#3a3a4a")
 	reset_zone.add_child(base)
 	var top := ColorRect.new()
-	top.position = Vector2(-60, -14)
-	top.size = Vector2(120, 4)
+	top.position = Vector2(-RESET_PEDESTAL_W / 2.0, -14)
+	top.size = Vector2(RESET_PEDESTAL_W, 4)
 	top.color = Color("#5a5a6a")
 	reset_zone.add_child(top)
 	var label := Label.new()

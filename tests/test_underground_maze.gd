@@ -19,6 +19,7 @@ func _ready() -> void:
 	_test_markers(maze)
 	_test_spawn_return_exit(maze)
 	_test_ladders(maze)
+	_test_wind_trigger_line(maze)
 	_test_navigation_features_are_clear(maze)
 	_test_ordered_route_guidance()
 	_test_navigation_feedback_strength()
@@ -86,6 +87,26 @@ func _test_ladders(maze: Node) -> void:
 	for ladder in ladders:
 		if not ladder is Area2D or ladder.get_node_or_null("CollisionShape2D") == null:
 			failures.append("Every ladder must be an editable Area2D with a CollisionShape2D")
+
+func _test_wind_trigger_line(maze: Node) -> void:
+	var wind_line := maze.get_node_or_null("WindTriggerLine") as Path2D
+	if wind_line == null:
+		failures.append("Maze must contain an editable WindTriggerLine Path2D")
+		return
+	if wind_line.curve == null or wind_line.curve.point_count < 2:
+		failures.append("WindTriggerLine needs at least two editable curve points")
+	var trigger_area := wind_line.get_node_or_null("TriggerArea") as Area2D
+	if trigger_area == null:
+		failures.append("WindTriggerLine must build a player overlap Area2D")
+	elif trigger_area.collision_mask != 1:
+		failures.append("WindTriggerLine must detect the player's collision layer")
+	elif trigger_area.get_child_count() == 0:
+		failures.append("WindTriggerLine must turn its curve into collision segments")
+	var preview := wind_line.get_node_or_null("EditorPreview") as Line2D
+	if preview == null or preview.visible:
+		failures.append("WindTriggerLine preview must be hidden in the running game")
+	if not wind_line.has_method("is_player_touching"):
+		failures.append("WindTriggerLine must expose its contact state for runtime verification")
 
 func _test_navigation_features_are_clear(maze: Node) -> void:
 	var walls := maze.get_node("Walls") as TileMapLayer

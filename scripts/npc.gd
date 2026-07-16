@@ -6,6 +6,7 @@ const NPC_ATLAS_COLUMNS := 5
 const NPC_ATLAS_ROWS := 4
 const NPC_DISPLAY_SCALE := Vector2(0.28, 0.28)
 const NPC_FOOT_Y := 0.0
+const WORLD_FOREGROUND_Z_INDEX := 100
 const IDLE_DURATION_MIN := 4.5
 const IDLE_DURATION_MAX := 10.0
 const WALK_RADIUS := 70.0
@@ -37,6 +38,7 @@ func setup(data: Dictionary) -> void:
 	position = data.get("pos", Vector2.ZERO) as Vector2
 	spawn_pos = position
 	name = "NPC_%s" % npc_id
+	z_index = WORLD_FOREGROUND_Z_INDEX
 	add_to_group("interactable")
 	set_meta("kind", "npc")
 	set_meta("id", npc_id)

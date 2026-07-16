@@ -21,3 +21,6 @@ Thumbs.db
 *.mp4
 *.avi
 *.wav
+
+# Generated game exports
+/build/

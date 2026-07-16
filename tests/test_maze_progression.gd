@@ -10,7 +10,7 @@ func _ready() -> void:
 	_test_compass_requires_ownership()
 	_test_compass_route_advances_only_near_waypoints()
 	_test_route_distance_and_progress()
-	_test_route_feedback_gain_is_obvious()
+	_test_wind_trigger_fade_contract()
 	_test_hidden_chest_requires_maze_key()
 	_test_hidden_chest_completion_is_idempotent()
 	_test_interrupted_ending_can_resume()
@@ -78,14 +78,18 @@ func _test_route_distance_and_progress() -> void:
 	if absf(float(sample.get("progress", -1.0)) - 0.25) > 0.01:
 		failures.append("Route sampling progress must follow cumulative path length")
 
-func _test_route_feedback_gain_is_obvious() -> void:
-	var start_db := UndergroundMaze.route_volume_db(0.0)
-	var exit_db := UndergroundMaze.route_volume_db(1.0)
-	var linear_gain := db_to_linear(exit_db) / db_to_linear(start_db)
-	if linear_gain < 4.0:
-		failures.append("Exit route cue must be at least four times the start amplitude")
-	if UndergroundMaze.route_interval(1.0) >= UndergroundMaze.route_interval(0.0):
-		failures.append("Route cue cadence must accelerate toward the exit")
+func _test_wind_trigger_fade_contract() -> void:
+	var packed := load("res://maze/WindTriggerLine.tscn") as PackedScene
+	if packed == null:
+		failures.append("WindTriggerLine scene must load")
+		return
+	var wind_line := packed.instantiate()
+	if float(wind_line.get("fade_duration")) <= 0.0:
+		failures.append("WindTriggerLine must fade the correct-route audio at both ends")
+	var wind_audio := wind_line.get_node_or_null("WindAudio") as AudioStreamPlayer
+	if wind_audio == null or wind_audio.stream == null or wind_audio.stream.resource_path != "res://assets/audio/黑色迷宫正确声音.MP3":
+		failures.append("Only WindTriggerLine should own the black-maze correct wind sound")
+	wind_line.free()
 
 func _test_hidden_chest_completion_is_idempotent() -> void:
 	var state := GameData.default_state()
