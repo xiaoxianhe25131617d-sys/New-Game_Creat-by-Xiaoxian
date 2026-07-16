@@ -73,6 +73,8 @@ var bgm_cache: Dictionary = {}       # view → AudioStream (预加载)
 var current_view: String = "normal"
 var current_region: String = "spawn"
 var _bgm_suspended: bool = false
+var _web_audio_requires_gesture: bool = false
+var _web_audio_unlocked: bool = true
 
 # 走路专用 channel（防止叠加）
 var _walk_channel: AudioStreamPlayer
@@ -80,9 +82,22 @@ var _walk_should_loop: bool = false  # 控制 finished 信号是否触发循环
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	_web_audio_requires_gesture = OS.has_feature("web")
+	_web_audio_unlocked = not _web_audio_requires_gesture
+	set_process_input(_web_audio_requires_gesture)
 	_preload_all()
 	_setup_bgm()
 	_setup_sfx_pool()
+
+func _input(event: InputEvent) -> void:
+	if not _web_audio_requires_gesture or _web_audio_unlocked or not event.is_pressed():
+		return
+	_unlock_web_audio_from_input()
+
+func _unlock_web_audio_from_input() -> void:
+	_web_audio_unlocked = true
+	set_process_input(false)
+	call_deferred("_play_current_view_bgm")
 
 func _preload_all() -> void:
 	# 预加载所有 SFX
@@ -99,7 +114,10 @@ func _preload_all() -> void:
 		var fname: String = BGM_MAP[view_name]
 		var path := AUDIO_DIR + "/" + fname
 		if ResourceLoader.exists(path):
-			bgm_cache[view_name] = load(path) as AudioStream
+			var stream := load(path) as AudioStream
+			if stream is AudioStreamMP3:
+				(stream as AudioStreamMP3).loop = true
+			bgm_cache[view_name] = stream
 		else:
 			push_warning("AudioManager: BGM not found: " + path)
 
@@ -123,7 +141,8 @@ func _setup_bgm() -> void:
 	if stream:
 		bgm_player.stream = stream
 		bgm_player.finished.connect(_on_bgm_finished)
-		bgm_player.play()
+		if _web_audio_unlocked:
+			bgm_player.play()
 
 func _on_bgm_finished() -> void:
 	# BGM 播完后自动循环
@@ -223,6 +242,8 @@ func resume_view_bgm() -> void:
 	_play_current_view_bgm()
 
 func _play_current_view_bgm() -> void:
+	if _web_audio_requires_gesture and not _web_audio_unlocked:
+		return
 	var stream: AudioStream = bgm_cache.get(current_view)
 	if stream == null or bgm_player == null:
 		return

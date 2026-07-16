@@ -7,6 +7,7 @@ func _ready() -> void:
 	await _test_interaction_pause_restores_auto_walk()
 	_test_leaving_adhd_clears_auto_walk()
 	_test_adhd_attention_overlay()
+	_test_adhd_blur_avoids_mipmap_sampling_on_web()
 	_test_adhd_focus_tracks_player_screen_position()
 	_test_adhd_radius_uses_shared_screen_scale()
 	_test_attention_candidates_are_real_interactables()
@@ -92,6 +93,15 @@ func _test_adhd_attention_overlay() -> void:
 	if overlay.visible:
 		failures.append("ADHD attention overlay must hide outside ADHD view")
 	world.free()
+
+func _test_adhd_blur_avoids_mipmap_sampling_on_web() -> void:
+	var shader_source := FileAccess.get_file_as_string("res://shaders/adhd_attention.gdshader")
+	if shader_source.contains("textureLod"):
+		failures.append("ADHD Web blur must not depend on screen-texture mipmap LOD sampling")
+	if not shader_source.contains("SCREEN_PIXEL_SIZE"):
+		failures.append("ADHD Web blur must use explicit neighboring screen pixels")
+	if shader_source.contains("outer_brightness") or shader_source.contains("muted"):
+		failures.append("ADHD peripheral vision must blur without darkening or desaturating the scene")
 
 func _test_adhd_focus_tracks_player_screen_position() -> void:
 	var world := MindscapeWorld.new()

@@ -4,6 +4,7 @@ var failures: Array[String] = []
 
 func _ready() -> void:
 	_test_blind_overlay_uses_screen_shader()
+	_test_view_effects_refresh_the_screen_back_buffer()
 	_test_blind_overlay_stays_fixed_to_screen()
 	_test_blind_vision_uses_compact_radius()
 	_test_view_effect_scale_tracks_stretch_transform()
@@ -34,6 +35,17 @@ func _test_blind_overlay_uses_screen_shader() -> void:
 			failures.append("BlindVision must use a ShaderMaterial")
 		elif material.shader.resource_path != "res://shaders/blind_vision.gdshader":
 			failures.append("BlindVision must use the blind vision screen shader")
+	world.free()
+
+func _test_view_effects_refresh_the_screen_back_buffer() -> void:
+	var world := MindscapeWorld.new()
+	add_child(world)
+	world._make_background_canvas()
+	var screen_copy := world.get_node_or_null("ViewTintCanvas/ViewEffectScreenCopy") as BackBufferCopy
+	if screen_copy == null:
+		failures.append("Screen-reading view effects must refresh the back buffer every frame")
+	elif screen_copy.copy_mode != BackBufferCopy.COPY_MODE_VIEWPORT:
+		failures.append("View effect back-buffer copy must cover the whole viewport")
 	world.free()
 
 func _test_blind_overlay_stays_fixed_to_screen() -> void:

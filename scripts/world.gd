@@ -18,6 +18,7 @@ var _parallax_origin_set := false
 var bg_canvas: CanvasLayer
 var sky_background: TextureRect
 var view_tint_canvas: CanvasLayer
+var view_effect_screen_copy: BackBufferCopy
 var palette_overlay: ColorRect
 var blind_vision: ColorRect
 var blind_vision_material: ShaderMaterial
@@ -371,6 +372,14 @@ func _make_background_canvas() -> void:
 	view_tint_canvas.layer = 500
 	view_tint_canvas.follow_viewport_enabled = false
 	add_child(view_tint_canvas)
+
+	# Screen-reading shaders need an explicit fresh copy on WebGL. Without it,
+	# some browsers reuse stale or incomplete screen data between frames.
+	view_effect_screen_copy = BackBufferCopy.new()
+	view_effect_screen_copy.name = "ViewEffectScreenCopy"
+	view_effect_screen_copy.copy_mode = BackBufferCopy.COPY_MODE_VIEWPORT
+	view_effect_screen_copy.visible = false
+	view_tint_canvas.add_child(view_effect_screen_copy)
 
 	palette_overlay = ColorRect.new()
 	palette_overlay.name = "ViewTint"
@@ -1535,6 +1544,8 @@ func set_view_palette(view: String) -> void:
 	current_palette_view = view
 	view_pulse_time = 0.0
 	palette_overlay.material = null
+	if is_instance_valid(view_effect_screen_copy):
+		view_effect_screen_copy.visible = view == "blind" or view == "adhd"
 
 	match view:
 		"blind":
@@ -1622,7 +1633,6 @@ func _update_adhd_attention_shader() -> void:
 	var screen_scale := _get_view_effect_screen_scale()
 	adhd_attention_material.set_shader_parameter("radius_px", ADHD_FOCUS_RADIUS * screen_scale)
 	adhd_attention_material.set_shader_parameter("feather_px", ADHD_FOCUS_FEATHER * screen_scale)
-	adhd_attention_material.set_shader_parameter("time_sec", view_pulse_time)
 
 static func _view_effect_scale_for_transform(stretch_transform: Transform2D, camera_zoom: float = 1.0) -> float:
 	var stretch_scale := stretch_transform.get_scale()
